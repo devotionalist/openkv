@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage
+  namespace: {{ include "opskv.namespace" . }}
+  labels:
+    {{- include "opskv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storage
+spec:
+  serviceName: storage-headless
+  replicas: {{ .Values.replicaCount.storage }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: storage
+  template:
+    metadata:
+      labels:
+        {{- include "opskv.labels" . | nindent 8 }}
+        app.kubernetes.io/component: storage
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: storage
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: OPSKV_ROLE
+              value: storage
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OPSKV_NAMESPACE
+              value: {{ include "opskv.namespace" . | quote }}
+            - name: OPSKV_META_HEADLESS
+              value: meta-headless
+            - name: OPSKV_STORAGE_HEADLESS
+              value: storage-headless
+            - name: OPSKV_META_REPLICAS
+              value: {{ .Values.replicaCount.meta | quote }}
+            - name: OPSKV_STORAGE_REPLICAS
+              value: {{ .Values.replicaCount.storage | quote }}
+            - name: OPSKV_META_PORT
+              value: {{ .Values.ports.meta | quote }}
+            - name: OPSKV_STORAGE_PORT
+              value: {{ .Values.ports.storage | quote }}
+            - name: OPSKV_SHARD_COUNT
+              value: {{ .Values.cluster.shardCount | quote }}
+            - name: OPSKV_REPLICA_FACTOR
+              value: {{ .Values.cluster.replicaFactor | quote }}
+            {{- if .Values.adminToken }}
+            - name: SKV_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opskv.fullname" . }}-admin
+                  key: token
+            {{- end }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.ports.storage }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 8
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- if not .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.persistence.storageClassName }}
+        storageClassName: {{ .Values.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

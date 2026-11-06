@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpsKV Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <header class="top">
+    <div class="brand-block">
+      <p class="brand">OpsKV</p>
+      <p class="tagline">集群运维控制台</p>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button type="button" data-tab="overview" class="active">总览</button>
+      <button type="button" data-tab="ops">运维</button>
+      <button type="button" data-tab="console">Console</button>
+    </nav>
+    <button type="button" class="ghost" id="btn-refresh">刷新</button>
+  </header>
+
+  <main>
+    <section id="panel-overview" class="panel active">
+      <div class="hero-strip">
+        <h1>集群拓扑</h1>
+        <p class="lede">图形总览 · Storage：上线 / 下线 / 踢出（须先下线）；Meta/Gateway 可上下线进程</p>
+      </div>
+      <div class="stat-row" id="stat-row"></div>
+      <div class="pane topology-pane">
+        <div class="topo-toolbar">
+          <h2>拓扑图</h2>
+          <p class="topo-hint" id="topo-hint"></p>
+        </div>
+        <div class="topology" id="topology"></div>
+      </div>
+      <div class="split-2">
+        <div class="pane">
+          <h2>TSO / GC</h2>
+          <dl class="kv-dl" id="tso-dl"></dl>
+          <button type="button" class="primary" id="btn-advance">推进 Safe Point</button>
+        </div>
+        <div class="pane">
+          <h2>操作日志</h2>
+          <pre class="log" id="topo-log">节点操作结果将显示在此</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-ops" class="panel">
+      <div class="hero-strip">
+        <h1>运维</h1>
+        <p class="lede">Region 主表（行内 Split / Merge / Place）· 展开看副本节点 · 待加入 Store 准入</p>
+      </div>
+      <div class="state-legend" id="node-state-legend" aria-label="状态图例"></div>
+
+      <div class="range-map" id="range-map"></div>
+
+      <div class="pane">
+        <div class="pane-head-row">
+          <div>
+            <h2>Region</h2>
+            <p class="hint">展开副本行：<strong>下线/踢出该 Region 副本</strong>（非整机）；Region：分裂 / 合并 / 增加副本。整机上线/下线/踢出见下方待加入与拓扑。</p>
+          </div>
+          <form class="join-inline" id="form-balance">
+            <label>Balance <input name="count" type="number" value="1" min="1" style="width:4rem" /></label>
+            <button type="submit" class="ghost">执行 Balance</button>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table id="node-table-active" class="region-master">
+            <thead>
+              <tr>
+                <th></th><th>Region</th><th>Range</th><th>Epoch</th><th>副本数</th><th>Leader</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="pane pane-pending">
+        <div class="pane-head-row">
+          <div>
+            <h2>待加入节点</h2>
+            <p class="hint">待加入：上线 = JOIN→Active；下线 = 停进程；踢出须先下线</p>
+          </div>
+        </div>
+        <form class="join-inline" id="form-nodes-join">
+          <label>Store ID <input name="node_id" list="pending-node-ids" placeholder="storage-3" required /></label>
+          <button type="submit" class="primary">加入集群</button>
+        </form>
+        <datalist id="pending-node-ids"></datalist>
+        <div class="table-wrap">
+          <table id="node-table-pending">
+            <thead>
+              <tr>
+                <th>ID</th><th>角色</th><th>地址</th><th>状态</th>
+                <th>可达</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="pane scale-progress-pane" id="scale-progress-pane" hidden>
+        <div class="pane-head-row">
+          <div>
+            <h2>加副本进度</h2>
+            <p class="hint">SCALE_OUT：Learner → 追平 → Promote</p>
+          </div>
+        </div>
+        <div id="scale-progress-list" class="scale-progress-list"></div>
+      </div>
+
+      <pre class="log" id="ops-log">Region / Store 操作日志</pre>
+      <pre class="log" id="nodes-log" hidden></pre>
+    </section>
+
+    <section id="panel-console" class="panel">
+      <div class="hero-strip">
+        <h1>Console</h1>
+        <p class="lede">经 Gateway：普通 KV / Locate，以及 Hash / Set / List / ZSet（与裸 key 隔离）</p>
+      </div>
+      <div class="ops-grid">
+        <form class="pane form" id="form-kv-get">
+          <h2>Get</h2>
+          <label>Key <input name="key" required /></label>
+          <label class="check"><input type="checkbox" name="stale" /> 副本读（stale）</label>
+          <button type="submit" class="primary">读取</button>
+        </form>
+        <form class="pane form" id="form-kv-put">
+          <h2>Put</h2>
+          <label>Key <input name="key" required /></label>
+          <label>Value <input name="value" required /></label>
+          <button type="submit" class="primary">写入</button>
+        </form>
+        <form class="pane form" id="form-locate">
+          <h2>Locate</h2>
+          <label>Key <input name="key" required /></label>
+          <button type="submit" class="primary">定位 Region</button>
+        </form>
+        <form class="pane form" id="form-ds-hash">
+          <h2>Hash</h2>
+          <label>Key <input name="key" required placeholder="user:1" /></label>
+          <label>Field <input name="field" placeholder="name" /></label>
+          <label>Value <input name="value" placeholder="alice" /></label>
+          <div class="btn-row">
+            <button type="submit" name="op" value="hset" class="primary">HSet</button>
+            <button type="submit" name="op" value="hget">HGet</button>
+            <button type="submit" name="op" value="hdel">HDel</button>
+            <button type="submit" name="op" value="hlen">HLen</button>
+            <button type="submit" name="op" value="hgetall">HGetAll</button>
+          </div>
+        </form>
+        <form class="pane form" id="form-ds-set">
+          <h2>Set</h2>
+          <label>Key <input name="key" required placeholder="tags" /></label>
+          <label>Member <input name="member" placeholder="go" /></label>
+          <div class="btn-row">
+            <button type="submit" name="op" value="sadd" class="primary">SAdd</button>
+            <button type="submit" name="op" value="srem">SRem</button>
+            <button type="submit" name="op" value="sismember">SIsMember</button>
+            <button type="submit" name="op" value="scard">SCard</button>
+            <button type="submit" name="op" value="smembers">SMembers</button>
+          </div>
+        </form>
+        <form class="pane form" id="form-ds-list">
+          <h2>List</h2>
+          <label>Key <input name="key" required placeholder="queue" /></label>
+          <label>Value <input name="value" placeholder="item" /></label>
+          <label>Start <input name="start" type="number" value="0" /></label>
+          <label>Stop <input name="stop" type="number" value="-1" /></label>
+          <div class="btn-row">
+            <button type="submit" name="op" value="lpush" class="primary">LPush</button>
+            <button type="submit" name="op" value="rpush">RPush</button>
+            <button type="submit" name="op" value="lpop">LPop</button>
+            <button type="submit" name="op" value="rpop">RPop</button>
+            <button type="submit" name="op" value="llen">LLen</button>
+            <button type="submit" name="op" value="lrange">LRange</button>
+          </div>
+        </form>
+        <form class="pane form" id="form-ds-zset">
+          <h2>ZSet</h2>
+          <label>Key <input name="key" required placeholder="rank" /></label>
+          <label>Member <input name="member" placeholder="alice" /></label>
+          <label>Score <input name="score" type="number" step="any" value="1" /></label>
+          <label>Start <input name="start" type="number" value="0" /></label>
+          <label>Stop <input name="stop" type="number" value="-1" /></label>
+          <div class="btn-row">
+            <button type="submit" name="op" value="zadd" class="primary">ZAdd</button>
+            <button type="submit" name="op" value="zrem">ZRem</button>
+            <button type="submit" name="op" value="zscore">ZScore</button>
+            <button type="submit" name="op" value="zcard">ZCard</button>
+            <button type="submit" name="op" value="zrange">ZRange</button>
+          </div>
+        </form>
+      </div>
+      <pre class="log" id="console-log">Console 结果</pre>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>OpsKV Admin</span>
+    <span id="fetched-at"></span>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,227 @@
+// Copyright 2026 devotionalist
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package kv.v1;
+
+option go_package = "github.com/amydemo/opskv/client/go/gen/kv/v1;kvv1";
+option cc_enable_arenas = true;
+
+// 常用数据结构 API（非 RESP）。实现于 Compute Gateway。
+service DSService {
+  // Hash
+  rpc HSet(HSetRequest) returns (HSetResponse);
+  rpc HGet(HGetRequest) returns (HGetResponse);
+  rpc HDel(HDelRequest) returns (HDelResponse);
+  rpc HExists(HExistsRequest) returns (HExistsResponse);
+  rpc HLen(HLenRequest) returns (HLenResponse);
+  rpc HGetAll(HGetAllRequest) returns (HGetAllResponse);
+  rpc HKeys(HKeysRequest) returns (HKeysResponse);
+  rpc HMSet(HMSetRequest) returns (HMSetResponse);
+  rpc HMGet(HMGetRequest) returns (HMGetResponse);
+
+  // Set
+  rpc SAdd(SAddRequest) returns (SAddResponse);
+  rpc SRem(SRemRequest) returns (SRemResponse);
+  rpc SIsMember(SIsMemberRequest) returns (SIsMemberResponse);
+  rpc SCard(SCardRequest) returns (SCardResponse);
+  rpc SMembers(SMembersRequest) returns (SMembersResponse);
+
+  // List
+  rpc LPush(LPushRequest) returns (LPushResponse);
+  rpc RPush(RPushRequest) returns (RPushResponse);
+  rpc LPop(LPopRequest) returns (LPopResponse);
+  rpc RPop(RPopRequest) returns (RPopResponse);
+  rpc LLen(LLenRequest) returns (LLenResponse);
+  rpc LRange(LRangeRequest) returns (LRangeResponse);
+  rpc LIndex(LIndexRequest) returns (LIndexResponse);
+
+  // ZSet
+  rpc ZAdd(ZAddRequest) returns (ZAddResponse);
+  rpc ZRem(ZRemRequest) returns (ZRemResponse);
+  rpc ZScore(ZScoreRequest) returns (ZScoreResponse);
+  rpc ZCard(ZCardRequest) returns (ZCardResponse);
+  rpc ZRange(ZRangeRequest) returns (ZRangeResponse);
+}
+
+message HSetRequest {
+  bytes key = 1;
+  bytes field = 2;
+  bytes value = 3;
+}
+message HSetResponse {
+  bool ok = 1;
+  bool added = 2;  // 新 field
+}
+
+message HGetRequest {
+  bytes key = 1;
+  bytes field = 2;
+}
+message HGetResponse {
+  bytes value = 1;
+  bool found = 2;
+}
+
+message HDelRequest {
+  bytes key = 1;
+  repeated bytes fields = 2;
+}
+message HDelResponse {
+  int64 deleted = 1;
+}
+
+message HExistsRequest {
+  bytes key = 1;
+  bytes field = 2;
+}
+message HExistsResponse {
+  bool exists = 1;
+}
+
+message HLenRequest { bytes key = 1; }
+message HLenResponse { int64 length = 1; }
+
+message HGetAllRequest { bytes key = 1; }
+message HGetAllResponse {
+  repeated bytes fields = 1;
+  repeated bytes values = 2;
+}
+
+message HKeysRequest { bytes key = 1; }
+message HKeysResponse { repeated bytes fields = 1; }
+
+message HMSetRequest {
+  bytes key = 1;
+  repeated bytes fields = 2;
+  repeated bytes values = 3;
+}
+message HMSetResponse { bool ok = 1; }
+
+message HMGetRequest {
+  bytes key = 1;
+  repeated bytes fields = 2;
+}
+message HMGetResponse {
+  repeated bytes values = 1;  // 与 fields 对齐；缺失为空 bytes + founds
+  repeated bool founds = 2;
+}
+
+message SAddRequest {
+  bytes key = 1;
+  repeated bytes members = 2;
+}
+message SAddResponse { int64 added = 1; }
+
+message SRemRequest {
+  bytes key = 1;
+  repeated bytes members = 2;
+}
+message SRemResponse { int64 removed = 1; }
+
+message SIsMemberRequest {
+  bytes key = 1;
+  bytes member = 2;
+}
+message SIsMemberResponse { bool is_member = 1; }
+
+message SCardRequest { bytes key = 1; }
+message SCardResponse { int64 card = 1; }
+
+message SMembersRequest { bytes key = 1; }
+message SMembersResponse { repeated bytes members = 1; }
+
+message LPushRequest {
+  bytes key = 1;
+  repeated bytes values = 2;
+}
+message LPushResponse { int64 length = 1; }
+
+message RPushRequest {
+  bytes key = 1;
+  repeated bytes values = 2;
+}
+message RPushResponse { int64 length = 1; }
+
+message LPopRequest { bytes key = 1; }
+message LPopResponse {
+  bytes value = 1;
+  bool found = 2;
+}
+
+message RPopRequest { bytes key = 1; }
+message RPopResponse {
+  bytes value = 1;
+  bool found = 2;
+}
+
+message LLenRequest { bytes key = 1; }
+message LLenResponse { int64 length = 1; }
+
+message LRangeRequest {
+  bytes key = 1;
+  int64 start = 2;
+  int64 stop = 3;
+}
+message LRangeResponse { repeated bytes values = 1; }
+
+message LIndexRequest {
+  bytes key = 1;
+  int64 index = 2;
+}
+message LIndexResponse {
+  bytes value = 1;
+  bool found = 2;
+}
+
+message ZMemberScore {
+  bytes member = 1;
+  double score = 2;
+}
+
+message ZAddRequest {
+  bytes key = 1;
+  repeated ZMemberScore items = 2;
+}
+message ZAddResponse { int64 added = 1; }
+
+message ZRemRequest {
+  bytes key = 1;
+  repeated bytes members = 2;
+}
+message ZRemResponse { int64 removed = 1; }
+
+message ZScoreRequest {
+  bytes key = 1;
+  bytes member = 2;
+}
+message ZScoreResponse {
+  double score = 1;
+  bool found = 2;
+}
+
+message ZCardRequest { bytes key = 1; }
+message ZCardResponse { int64 card = 1; }
+
+message ZRangeRequest {
+  bytes key = 1;
+  int64 start = 2;
+  int64 stop = 3;
+  bool with_scores = 4;
+}
+message ZRangeResponse {
+  repeated bytes members = 1;
+  repeated double scores = 2;  // with_scores 时填充
+}

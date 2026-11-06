@@ -1,0 +1,15 @@
+# OpsKV Web 管控台（嵌入 static/；构建前可 make admin-frontend 更新前端）
+# docker build -f deploy/Dockerfile.web -t opskv-web:dev .
+
+FROM golang:1.22-bookworm AS build
+WORKDIR /src
+COPY client/go/ ./client/go/
+COPY web/ ./web/
+WORKDIR /src/web
+RUN CGO_ENABLED=0 go build -o /out/skv-web .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/skv-web /opt/opskv/skv-web
+USER nonroot:nonroot
+EXPOSE 19100
+ENTRYPOINT ["/opt/opskv/skv-web"]

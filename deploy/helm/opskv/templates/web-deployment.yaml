@@ -1,0 +1,44 @@
+{{- if .Values.web.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: {{ include "opskv.namespace" . }}
+  labels:
+    {{- include "opskv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "opskv.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: web
+          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          args:
+            - -listen=0.0.0.0:{{ .Values.ports.web }}
+            - -metas={{ include "opskv.metaAddrs" . }}
+            - -storages={{ include "opskv.storageAddrs" . }}
+            - -gateway=gateway.{{ include "opskv.namespace" . }}.svc.{{ .Values.cluster.domain }}:{{ .Values.ports.gateway }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ports.web }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+{{- end }}

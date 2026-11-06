@@ -1,0 +1,15 @@
+# OpsKV compute-gateway（Go）
+# 构建：docker build -f deploy/Dockerfile.gateway -t opskv-gateway:dev .
+
+FROM golang:1.22-bookworm AS build
+WORKDIR /src
+COPY client/go/go.mod client/go/go.sum ./
+RUN go mod download
+COPY client/go/ ./
+RUN CGO_ENABLED=0 go build -o /out/compute-gateway ./cmd/compute-gateway
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/compute-gateway /opt/opskv/compute-gateway
+USER nonroot:nonroot
+EXPOSE 19000
+ENTRYPOINT ["/opt/opskv/compute-gateway"]

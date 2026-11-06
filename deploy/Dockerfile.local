@@ -1,0 +1,17 @@
+# 本地快速镜像：拷贝本机已编译的 meta_server / storage_node（需先 cmake --build）
+# docker build -f deploy/Dockerfile.local -t opskv:dev .
+
+FROM ubuntu:24.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates bash \
+    && rm -rf /var/lib/apt/lists/*
+# macOS 编的 Mach-O 不能进 Linux 容器；此 Dockerfile 仅适用于 Linux 宿主编译产物。
+# Colima 上请用 deploy/Dockerfile 在 Linux 里编，或交叉编译。
+COPY build/meta/meta_server /opt/opskv/meta_server
+COPY build/storage/storage_node /opt/opskv/storage_node
+COPY deploy/docker-entrypoint.sh /opt/opskv/docker-entrypoint.sh
+RUN chmod +x /opt/opskv/docker-entrypoint.sh /opt/opskv/meta_server /opt/opskv/storage_node \
+ && mkdir -p /data /etc/opskv
+WORKDIR /opt/opskv
+ENV OPSKV_ROLE=storage
+ENTRYPOINT ["/opt/opskv/docker-entrypoint.sh"]

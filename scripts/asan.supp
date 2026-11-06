@@ -1,0 +1,3 @@
+# AddressSanitizer / LeakSanitizer 抑制文件（按需追加）
+# 格式见：https://clang.llvm.org/docs/AddressSanitizer.html#suppressing-reports
+# leak:libsystem*

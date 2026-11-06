@@ -1,0 +1,316 @@
+// Copyright 2026 devotionalist
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package meta.v1;
+
+option go_package = "github.com/amydemo/opskv/client/go/gen/meta/v1;metav1";
+option cc_enable_arenas = true;
+
+// 集群元数据：拓扑、路由、在线扩容
+service MetaService {
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc GetRoutingTable(GetRoutingTableRequest) returns (RoutingTable);
+  rpc WatchRoutingTable(WatchRoutingRequest) returns (stream RoutingTable);
+  rpc ScaleOut(ScaleOutRequest) returns (ScaleOutResponse);
+  rpc GetScaleTask(GetScaleTaskRequest) returns (ScaleTask);
+  rpc ListScaleTasks(ListScaleTasksRequest) returns (ListScaleTasksResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
+  // 节点生命周期（原行协议需 ACL）
+  rpc DrainNode(NodeIdRequest) returns (SimpleResponse);
+  rpc ActivateNode(NodeIdRequest) returns (SimpleResponse);
+  rpc OfflineNode(NodeIdRequest) returns (SimpleResponse);
+  rpc JoinNode(NodeIdRequest) returns (SimpleResponse);
+  rpc KickNode(NodeIdRequest) returns (SimpleResponse);
+  rpc RemoveTombstone(NodeIdRequest) returns (SimpleResponse);
+  rpc StoreDelete(NodeIdRequest) returns (SimpleResponse);
+
+  // 拓扑 / 调度
+  rpc SplitRegion(SplitRegionRequest) returns (SplitRegionResponse);
+  rpc MergeRegions(MergeRegionsRequest) returns (SimpleResponse);
+  rpc PlaceRegion(PlaceRegionRequest) returns (SimpleResponse);
+  rpc ScheduleMigrate(ScheduleMigrateRequest) returns (SimpleResponse);
+  rpc CancelMigrate(CancelMigrateRequest) returns (SimpleResponse);
+  rpc ListMigrate(ListMigrateRequest) returns (ListMigrateResponse);
+  rpc Balance(BalanceRequest) returns (SimpleResponse);
+  rpc SuggestPlace(SuggestPlaceRequest) returns (SuggestPlaceResponse);
+  rpc BumpRoute(BumpRouteRequest) returns (SimpleResponse);
+
+  // TSO / GC / 定位
+  rpc GetTs(GetTsRequest) returns (GetTsResponse);
+  rpc GetSafePoint(GetSafePointRequest) returns (GetSafePointResponse);
+  rpc AdvanceSafePoint(AdvanceSafePointRequest) returns (SimpleResponse);
+  rpc ReportMinStartTs(ReportMinStartTsRequest) returns (SimpleResponse);
+  rpc Locate(LocateRequest) returns (LocateResponse);
+  rpc WhoLeader(WhoLeaderRequest) returns (WhoLeaderResponse);
+  rpc StoreStatus(StoreStatusRequest) returns (StoreStatusResponse);
+  rpc FindMergeRight(FindMergeRightRequest) returns (FindMergeRightResponse);
+  // 行协议桥（Storage meta_rpc / 运维未单独建模的命令）
+  rpc ExecLine(ExecLineRequest) returns (ExecLineResponse);
+}
+
+message ExecLineRequest {
+  string line = 1;
+}
+
+message ExecLineResponse {
+  string body = 1;
+}
+
+enum NodeRole {
+  NODE_ROLE_UNSPECIFIED = 0;
+  COMPUTE = 1;
+  STORAGE = 2;
+}
+
+enum NodeState {
+  NODE_STATE_UNSPECIFIED = 0;
+  JOINING = 1;
+  ACTIVE = 2;
+  DRAINING = 3;
+  OFFLINE = 4;
+}
+
+message NodeInfo {
+  string node_id = 1;
+  NodeRole role = 2;
+  string address = 3;
+  NodeState state = 4;
+  map<string, string> labels = 5;
+}
+
+message PingRequest {}
+message PingResponse {
+  string message = 1;
+}
+
+message RegisterNodeRequest {
+  NodeInfo node = 1;
+}
+
+message RegisterNodeResponse {
+  bool ok = 1;
+  string assigned_id = 2;
+  string error = 3;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  repeated uint32 leader_shards = 2;
+  map<string, double> metrics = 3;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  uint64 routing_version = 2;
+  string error = 3;
+}
+
+message ShardReplica {
+  string node_id = 1;
+  string address = 2;
+  bool is_leader = 3;
+  bool is_learner = 4;
+}
+
+message ShardInfo {
+  uint32 shard_id = 1;
+  uint32 raft_group_id = 2;
+  repeated ShardReplica replicas = 3;
+  bytes start_key = 4;
+  bytes end_key = 5;
+  uint64 key_range_start = 6;  // 兼容旧 hash 环字段
+  uint64 key_range_end = 7;
+  uint64 epoch = 8;
+}
+
+message RoutingTable {
+  uint64 version = 1;
+  uint32 shard_count = 2;
+  repeated ShardInfo shards = 3;
+}
+
+message GetRoutingTableRequest {}
+
+message WatchRoutingRequest {
+  uint64 from_version = 1;
+  int32 timeout_ms = 2;
+}
+
+message ScaleOutRequest {
+  string new_storage_node_id = 1;
+  repeated uint32 shard_ids = 2;
+  uint32 target_replica_count = 3;
+}
+
+message ScaleOutResponse {
+  string task_id = 1;
+  bool accepted = 2;
+  string message = 3;
+}
+
+enum ScaleTaskState {
+  SCALE_TASK_UNSPECIFIED = 0;
+  PENDING = 1;
+  ADDING_LEARNER = 2;
+  CATCHING_UP = 3;
+  PROMOTING_VOTER = 4;
+  UPDATING_ROUTE = 5;
+  COMPLETED = 6;
+  FAILED = 7;
+}
+
+message ScaleTask {
+  string task_id = 1;
+  ScaleTaskState state = 2;
+  string new_node_id = 3;
+  repeated uint32 shard_ids = 4;
+  string error = 5;
+  double progress = 6;
+}
+
+message GetScaleTaskRequest {
+  string task_id = 1;
+}
+
+message ListScaleTasksRequest {}
+message ListScaleTasksResponse {
+  repeated ScaleTask tasks = 1;
+}
+
+message ListNodesRequest {
+  NodeRole role = 1;
+}
+
+message ListNodesResponse {
+  repeated NodeInfo nodes = 1;
+}
+
+message NodeIdRequest {
+  string node_id = 1;
+}
+
+message SimpleResponse {
+  bool ok = 1;
+  string message = 2;
+  string error = 3;
+}
+
+message SplitRegionRequest {
+  uint32 region_id = 1;
+  bytes split_key = 2;
+}
+
+message SplitRegionResponse {
+  bool ok = 1;
+  uint32 right_region_id = 2;
+  string error = 3;
+}
+
+message MergeRegionsRequest {
+  uint32 left_region_id = 1;
+  uint32 right_region_id = 2;
+}
+
+message PlaceRegionRequest {
+  uint32 region_id = 1;
+  repeated string peer_node_ids = 2;
+}
+
+message ScheduleMigrateRequest {
+  uint32 region_id = 1;
+  string from_node = 2;
+  string to_node = 3;
+}
+
+message CancelMigrateRequest {
+  string task_id = 1;
+}
+
+message ListMigrateRequest {}
+message MigrateTaskInfo {
+  string task_id = 1;
+  uint32 region_id = 2;
+  string state = 3;
+  string detail = 4;
+}
+message ListMigrateResponse {
+  repeated MigrateTaskInfo tasks = 1;
+}
+
+message BalanceRequest {}
+message SuggestPlaceRequest {
+  uint32 count = 1;
+}
+message SuggestPlaceResponse {
+  repeated string node_ids = 1;
+}
+
+message BumpRouteRequest {}
+
+message GetTsRequest {}
+message GetTsResponse {
+  uint64 ts = 1;
+}
+
+message GetSafePointRequest {}
+message GetSafePointResponse {
+  uint64 safe_point = 1;
+}
+
+message AdvanceSafePointRequest {
+  uint64 safe_point = 1;
+}
+
+message ReportMinStartTsRequest {
+  string node_id = 1;
+  uint64 min_start_ts = 2;
+}
+
+message LocateRequest {
+  bytes key = 1;
+}
+message LocateResponse {
+  bool ok = 1;
+  ShardInfo shard = 2;
+  string error = 3;
+}
+
+message WhoLeaderRequest {}
+message WhoLeaderResponse {
+  string leader_id = 1;
+  string address = 2;
+}
+
+message StoreStatusRequest {
+  string node_id = 1;
+}
+message StoreStatusResponse {
+  bool ok = 1;
+  string status = 2;
+  string error = 3;
+}
+
+message FindMergeRightRequest {
+  uint32 left_region_id = 1;
+}
+message FindMergeRightResponse {
+  bool ok = 1;
+  uint32 right_region_id = 2;
+  string error = 3;
+}

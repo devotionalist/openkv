@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: {{ include "opskv.namespace" . }}
+  labels:
+    {{- include "opskv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.replicaCount.gateway }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "opskv.labels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: "{{ .Values.gatewayImage.repository }}:{{ .Values.gatewayImage.tag }}"
+          imagePullPolicy: {{ .Values.gatewayImage.pullPolicy }}
+          args:
+            - -listen=0.0.0.0:{{ .Values.ports.gateway }}
+            - -stats-listen=0.0.0.0:{{ .Values.ports.gatewayStats }}
+            - -metas={{ include "opskv.metaAddrs" . }}
+            - -storages={{ include "opskv.storageAddrs" . }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.ports.gateway }}
+            - name: stats
+              containerPort: {{ .Values.ports.gatewayStats }}
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

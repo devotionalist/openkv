@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: {{ include "opskv.namespace" . }}
+  labels:
+    {{- include "opskv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ .Values.service.gateway.type }}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: gateway
+  ports:
+    - name: grpc
+      port: {{ .Values.ports.gateway }}
+      targetPort: grpc
+    - name: stats
+      port: {{ .Values.ports.gatewayStats }}
+      targetPort: stats

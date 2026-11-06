@@ -1,0 +1,50 @@
+# 本地 Compose 参考拓扑（生产请用 deploy/helm/opskv）。
+# 镜像：docker build -f deploy/Dockerfile -t opskv:dev .
+# Gateway：docker build -f deploy/Dockerfile.gateway -t opskv-gateway:dev .
+version: "3.9"
+
+services:
+  meta:
+    image: opskv:dev
+    environment:
+      OPSKV_ROLE: meta
+      POD_NAME: meta-0
+      OPSKV_NAMESPACE: compose
+      OPSKV_META_HEADLESS: meta
+      OPSKV_STORAGE_HEADLESS: storage-0
+      OPSKV_META_REPLICAS: "1"
+      OPSKV_STORAGE_REPLICAS: "1"
+      # Compose 无 k8s DNS：覆盖用挂载 conf 更稳；此处演示 entrypoint 角色
+    command: ["/opt/opskv/meta_server", "/opt/opskv/conf/bootstrap.conf"]
+    volumes:
+      - ../conf:/opt/opskv/conf:ro
+    ports:
+      - "8500:8500"
+    networks: [skv]
+
+  storage-0:
+    image: opskv:dev
+    environment:
+      OPSKV_ROLE: storage
+    command: ["/opt/opskv/storage_node", "/opt/opskv/conf/storage.conf"]
+    volumes:
+      - ../conf:/opt/opskv/conf:ro
+      - storage0:/data
+    networks: [skv]
+
+  gateway:
+    image: opskv-gateway:dev
+    command:
+      - -listen=0.0.0.0:19000
+      - -metas=meta:8500
+      - -storages=storage-0:9100
+    ports:
+      - "19000:19000"
+    depends_on: [meta, storage-0]
+    networks: [skv]
+
+networks:
+  skv:
+
+volumes:
+  storage0:

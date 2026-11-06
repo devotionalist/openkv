@@ -1,0 +1,25 @@
+OpsKV Helm release "{{ .Release.Name }}" in namespace {{ include "opskv.namespace" . }}.
+
+Topology: Meta×{{ .Values.replicaCount.meta }} + Storage×{{ .Values.replicaCount.storage }} + Gateway.
+
+Port-forward gateway:
+  kubectl -n {{ include "opskv.namespace" . }} port-forward svc/gateway {{ .Values.ports.gateway }}:{{ .Values.ports.gateway }}
+
+Then:
+  ./.run/kv-example 127.0.0.1:{{ .Values.ports.gateway }}
+
+{{- if .Values.web.enabled }}
+Web UI ({{ .Values.service.web.type }}):
+{{- if eq .Values.service.web.type "LoadBalancer" }}
+  # Colima/k3s: lima 常已转发 guest :{{ .Values.ports.web }} → 本机，直接打开即可
+  open http://127.0.0.1:{{ .Values.ports.web }}
+{{- else }}
+  kubectl -n {{ include "opskv.namespace" . }} port-forward svc/web {{ .Values.ports.web }}:{{ .Values.ports.web }}
+  open http://127.0.0.1:{{ .Values.ports.web }}
+{{- end }}
+{{- end }}
+
+Meta peers (DNS):
+  {{ include "opskv.metaAddrs" . }}
+
+Docs: docs/flows/K8S_HELM.md

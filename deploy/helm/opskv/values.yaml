@@ -1,0 +1,63 @@
+# OpsKV Helm defaults — 3 Meta + 3 Storage HA
+
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  create: true
+  name: opskv
+
+replicaCount:
+  meta: 3
+  storage: 3
+  gateway: 1
+
+image:
+  repository: opskv
+  tag: "dev"
+  pullPolicy: IfNotPresent
+
+gatewayImage:
+  repository: opskv-gateway
+  tag: "dev"
+  pullPolicy: IfNotPresent
+
+ports:
+  meta: 8500
+  storage: 9100
+  gateway: 19000
+  gatewayStats: 19001  # HTTP /stats；须 0.0.0.0 监听，拓扑网关线依赖此端口
+  web: 19100
+
+cluster:
+  shardCount: 8
+  replicaFactor: 3
+  domain: cluster.local
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClassName: ""
+
+service:
+  gateway:
+    type: ClusterIP
+  web:
+    # LoadBalancer: Colima/k3s svclb → host can hit :19100 via lima ssh forward
+    type: LoadBalancer
+
+resources: {}
+
+web:
+  enabled: true
+  image:
+    repository: opskv-web
+    tag: "dev"
+    pullPolicy: IfNotPresent
+
+adminToken: ""
+
+podSecurityContext:
+  fsGroup: 0
+
+securityContext: {}
