@@ -118,7 +118,7 @@
 |-------|------|
 | KvEngineTest | Put/Get/Delete、Snapshot、**SnapshotRangePreservesSibling**（兄弟区间不被空 range 抹掉）、Checkpoint、CF、SyncMode |
 | MvccTest | Lock、可见性、WriteConflict、悲观锁、GC |
-| StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、Epoch、Split seed、幂等 Propose |
+| StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite**、Epoch、Split seed、幂等 Propose |
 | WatchHubTest / WatchLogTest | Watch 过滤与持久化 |
 | InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、Latch、前缀扫描 |
 | RocksRaftEngineTest / ShardEngineManagerTest | Raft 引擎、单 Store 共享引擎 |
@@ -195,6 +195,7 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 
 | 日期 | 场景 | 结果 | 根因 / 处置 |
 |------|------|------|-------------|
+| 2026-11-09 | Version CAS（plain + MVCC） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Cas*'` → 3/3；设计 [13-version-cas.md](../flows/13-version-cas.md)；SDK `PutCAS`/`DeleteCAS` |
 | 2026-10-25 | Gateway Put/Get | FAIL→PASS | Meta 硬重启 TSO 回退 + epoch 错位；TSO 墙钟下界 + epoch 修复 |
 | 2026-10-25 | SCALE_OUT `storage-5→R1` Promote | FAIL→PASS | 快照未带 ConfState，新 Leader 丢 Learner；并发 scale 撞 Joint。已补 ConfState / busy / 串行扩容；现网补 ADD_LEARNER+PROMOTE |
 | 2026-10-25 | Split 后 Merge，`a=11` 丢失、`t=22` 仍在 | FAIL→PASS（代码） | DESTROY/空 range 快照清空共享引擎兄弟区间。已禁空 range 整库清、快照带 SKVR1；**历史 key 需重 put** |

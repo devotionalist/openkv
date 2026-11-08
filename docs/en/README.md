@@ -15,6 +15,7 @@ OpenKV is a compute/storage-separated distributed KV store: **Multi-Raft + Rocks
 | [Networking](networking.md) | Mandatory gRPC; optional Seastar |
 | [Architecture](architecture.md) | Topology, components, HA / scale boundaries |
 | [Contributing](contributing.md) | PR-only workflow, owner approval, tags/releases |
+| [Version CAS (ZH)](../flows/13-version-cas.md) | Single-key revision CAS (Gateway + plain Propose) |
 
 ## Additional design / SOP / test docs
 

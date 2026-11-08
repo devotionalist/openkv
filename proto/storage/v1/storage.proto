@@ -90,6 +90,9 @@ message ProposeRequest {
   int64 ttl_ms = 5;
   string client_id = 6;
   uint64 request_id = 7;
+  // plain KV revision CAS（Raft apply 内校验 KvRecord.revision）
+  bool cas = 8;
+  uint64 expected_revision = 9;
 }
 
 message ProposeResponse {
@@ -97,6 +100,8 @@ message ProposeResponse {
   uint64 revision = 2;
   string error = 3;
   string redirect_to = 4;
+  bool cas_failed = 5;
+  uint64 current_revision = 6;
 }
 
 message TransferRequest {

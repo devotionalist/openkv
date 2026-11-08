@@ -56,20 +56,30 @@ message PutRequest {
   bytes key = 1;
   bytes value = 2;
   int64 ttl_ms = 3;  // 0 = 永不过期
+  // cas=true：按 expected_revision 做版本 CAS（见 docs/flows/13-version-cas.md）
+  // expected_revision=0 表示 create-only（key 必须尚无已提交版本）
+  bool cas = 4;
+  uint64 expected_revision = 5;
 }
 
 message PutResponse {
   uint64 revision = 1;
   bool ok = 2;
+  bool cas_failed = 3;
+  uint64 current_revision = 4;  // cas 失败时的当前版本；不存在为 0
 }
 
 message DeleteRequest {
   bytes key = 1;
+  bool cas = 2;
+  uint64 expected_revision = 3;
 }
 
 message DeleteResponse {
   bool deleted = 1;
   uint64 revision = 2;
+  bool cas_failed = 3;
+  uint64 current_revision = 4;
 }
 
 message BatchGetRequest {
@@ -128,6 +138,8 @@ message TxnGetResponse {
   bytes value = 1;
   bool found = 2;
   bool locked = 3;
+  // 可见版本的 commit_ts（无版本为 0）；Gateway Get 的 revision 取此字段
+  uint64 revision = 4;
 }
 
 message TxnMutation {
@@ -140,11 +152,16 @@ message TxnPrewriteRequest {
   uint64 start_ts = 1;
   bytes primary_key = 2;
   repeated TxnMutation mutations = 3;
+  // 单 key / 各 mutation 共用：对每个 mutation 校验最新 commit_ts
+  bool cas = 4;
+  uint64 expected_revision = 5;
 }
 
 message TxnPrewriteResponse {
   bool ok = 1;
   string error = 2;
+  bool cas_failed = 3;
+  uint64 current_revision = 4;
 }
 
 message TxnCommitRequest {

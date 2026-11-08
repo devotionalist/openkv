@@ -236,9 +236,26 @@ CheckTxnStatusResult MvccStore::check_txn_status(std::string_view primary,
   return r;
 }
 
+std::optional<uint64_t> MvccStore::latest_commit_ts(std::string_view user) const {
+  const std::string pref = write_key_prefix(user);
+  std::optional<uint64_t> latest;
+  eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
+    if (key.size() < pref.size() + 8) return true;
+    const uint64_t inv = read_u64_be(key.data() + pref.size());
+    const uint64_t commit_ts = ~inv;
+    WriteInfo wi;
+    if (!decode_write(rec.value, &wi)) return true;
+    latest = commit_ts;
+    return false;  // write keys are sorted by ~commit_ts → first is newest
+  });
+  return latest;
+}
+
 std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t start_ts,
-                                              bool* locked, LockInfo* blocking_lock) const {
+                                              bool* locked, LockInfo* blocking_lock,
+                                              uint64_t* out_commit_ts) const {
   if (locked) *locked = false;
+  if (out_commit_ts) *out_commit_ts = 0;
   if (auto lk = get_lock(user)) {
     // 悲观锁不挡同事务读；其它事务看到锁则阻塞
     if (lk->start_ts != start_ts) {
@@ -249,6 +266,7 @@ std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t st
   }
   const std::string pref = write_key_prefix(user);
   std::optional<WriteInfo> chosen;
+  uint64_t chosen_ts = 0;
   eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
     if (key.size() < pref.size() + 8) return true;
     const uint64_t inv = read_u64_be(key.data() + pref.size());
@@ -257,9 +275,11 @@ std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t st
     WriteInfo wi;
     if (!decode_write(rec.value, &wi)) return true;
     chosen = wi;
+    chosen_ts = commit_ts;
     return false;
   });
   if (!chosen) return std::nullopt;
+  if (out_commit_ts) *out_commit_ts = chosen_ts;
   if (chosen->op == MvccOp::kDelete) return std::nullopt;
   auto data = eng_.get(data_key(user, chosen->start_ts));
   if (!data) return std::nullopt;

@@ -46,6 +46,7 @@
 | `no_engine` | `ERR no_engine` | 缺引擎 | ENSURE 后重试 |
 | `locked` | `ERR locked` 或 `ERR locked primary=<hex> lock_ts=<n>` | 他事务持锁 | Resolve 路径 |
 | `write_conflict` | `ERR write_conflict` | MVCC 冲突 | **新 start_ts** 重试 |
+| `cas_failed` | `ERR cas_failed current_revision=<n>` | 版本 CAS 不匹配 | 重读 revision 再 CAS；勿盲重试同 expected |
 | `lock_not_found` | `ERR lock_not_found` | Commit 无匹配锁 | 失败 / resolve |
 | `pessimistic_not_prewritten` | `ERR pessimistic_not_prewritten` | 仅悲观锁未 prewrite | 失败 |
 | `read_index_failed` | （常表现为 not_leader） | ReadIndex 失败 | 重试 / redirect |

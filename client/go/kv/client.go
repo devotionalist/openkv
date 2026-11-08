@@ -130,12 +130,56 @@ func (c *Client) Put(ctx context.Context, key, value []byte) (rev uint64, err er
 	return resp.Revision, nil
 }
 
+// CasError 表示版本 CAS 失败；Current 为服务端看到的当前 revision。
+type CasError struct {
+	Current uint64
+}
+
+func (e *CasError) Error() string {
+	return fmt.Sprintf("cas_failed current_revision=%d", e.Current)
+}
+
+// PutCAS 仅当 key 当前 revision==expectedRev 时写入；expectedRev==0 为 create-only。
+func (c *Client) PutCAS(ctx context.Context, key, value []byte, expectedRev uint64) (rev uint64, err error) {
+	ctx, cancel := c.ctx(ctx)
+	defer cancel()
+	resp, err := c.raw.Put(ctx, &kvv1.PutRequest{
+		Key: key, Value: value, Cas: true, ExpectedRevision: expectedRev,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if resp.CasFailed {
+		return 0, &CasError{Current: resp.CurrentRevision}
+	}
+	if !resp.Ok {
+		return 0, fmt.Errorf("put cas rejected")
+	}
+	return resp.Revision, nil
+}
+
 func (c *Client) Delete(ctx context.Context, key []byte) (deleted bool, rev uint64, err error) {
 	ctx, cancel := c.ctx(ctx)
 	defer cancel()
 	resp, err := c.raw.Delete(ctx, &kvv1.DeleteRequest{Key: key})
 	if err != nil {
 		return false, 0, err
+	}
+	return resp.Deleted, resp.Revision, nil
+}
+
+// DeleteCAS 仅当 key 当前 revision==expectedRev 时删除。
+func (c *Client) DeleteCAS(ctx context.Context, key []byte, expectedRev uint64) (deleted bool, rev uint64, err error) {
+	ctx, cancel := c.ctx(ctx)
+	defer cancel()
+	resp, err := c.raw.Delete(ctx, &kvv1.DeleteRequest{
+		Key: key, Cas: true, ExpectedRevision: expectedRev,
+	})
+	if err != nil {
+		return false, 0, err
+	}
+	if resp.CasFailed {
+		return false, 0, &CasError{Current: resp.CurrentRevision}
 	}
 	return resp.Deleted, resp.Revision, nil
 }

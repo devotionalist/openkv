@@ -75,11 +75,15 @@ class StoreServiceImpl final : public pb::StoreService::Service {
     cmd.value = req->value();
     cmd.ttl_ms = req->ttl_ms();
     cmd.request_id = req->request_id();
+    cmd.cas = req->cas();
+    cmd.expected_revision = req->expected_revision();
     auto r = facade_.propose(req->shard_id(), cmd);
     resp->set_ok(r.ok);
     resp->set_revision(r.revision);
     resp->set_error(r.error);
     resp->set_redirect_to(r.redirect_to);
+    resp->set_cas_failed(r.cas_failed);
+    resp->set_current_revision(r.current_revision);
     return Status::OK;
   }
 

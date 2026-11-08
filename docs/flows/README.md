@@ -15,6 +15,7 @@
 | not_leader 重定向 | [08-not-leader-redirect.md](08-not-leader-redirect.md) |
 | Watch | [11-watch.md](11-watch.md) |
 | Hash / Set / List / ZSet | [12-data-structures.md](12-data-structures.md) · [DATA_STRUCTURES.md](../architecture/DATA_STRUCTURES.md) |
+| 版本 CAS | [13-version-cas.md](13-version-cas.md) |
 
 ---
 

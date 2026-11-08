@@ -204,6 +204,11 @@ type LockedError struct {
 func (e *LockedError) Error() string { return e.Raw }
 
 func (c *Client) Prewrite(shard uint32, key []byte, startTs uint64, primary []byte, op uint8, value []byte, epoch uint64) (uint64, error) {
+	return c.PrewriteCAS(shard, key, startTs, primary, op, value, epoch, false, 0)
+}
+
+// PrewriteCAS 在 Prewrite 上附加版本 CAS（expectedRev 为可见版本 commit_ts；0=create-only）。
+func (c *Client) PrewriteCAS(shard uint32, key []byte, startTs uint64, primary []byte, op uint8, value []byte, epoch uint64, cas bool, expectedRev uint64) (uint64, error) {
 	// 空 value 用 "-" 占位，避免 split_ws 吃掉空字段导致 epoch/value 错位（Delete prewrite）。
 	valHex := hex.EncodeToString(value)
 	if valHex == "" {
@@ -211,7 +216,10 @@ func (c *Client) Prewrite(shard uint32, key []byte, startTs uint64, primary []by
 	}
 	line := fmt.Sprintf("PREWRITE %d %s %d %s %d %s",
 		shard, hex.EncodeToString(key), startTs, hex.EncodeToString(primary), op, valHex)
-	if epoch != 0 {
+	if cas {
+		// CAS 必须带 epoch（可为 0）：… value epoch cas expected_rev
+		line += fmt.Sprintf(" %d 1 %d", epoch, expectedRev)
+	} else if epoch != 0 {
 		line += fmt.Sprintf(" %d", epoch)
 	}
 	resp, err := c.call(line)
@@ -319,19 +327,20 @@ func (c *Client) CheckTxnStatus(shard uint32, primary []byte, lockTs uint64) (st
 	return parts[2], commitTs, nil
 }
 
-func (c *Client) TxnGet(shard uint32, key []byte, startTs uint64) (value []byte, found bool, err error) {
+func (c *Client) TxnGet(shard uint32, key []byte, startTs uint64) (value []byte, found bool, rev uint64, err error) {
 	return c.TxnGetOpt(shard, key, startTs, true)
 }
 
 // TxnGetOpt linearizable=false 可读任意副本本地 MVCC（可能落后）。
-func (c *Client) TxnGetOpt(shard uint32, key []byte, startTs uint64, linearizable bool) (value []byte, found bool, err error) {
+// rev 为可见版本 commit_ts（含 Delete tombstone）；无写历史为 0。
+func (c *Client) TxnGetOpt(shard uint32, key []byte, startTs uint64, linearizable bool) (value []byte, found bool, rev uint64, err error) {
 	lin := 1
 	if !linearizable {
 		lin = 0
 	}
 	resp, err := c.call(fmt.Sprintf("TXN_GET %d %s %d %d", shard, hex.EncodeToString(key), startTs, lin))
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	parts := strings.Fields(resp)
 	if len(parts) >= 1 && parts[0] == "ERR" {
@@ -345,21 +354,24 @@ func (c *Client) TxnGetOpt(shard uint32, key []byte, startTs uint64, linearizabl
 					le.LockTs, _ = strconv.ParseUint(strings.TrimPrefix(f, "lock_ts="), 10, 64)
 				}
 			}
-			return nil, false, le
+			return nil, false, 0, le
 		}
-		return nil, false, c.txnErr(resp, "txn_get")
+		return nil, false, 0, c.txnErr(resp, "txn_get")
 	}
 	if len(parts) < 3 || parts[0] != "OK" || parts[1] != "TXN_GET" {
-		return nil, false, fmt.Errorf("txn_get: %s", resp)
+		return nil, false, 0, fmt.Errorf("txn_get: %s", resp)
+	}
+	if len(parts) >= 4 {
+		rev, _ = strconv.ParseUint(parts[3], 10, 64)
 	}
 	if parts[2] == "-" {
-		return nil, false, nil
+		return nil, false, rev, nil
 	}
 	value, err = hex.DecodeString(parts[2])
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
-	return value, true, nil
+	return value, true, rev, nil
 }
 
 // WatchEvent 与 Storage WATCH_POLL 对齐。

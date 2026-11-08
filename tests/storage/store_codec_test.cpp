@@ -73,3 +73,19 @@ TEST(StoreCodecTest, RequestIdRoundTrip) {
   ASSERT_TRUE(decode_command(old, &out2));
   EXPECT_EQ(out2.request_id, 0u);
 }
+
+TEST(StoreCodecTest, CasTrailerRoundTrip) {
+  Command in;
+  in.op = CmdOp::kPut;
+  in.key = "k";
+  in.value = "v";
+  in.cas = true;
+  in.expected_revision = 42;
+  in.request_id = 7;
+  auto bytes = encode_command(in);
+  Command out;
+  ASSERT_TRUE(decode_command(bytes, &out));
+  EXPECT_TRUE(out.cas);
+  EXPECT_EQ(out.expected_revision, 42u);
+  EXPECT_EQ(out.request_id, 7u);
+}

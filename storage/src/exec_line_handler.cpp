@@ -343,13 +343,18 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
           shard, parts[2], std::stoull(parts[3]), std::stoull(parts[4]), std::stoull(parts[5]),
           std::stoull(parts[6]), std::stoull(parts[7]), parts[8] != "0", chunk);
     }
-    if (op == proto::kOpPut && parts.size() == 4) {
+    // PUT shard hex_key hex_value [cas expected_rev]
+    if (op == proto::kOpPut && (parts.size() == 4 || parts.size() == 6)) {
       uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
       std::string key, value;
       if (!from_hex(parts[2], &key) || !from_hex(parts[3], &value)) {
         return "ERR bad_hex";
       }
       Command cmd{CmdOp::kPut, key, value, 0};
+      if (parts.size() == 6) {
+        cmd.cas = parts[4] != "0";
+        cmd.expected_revision = std::stoull(parts[5]);
+      }
       auto r = facade_.propose(shard, cmd);
       if (!r.ok) {
         return "ERR " + (r.error.empty() ? "propose_failed" : r.error) +
@@ -377,13 +382,18 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       }
       return "OK GET " + std::to_string(r.revision) + " " + to_hex(r.value);
     }
-    if (op == proto::kOpDel && parts.size() == 3) {
+    // DEL shard hex_key [cas expected_rev]
+    if (op == proto::kOpDel && (parts.size() == 3 || parts.size() == 5)) {
       uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
       std::string key;
       if (!from_hex(parts[2], &key)) {
         return "ERR bad_hex";
       }
       Command cmd{CmdOp::kDelete, key, "", 0};
+      if (parts.size() == 5) {
+        cmd.cas = parts[3] != "0";
+        cmd.expected_revision = std::stoull(parts[4]);
+      }
       auto r = facade_.propose(shard, cmd);
       if (!r.ok) {
         return "ERR " + (r.error.empty() ? "propose_failed" : r.error) +
@@ -391,9 +401,11 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       }
       return "OK DEL " + std::to_string(r.revision) + " 1";
     }
-    // PREWRITE rid hex_key start_ts hex_primary op hex_value [epoch]
+    // PREWRITE rid hex_key start_ts hex_primary op hex_value [epoch] [cas expected_rev]
     // hex_value 可为 "-" 表示空（Delete）；避免空白字段被 split 吃掉。
-    if (op == proto::kOpPrewrite && (parts.size() == 7 || parts.size() == 8)) {
+    // CAS 时必须带 epoch（可为 0）：… value epoch cas expected_rev → 10 fields
+    if (op == proto::kOpPrewrite &&
+        (parts.size() == 7 || parts.size() == 8 || parts.size() == 10)) {
       uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
       std::string key, primary, value;
       if (!from_hex(parts[2], &key) || !from_hex(parts[4], &primary)) {
@@ -406,8 +418,17 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       }
       const uint64_t start_ts = std::stoull(parts[3]);
       const uint8_t mop = static_cast<uint8_t>(std::stoul(parts[5]));
-      const uint64_t epoch = parts.size() == 8 ? std::stoull(parts[7]) : 0;
-      auto r = facade_.prewrite(shard, key, start_ts, primary, mop, value, epoch);
+      uint64_t epoch = 0;
+      bool cas = false;
+      uint64_t expected_rev = 0;
+      if (parts.size() == 8) {
+        epoch = std::stoull(parts[7]);
+      } else if (parts.size() == 10) {
+        epoch = std::stoull(parts[7]);
+        cas = parts[8] != "0";
+        expected_rev = std::stoull(parts[9]);
+      }
+      auto r = facade_.prewrite(shard, key, start_ts, primary, mop, value, epoch, cas, expected_rev);
       if (!r.ok) {
         return "ERR " + (r.error.empty() ? "prewrite_failed" : r.error) +
                (r.redirect_to.empty() ? "" : (" redirect=" + r.redirect_to));
@@ -532,8 +553,9 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
         return "ERR locked primary=" + to_hex(r.blocking_lock.primary) +
                " lock_ts=" + std::to_string(r.blocking_lock.start_ts);
       }
-      if (!r.found) return "OK TXN_GET -";
-      return "OK TXN_GET " + to_hex(r.value);
+      // OK TXN_GET <hex|-> <revision>
+      if (!r.found) return "OK TXN_GET - " + std::to_string(r.revision);
+      return "OK TXN_GET " + to_hex(r.value) + " " + std::to_string(r.revision);
     }
     // WATCH_HEAD rid — 当前 Region last_applied（Watch 起点）
     if (op == proto::kOpWatchHead && parts.size() == 2) {

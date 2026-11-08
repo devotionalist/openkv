@@ -128,7 +128,7 @@ func (s *server) Get(ctx context.Context, req *kvv1.GetRequest) (*kvv1.GetRespon
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
-		return &kvv1.GetResponse{Value: tg.Value, Found: tg.Found, Revision: ts}, nil
+		return &kvv1.GetResponse{Value: tg.Value, Found: tg.Found, Revision: tg.Revision}, nil
 	}
 	return nil, fmt.Errorf("get: splitting or locked")
 }
@@ -139,12 +139,12 @@ func (s *server) getStale(ctx context.Context, key []byte) (*kvv1.GetResponse, e
 	region := s.regionOf(key)
 	var last error
 	for _, st := range s.tryOrder(region) {
-		val, found, err := st.TxnGetOpt(region, key, ^uint64(0), false)
+		val, found, rev, err := st.TxnGetOpt(region, key, ^uint64(0), false)
 		if err != nil {
 			last = err
 			continue
 		}
-		return &kvv1.GetResponse{Value: val, Found: found, Revision: 0}, nil
+		return &kvv1.GetResponse{Value: val, Found: found, Revision: rev}, nil
 	}
 	if last == nil {
 		last = fmt.Errorf("no storage")
@@ -162,9 +162,11 @@ func (s *server) Put(ctx context.Context, req *kvv1.PutRequest) (*kvv1.PutRespon
 		// 短 Put 也登记 start_ts，防止 GC 水位越过进行中的 Prewrite
 		s.activeTs.add(start)
 		pw, err := s.TxnPrewrite(ctx, &kvv1.TxnPrewriteRequest{
-			StartTs:    start,
-			PrimaryKey: req.Key,
-			Mutations:  []*kvv1.TxnMutation{{Key: req.Key, Value: req.Value}},
+			StartTs:           start,
+			PrimaryKey:        req.Key,
+			Mutations:         []*kvv1.TxnMutation{{Key: req.Key, Value: req.Value}},
+			Cas:               req.Cas,
+			ExpectedRevision:  req.ExpectedRevision,
 		})
 		if err != nil {
 			s.activeTs.remove(start)
@@ -173,13 +175,20 @@ func (s *server) Put(ctx context.Context, req *kvv1.PutRequest) (*kvv1.PutRespon
 		if !pw.Ok {
 			s.activeTs.remove(start)
 			lastErr = pw.Error
+			if pw.CasFailed {
+				return &kvv1.PutResponse{
+					Ok:               false,
+					CasFailed:        true,
+					CurrentRevision:  pw.CurrentRevision,
+				}, nil
+			}
 			if strings.Contains(pw.Error, "splitting") || strings.Contains(pw.Error, "epoch_not_match") {
 				s.refreshRoutes()
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
 			// Meta 重启后 TSO 回退时，旧 commit 会触发 write_conflict；换新 ts 重试。
-			if strings.Contains(pw.Error, "write_conflict") {
+			if strings.Contains(pw.Error, "write_conflict") && !req.Cas {
 				time.Sleep(20 * time.Millisecond)
 				continue
 			}
@@ -222,9 +231,11 @@ func (s *server) Delete(ctx context.Context, req *kvv1.DeleteRequest) (*kvv1.Del
 		}
 		s.activeTs.add(start)
 		pw, err := s.TxnPrewrite(ctx, &kvv1.TxnPrewriteRequest{
-			StartTs:    start,
-			PrimaryKey: req.Key,
-			Mutations:  []*kvv1.TxnMutation{{Key: req.Key, IsDelete: true}},
+			StartTs:          start,
+			PrimaryKey:       req.Key,
+			Mutations:        []*kvv1.TxnMutation{{Key: req.Key, IsDelete: true}},
+			Cas:              req.Cas,
+			ExpectedRevision: req.ExpectedRevision,
 		})
 		if err != nil {
 			s.activeTs.remove(start)
@@ -232,6 +243,13 @@ func (s *server) Delete(ctx context.Context, req *kvv1.DeleteRequest) (*kvv1.Del
 		}
 		if !pw.Ok {
 			s.activeTs.remove(start)
+			if pw.CasFailed {
+				return &kvv1.DeleteResponse{
+					Deleted:         false,
+					CasFailed:       true,
+					CurrentRevision: pw.CurrentRevision,
+				}, nil
+			}
 			if strings.Contains(pw.Error, "splitting") {
 				s.refreshRoutes()
 				time.Sleep(50 * time.Millisecond)

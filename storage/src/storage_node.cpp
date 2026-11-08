@@ -223,8 +223,21 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
     }
   };
   auto& eng = engines_->get_or_create(shard_id);
+  auto cas_fail = [&](uint64_t cur) {
+    finish("cas_failed current_revision=" + std::to_string(cur));
+  };
   switch (cmd.op) {
-    case CmdOp::kPut:
+    case CmdOp::kPut: {
+      if (cmd.cas) {
+        auto cur = eng.get(cmd.key);
+        const uint64_t cur_rev = cur ? cur->revision : 0;
+        const bool match = (cmd.expected_revision == 0) ? !cur.has_value()
+                                                       : (cur && cur->revision == cmd.expected_revision);
+        if (!match) {
+          cas_fail(cur_rev);
+          break;
+        }
+      }
       eng.put(cmd.key, cmd.value, index);
       {
         WatchRecord wr{shard_id, index, false, cmd.key, cmd.value};
@@ -233,7 +246,18 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
       }
       finish();
       break;
-    case CmdOp::kDelete:
+    }
+    case CmdOp::kDelete: {
+      if (cmd.cas) {
+        auto cur = eng.get(cmd.key);
+        const uint64_t cur_rev = cur ? cur->revision : 0;
+        const bool match = (cmd.expected_revision == 0) ? !cur.has_value()
+                                                       : (cur && cur->revision == cmd.expected_revision);
+        if (!match) {
+          cas_fail(cur_rev);
+          break;
+        }
+      }
       eng.del(cmd.key, index);
       {
         WatchRecord wr{shard_id, index, true, cmd.key, {}};
@@ -242,6 +266,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
       }
       finish();
       break;
+    }
     case CmdOp::kPrewrite: {
       uint64_t start_ts = 0;
       uint8_t mop = 0;
@@ -252,6 +277,21 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
         break;
       }
       MvccStore mvcc(eng);
+      if (cmd.cas) {
+        bool locked = false;
+        uint64_t cur_rev = 0;
+        auto vis = mvcc.txn_get(cmd.key, ~uint64_t{0}, &locked, nullptr, &cur_rev);
+        if (locked) {
+          finish("locked");
+          break;
+        }
+        const bool match = (cmd.expected_revision == 0) ? !vis.has_value()
+                                                       : (cur_rev == cmd.expected_revision);
+        if (!match) {
+          cas_fail(cur_rev);
+          break;
+        }
+      }
       if (auto lk = mvcc.get_lock(cmd.key)) {
         if (lk->start_ts != start_ts) {
           finish("locked");

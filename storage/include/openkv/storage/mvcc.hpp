@@ -82,7 +82,10 @@ class MvccStore {
 
   std::optional<LockInfo> get_lock(std::string_view user) const;
   std::optional<std::string> txn_get(std::string_view user, uint64_t start_ts,
-                                     bool* locked, LockInfo* blocking_lock = nullptr) const;
+                                     bool* locked, LockInfo* blocking_lock = nullptr,
+                                     uint64_t* out_commit_ts = nullptr) const;
+  /// 最新已提交 write 的 commit_ts；无则 nullopt（含仅删除后的「不存在」仍有 tombstone 时返回该 ts）。
+  std::optional<uint64_t> latest_commit_ts(std::string_view user) const;
   bool has_write_conflict(std::string_view user, uint64_t start_ts) const;
   /// 查找 start_ts 对应的 commit_ts（若已提交）。
   std::optional<uint64_t> find_commit_ts(std::string_view user, uint64_t start_ts) const;

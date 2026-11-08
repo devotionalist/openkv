@@ -184,11 +184,11 @@ func (s *server) TxnGet(ctx context.Context, req *kvv1.TxnGetRequest) (*kvv1.Txn
 		region := s.regionOf(req.Key)
 		var out *kvv1.TxnGetResponse
 		err := s.withLeader(region, func(c *storagetcp.Client) error {
-			val, found, e := c.TxnGet(region, req.Key, req.StartTs)
+			val, found, rev, e := c.TxnGet(region, req.Key, req.StartTs)
 			if e != nil {
 				return e
 			}
-			out = &kvv1.TxnGetResponse{Value: val, Found: found}
+			out = &kvv1.TxnGetResponse{Value: val, Found: found, Revision: rev}
 			return nil
 		})
 		if err == nil {
@@ -209,6 +209,20 @@ func (s *server) TxnGet(ctx context.Context, req *kvv1.TxnGetRequest) (*kvv1.Txn
 	return &kvv1.TxnGetResponse{Locked: true}, nil
 }
 
+func parseCasCurrentRev(errMsg string) uint64 {
+	const p = "current_revision="
+	i := strings.Index(errMsg, p)
+	if i < 0 {
+		return 0
+	}
+	rest := errMsg[i+len(p):]
+	var n uint64
+	for j := 0; j < len(rest) && rest[j] >= '0' && rest[j] <= '9'; j++ {
+		n = n*10 + uint64(rest[j]-'0')
+	}
+	return n
+}
+
 func (s *server) TxnPrewrite(ctx context.Context, req *kvv1.TxnPrewriteRequest) (*kvv1.TxnPrewriteResponse, error) {
 	if len(req.Mutations) == 0 {
 		return &kvv1.TxnPrewriteResponse{Ok: false, Error: "empty"}, nil
@@ -227,11 +241,17 @@ func (s *server) TxnPrewrite(ctx context.Context, req *kvv1.TxnPrewriteRequest) 
 		}
 		key := m.Key
 		err := s.withLeaderEpoch(region, func(c *storagetcp.Client, epoch uint64) error {
-			_, e := c.Prewrite(region, key, req.StartTs, primary, op, val, epoch)
+			_, e := c.PrewriteCAS(region, key, req.StartTs, primary, op, val, epoch, req.Cas, req.ExpectedRevision)
 			return e
 		})
 		if err != nil {
-			return &kvv1.TxnPrewriteResponse{Ok: false, Error: err.Error()}, nil
+			msg := err.Error()
+			resp := &kvv1.TxnPrewriteResponse{Ok: false, Error: msg}
+			if strings.Contains(msg, "cas_failed") {
+				resp.CasFailed = true
+				resp.CurrentRevision = parseCasCurrentRev(msg)
+			}
+			return resp, nil
 		}
 	}
 	return &kvv1.TxnPrewriteResponse{Ok: true}, nil

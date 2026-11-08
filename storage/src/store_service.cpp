@@ -21,6 +21,7 @@
 #include "openkv/storage/mvcc.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -141,7 +142,10 @@ bool decode_pessimistic_lock_value(std::string_view data, uint64_t* start_ts,
   return true;
 }
 
-// 二进制布局：op(1) | klen(4) | vlen(4) | ttl_ms(8) | key | value [| request_id(8)]
+// 二进制布局：
+//   op(1) | klen(4) | vlen(4) | ttl_ms(8) | key | value
+//   [| request_id(8)]                                    — 旧格式
+//   [| request_id(8) | cas(1) | expected_revision(8)]    — CAS 扩展（17 字节尾）
 std::string encode_command(const Command& cmd) {
   std::string out;
   out.push_back(static_cast<char>(cmd.op));
@@ -152,7 +156,11 @@ std::string encode_command(const Command& cmd) {
   out.append(reinterpret_cast<const char*>(&cmd.ttl_ms), sizeof(cmd.ttl_ms));
   out.append(cmd.key);
   out.append(cmd.value);
-  if (cmd.request_id != 0) {
+  if (cmd.cas) {
+    out.append(reinterpret_cast<const char*>(&cmd.request_id), sizeof(cmd.request_id));
+    out.push_back(static_cast<char>(1));
+    out.append(reinterpret_cast<const char*>(&cmd.expected_revision), sizeof(cmd.expected_revision));
+  } else if (cmd.request_id != 0) {
     out.append(reinterpret_cast<const char*>(&cmd.request_id), sizeof(cmd.request_id));
   }
   return out;
@@ -179,10 +187,22 @@ bool decode_command(const std::string& data, Command* out) {
   out->value.assign(data.data() + off, vlen);
   off += vlen;
   out->request_id = 0;
+  out->cas = false;
+  out->expected_revision = 0;
   if (off == data.size()) return true;
-  if (off + sizeof(uint64_t) != data.size()) return false;
-  std::memcpy(&out->request_id, data.data() + off, sizeof(out->request_id));
-  return true;
+  const size_t rem = data.size() - off;
+  if (rem == sizeof(uint64_t)) {
+    std::memcpy(&out->request_id, data.data() + off, sizeof(out->request_id));
+    return true;
+  }
+  if (rem == sizeof(uint64_t) + 1 + sizeof(uint64_t)) {
+    std::memcpy(&out->request_id, data.data() + off, sizeof(out->request_id));
+    off += sizeof(out->request_id);
+    out->cas = (static_cast<uint8_t>(data[off++]) != 0);
+    std::memcpy(&out->expected_revision, data.data() + off, sizeof(out->expected_revision));
+    return true;
+  }
+  return false;
 }
 
 StoreFacade::StoreFacade(StorageNode& node) : node_(node) {}
@@ -273,6 +293,14 @@ ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
     r.error = "propose_failed";
     return r;
   }
+  auto fill_cas_meta = [&](ProposeResult& pr) {
+    if (pr.error.rfind("cas_failed", 0) != 0) return;
+    pr.cas_failed = true;
+    const auto pos = pr.error.find("current_revision=");
+    if (pos != std::string::npos) {
+      pr.current_revision = std::strtoull(pr.error.c_str() + pos + 17, nullptr, 10);
+    }
+  };
   for (int i = 0; i < 400; ++i) {
     auto st = group->soft_state();
     if (st.last_applied >= idx) {
@@ -280,6 +308,7 @@ ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
       if (ar && !ar->empty()) {
         r.error = *ar;
         r.revision = idx;
+        fill_cas_meta(r);
         if (cmd.request_id != 0) {
           node_.remember_request(shard_id, cmd.request_id,
                                  StorageNode::IdempotentRecord{false, idx, r.error});
@@ -349,7 +378,8 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
 
 ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                     std::string_view primary, uint8_t mvcc_op,
-                                    std::string_view value, uint64_t expected_epoch) {
+                                    std::string_view value, uint64_t expected_epoch, bool cas,
+                                    uint64_t expected_revision) {
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) return gate;
   auto* eng = node_.engines().get(shard_id);
@@ -371,10 +401,31 @@ ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uin
     gate.error = "write_conflict";
     return gate;
   }
+  // Leader 快路径 CAS 预检（最终仍以 apply 为准）
+  if (cas) {
+    bool locked = false;
+    uint64_t cur_rev = 0;
+    auto vis = mvcc.txn_get(key, ~uint64_t{0}, &locked, nullptr, &cur_rev);
+    if (locked) {
+      gate.ok = false;
+      gate.error = "locked";
+      return gate;
+    }
+    const bool match = (expected_revision == 0) ? !vis.has_value() : (cur_rev == expected_revision);
+    if (!match) {
+      gate.ok = false;
+      gate.cas_failed = true;
+      gate.current_revision = cur_rev;
+      gate.error = "cas_failed current_revision=" + std::to_string(cur_rev);
+      return gate;
+    }
+  }
   Command cmd;
   cmd.op = CmdOp::kPrewrite;
   cmd.key = std::string(key);
   cmd.value = encode_prewrite_value(start_ts, mvcc_op, primary, value);
+  cmd.cas = cas;
+  cmd.expected_revision = expected_revision;
   return propose(shard_id, cmd);
 }
 
@@ -518,8 +569,10 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
   MvccStore mvcc(*eng);
   bool locked = false;
   LockInfo blk;
-  auto val = mvcc.txn_get(key, start_ts, &locked, &blk);
+  uint64_t commit_ts = 0;
+  auto val = mvcc.txn_get(key, start_ts, &locked, &blk, &commit_ts);
   r.locked = locked;
+  r.revision = commit_ts;
   if (locked) {
     r.blocking_lock = blk;
     r.error = "locked";

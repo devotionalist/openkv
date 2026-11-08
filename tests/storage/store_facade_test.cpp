@@ -102,3 +102,60 @@ TEST_F(StoreFacadeTest, IndependentShards) {
   EXPECT_EQ(facade_->get(1, "k1", true).value, "s1");
   EXPECT_TRUE(node_->engines().shares_engine(0, 1));
 }
+
+TEST_F(StoreFacadeTest, PlainCasCreateOnlyAndMatch) {
+  Command create;
+  create.op = CmdOp::kPut;
+  create.key = "cas-k";
+  create.value = "v1";
+  create.cas = true;
+  create.expected_revision = 0;
+  auto c1 = facade_->propose(0, create);
+  ASSERT_TRUE(c1.ok) << c1.error;
+
+  auto again = facade_->propose(0, create);
+  ASSERT_FALSE(again.ok);
+  EXPECT_TRUE(again.cas_failed) << again.error;
+  EXPECT_EQ(again.current_revision, c1.revision);
+
+  auto gr = facade_->get(0, "cas-k", true);
+  ASSERT_TRUE(gr.found);
+  Command upd;
+  upd.op = CmdOp::kPut;
+  upd.key = "cas-k";
+  upd.value = "v2";
+  upd.cas = true;
+  upd.expected_revision = gr.revision;
+  auto c2 = facade_->propose(0, upd);
+  ASSERT_TRUE(c2.ok) << c2.error;
+  EXPECT_GT(c2.revision, gr.revision);
+
+  upd.expected_revision = gr.revision;  // stale
+  auto stale = facade_->propose(0, upd);
+  ASSERT_FALSE(stale.ok);
+  EXPECT_TRUE(stale.cas_failed);
+  EXPECT_EQ(stale.current_revision, c2.revision);
+}
+
+TEST_F(StoreFacadeTest, MvccCasViaPrewrite) {
+  // seed via prewrite+commit
+  auto pw = facade_->prewrite(0, "m-cas", 100, "m-cas", 0, "a", 0, false, 0);
+  ASSERT_TRUE(pw.ok) << pw.error;
+  auto cm = facade_->commit(0, "m-cas", 100, 200, 0);
+  ASSERT_TRUE(cm.ok) << cm.error;
+
+  auto tg = facade_->txn_get(0, "m-cas", ~uint64_t{0}, true);
+  ASSERT_TRUE(tg.found);
+  EXPECT_EQ(tg.revision, 200u);
+
+  auto bad = facade_->prewrite(0, "m-cas", 300, "m-cas", 0, "b", 0, true, 199);
+  ASSERT_FALSE(bad.ok);
+  EXPECT_TRUE(bad.cas_failed);
+
+  auto good = facade_->prewrite(0, "m-cas", 300, "m-cas", 0, "b", 0, true, 200);
+  ASSERT_TRUE(good.ok) << good.error;
+  ASSERT_TRUE(facade_->commit(0, "m-cas", 300, 400, 0).ok);
+
+  auto create = facade_->prewrite(0, "m-new", 500, "m-new", 0, "x", 0, true, 0);
+  ASSERT_TRUE(create.ok) << create.error;
+}

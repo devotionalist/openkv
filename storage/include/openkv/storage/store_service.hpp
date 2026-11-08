@@ -57,6 +57,9 @@ struct Command {
   int64_t ttl_ms{0};
   /// E4：非 0 时 Leader 去重；编码为 payload 尾部 u64（旧消息无尾部则视为 0）。
   uint64_t request_id{0};
+  /// 版本 CAS：apply 内校验；plain Put/Del 用 KvRecord.revision，Prewrite 用最新 commit_ts。
+  bool cas{false};
+  uint64_t expected_revision{0};
 };
 
 std::string encode_command(const Command& cmd);
@@ -85,6 +88,8 @@ struct ProposeResult {
   uint64_t revision{0};
   std::string error;
   std::string redirect_to;
+  bool cas_failed{false};
+  uint64_t current_revision{0};
 };
 
 struct GetResult {
@@ -99,6 +104,7 @@ struct TxnGetResult {
   bool found{false};
   bool locked{false};
   std::string value;
+  uint64_t revision{0};  ///< 可见版本 commit_ts；无则为 0
   LockInfo blocking_lock;
   bool is_leader{false};
   std::string redirect_to;
@@ -129,10 +135,11 @@ class StoreFacade {
   ProposeResult propose(uint32_t shard_id, const Command& cmd);
   GetResult get(uint32_t shard_id, std::string_view key, bool linearizable);
 
-  /// expected_epoch==0 跳过校验。
+  /// expected_epoch==0 跳过校验。cas=true 时 apply 校验最新 commit_ts == expected_revision（0=create-only）。
   ProposeResult prewrite(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                          std::string_view primary, uint8_t mvcc_op, std::string_view value,
-                         uint64_t expected_epoch = 0);
+                         uint64_t expected_epoch = 0, bool cas = false,
+                         uint64_t expected_revision = 0);
   ProposeResult commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        uint64_t commit_ts, uint64_t expected_epoch = 0);
   ProposeResult rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,
