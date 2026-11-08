@@ -2,6 +2,8 @@
 
 # OpenKV Documentation
 
+**This is the default documentation language.**
+
 OpenKV is a compute/storage-separated distributed KV store: **Multi-Raft + RocksDB + gRPC** (C++ Meta/Storage, Go Gateway/clients). Keys live in ordered **Range Regions** with default replication factor **3**.
 
 ## Getting started & operations
@@ -14,19 +16,19 @@ OpenKV is a compute/storage-separated distributed KV store: **Multi-Raft + Rocks
 | [Architecture](architecture.md) | Topology, components, HA / scale boundaries |
 | [Contributing](contributing.md) | PR-only workflow, owner approval, tags/releases |
 
-## Chinese deep docs (design / SOP / tests)
+## Additional design / SOP / test docs
 
-Full Chinese catalogs (architecture, production, topology, ops, tests, flows):
+Deep design notes (mostly Chinese today) are linked from the [Chinese index](../zh/README.md). Prefer the English pages above for onboarding; use the Chinese catalog for architecture / ops / flow detail until those pages are fully translated.
 
-| Area | Index |
-|------|-------|
-| Full Chinese index | [docs/zh/](../zh/README.md) |
-| Architecture | [architecture/](../architecture/ARCHITECTURE.md) |
-| Production requirements | [production/](../production/META_PRODUCTION.md) |
-| Data topology | [topology/](../topology/DATA_TOPOLOGY_INDEX.md) |
-| Ops / SOP | [ops/](../ops/REGION_OPS.md) |
-| Tests | [test/](../test/TEST_CASES.md) |
-| Flow diagrams | [flows/](../flows/README.md) |
+| Area | Link |
+|------|------|
+| Chinese index | [docs/zh/](../zh/README.md) |
+| Architecture (ZH) | [architecture/](../architecture/ARCHITECTURE.md) |
+| Production (ZH) | [production/](../production/META_PRODUCTION.md) |
+| Topology (ZH) | [topology/](../topology/DATA_TOPOLOGY_INDEX.md) |
+| Ops / SOP (ZH) | [ops/](../ops/REGION_OPS.md) |
+| Tests (ZH) | [test/](../test/TEST_CASES.md) |
+| Flows (ZH) | [flows/](../flows/README.md) |
 | Backlog | [BACKLOG.md](../BACKLOG.md) |
 
 License: [Apache License 2.0](../../LICENSE)

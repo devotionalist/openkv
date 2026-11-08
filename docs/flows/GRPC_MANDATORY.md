@@ -1,6 +1,6 @@
 # gRPC 强制（拆除行协议双栈）
 
-**公开读者请看：** [docs/NETWORKING.md](../NETWORKING.md)（现状与组件对照）。本文保留变更动机与验收命令。
+**公开读者请看（默认英文）：** [docs/en/networking.md](../en/networking.md) · 中文 [docs/NETWORKING.md](../NETWORKING.md)（现状与组件对照）。本文保留变更动机与验收命令。
 
 ## 问题
 

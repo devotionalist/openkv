@@ -2,7 +2,7 @@
 
 # OpenKV 文档
 
-仓库全部设计 / 运维 / 测试文档集中在 `docs/`。英文入门见 [docs/en/](../en/README.md)；根目录快速入口见 [README.md](../../README.md)。
+**默认语言为英文**：[docs/en/](../en/README.md)。本页为中文索引；根目录快速入口见 [README.md](../../README.md)。
 
 ---
 

@@ -14,7 +14,7 @@ web/                    ← 本模块（独立 go.mod）
     cluster/            Meta / Storage **gRPC** 客户端（含 ExecLine）
 ```
 
-KV 调试经 Gateway gRPC，依赖同仓库 `client/go`（`replace`）。网络总览见 [docs/NETWORKING.md](../docs/NETWORKING.md)。
+KV 调试经 Gateway gRPC，依赖同仓库 `client/go`（`replace`）。网络总览见 [docs/en/networking.md](../docs/en/networking.md)（默认英文；中文 [NETWORKING.md](../docs/NETWORKING.md)）。
 
 ## 前端（TypeScript）
 
@@ -55,4 +55,4 @@ SKV_ADMIN=1 make cluster-up   # 集群启动时一并拉起
 | `-gateway` | `SKV_GATEWAY` / 19000 | Gateway gRPC |
 | `-run-dir` | `SKV_RUN` | `.run` 进程面板 |
 
-详见 [docs/USER_GUIDE.md](../docs/USER_GUIDE.md)（管控台与运维说明）。
+详见 [docs/en/user-guide.md](../docs/en/user-guide.md)（默认英文；中文 [USER_GUIDE.md](../docs/USER_GUIDE.md)）。

@@ -1,7 +1,7 @@
 # OpenKV 待做计划（Backlog）
 
 依据：`COMPONENT_MAP` / `META_PRODUCTION` / `STORE_PRODUCTION` / `MULTI_RAFT_PRODUCTION` / `TRANSACTION_SURVEY` / `SEASTAR_NET` 与近期缺口。  
-文档总目录：[中文索引](./zh/README.md) · [English](./en/README.md)。更新：2026-10-27。
+文档总目录（默认英文）：[English](./en/README.md) · [中文](./zh/README.md)。更新：2026-10-27。
 
 ---
 

@@ -4,7 +4,7 @@
 与 RocksDB 一样：**CMake `FetchContent` 直接拉源码编进工程**（`cmake/FetchSeastar.cmake`），链接 `Seastar::seastar`。  
 不要求本机预先 `cmake --install` Seastar；只需装好上游的**系统依赖**。
 
-**公开说明（推荐先读）：** [docs/NETWORKING.md](../NETWORKING.md)（gRPC 强制现状 + Seastar 可选未接入业务）。
+**公开说明（推荐先读，默认英文）：** [docs/en/networking.md](../en/networking.md) · 中文 [docs/NETWORKING.md](../NETWORKING.md)（gRPC 强制现状 + Seastar 可选未接入业务）。
 
 ## 目标
 
