@@ -21,10 +21,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "opskv/admin_acl.hpp"
-#include "opskv/codec.hpp"
-#include "opskv/grpc_auth.hpp"
-#include "opskv/protocol.hpp"
+#include "openkv/admin_acl.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/protocol.hpp"
 
 #include <chrono>
 #include <cstring>
@@ -97,7 +97,7 @@ inline std::string tcp_line(std::string_view addr, std::string_view req, int tim
   auto ch = grpc::CreateChannel(std::string(addr), grpc::InsecureChannelCredentials());
   grpc::ClientContext ctx;
   ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
-  opskv::grpc_attach_admin_token(&ctx, opskv::admin_token_from_env());
+  openkv::grpc_attach_admin_token(&ctx, openkv::admin_token_from_env());
   std::string host;
   uint16_t port = 0;
   parse_host_port(addr, &host, &port);
@@ -131,9 +131,9 @@ inline std::optional<std::string> redirect_of(std::string_view resp) {
   return std::string(rest.substr(0, end));
 }
 
-inline std::string to_hex(std::string_view s) { return ::opskv::to_hex(s); }
+inline std::string to_hex(std::string_view s) { return ::openkv::to_hex(s); }
 inline bool from_hex(std::string_view hex, std::string* out) {
-  return ::opskv::from_hex(hex, out);
+  return ::openkv::from_hex(hex, out);
 }
 
 inline std::vector<std::string> split_ws(std::string_view s) {

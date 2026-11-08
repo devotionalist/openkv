@@ -19,16 +19,16 @@
 // - advance：Pending→Placing(place_)→UpdatingRoute(commit_)→Completed
 // - persist_/erase_：任务变更写入 Meta Raft（S2 可恢复）
 
-#include "opskv/meta/region_scheduler.hpp"
+#include "openkv/meta/region_scheduler.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <optional>
 #include <set>
 
-namespace opskv::meta {
+namespace openkv::meta {
 namespace {
 
 PersistMigrate to_persist(const MigrateTask& t) {
@@ -445,4 +445,4 @@ void RegionScheduler::advance(const std::string& task_id) {
   }
 }
 
-}  // namespace opskv::meta
+}  // namespace openkv::meta

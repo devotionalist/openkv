@@ -15,18 +15,18 @@
 // @file kv_proxy_test.cpp
 // 测试 KvProxy 在 mock transport 下的 put/get 与 not_leader 重试路径。
 
-#include "opskv/compute/kv_proxy.hpp"
-#include "opskv/compute/router.hpp"
+#include "openkv/compute/kv_proxy.hpp"
+#include "openkv/compute/router.hpp"
 
 #include <gtest/gtest.h>
 
 #include <string>
 #include <unordered_map>
 
-using opskv::compute::KvProxy;
-using opskv::compute::ProxyGetResult;
-using opskv::compute::ProxyPutResult;
-using opskv::compute::Router;
+using openkv::compute::KvProxy;
+using openkv::compute::ProxyGetResult;
+using openkv::compute::ProxyPutResult;
+using openkv::compute::Router;
 
 TEST(KvProxyTest, PutGetViaTransport) {
   Router router;
@@ -80,10 +80,10 @@ TEST(KvProxyTest, RedirectRetry) {
   Router router;
   router.bootstrap_single("127.0.0.1:9100", 1);
   // 补充第二副本，便于 redirect
-  opskv::compute::RoutingTable t;
+  openkv::compute::RoutingTable t;
   t.version = 2;
   t.shard_count = 1;
-  opskv::compute::RegionRoute sr;
+  openkv::compute::RegionRoute sr;
   sr.region_id = 0;
   sr.replicas.push_back({"s0", "127.0.0.1:9100", true});
   sr.replicas.push_back({"s1", "127.0.0.1:9101", false});

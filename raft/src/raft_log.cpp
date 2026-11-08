@@ -15,11 +15,11 @@
 // @file raft_log.cpp
 // RaftLog 实现：索引换算、Follower 合并逻辑、快照边界处理。
 
-#include "opskv/raft/raft_log.hpp"
+#include "openkv/raft/raft_log.hpp"
 
 #include <stdexcept>
 
-namespace opskv::raft {
+namespace openkv::raft {
 
 RaftLog::RaftLog(uint64_t first_index) : first_index_(first_index) {}
 
@@ -135,4 +135,4 @@ void RaftLog::load(uint64_t first_index, uint64_t snapshot_term, std::vector<Log
   entries_ = std::move(entries);
 }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft

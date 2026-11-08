@@ -1,6 +1,6 @@
 # Range 分片（有序区间 / FDB / HBase 类）
 
-OpsKV 使用 **有序 Range + 分裂/合并**（已从早期哈希取模切换）。总览见 [ARCHITECTURE.md](ARCHITECTURE.md)；流程见 [flows/09-range-split-merge.md](../flows/09-range-split-merge.md)、[flows/10-region-placement.md](../flows/10-region-placement.md)；**逐步详解**见 [REGION_OPS.md](../ops/REGION_OPS.md)。
+OpenKV 使用 **有序 Range + 分裂/合并**（已从早期哈希取模切换）。总览见 [ARCHITECTURE.md](ARCHITECTURE.md)；流程见 [flows/09-range-split-merge.md](../flows/09-range-split-merge.md)、[flows/10-region-placement.md](../flows/10-region-placement.md)；**逐步详解**见 [REGION_OPS.md](../ops/REGION_OPS.md)。
 
 ## 模型
 

@@ -1,6 +1,6 @@
 # 常用数据结构（非 RESP）
 
-OpsKV 在 **gRPC `kv.v1.DSService`** 上提供 Hash / Set / List / ZSet，语义对齐 Redis 常用命令子集。  
+OpenKV 在 **gRPC `kv.v1.DSService`** 上提供 Hash / Set / List / ZSet，语义对齐 Redis 常用命令子集。  
 **不做** Redis 线协议（RESP）、PubSub、Stream、Lua、Cluster `MOVED`。
 
 相关流程：[flows/12-data-structures.md](../flows/12-data-structures.md)

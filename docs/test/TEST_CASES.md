@@ -39,7 +39,7 @@
 
 | 套件 | 规模 | 结果 | 备注 |
 |------|------|------|------|
-| C++ `opskv_unit_tests` | **128** `TEST*` | **PASS（Scaler 新例）** | `ScalerTest.ConcurrentScaleOutQueues` / `CancelInflight` 新增并通过 |
+| C++ `openkv_unit_tests` | **128** `TEST*` | **PASS（Scaler 新例）** | `ScalerTest.ConcurrentScaleOutQueues` / `CancelInflight` 新增并通过 |
 | Go `web/internal/lifecycle` | 3 | **PASS** | `go test` ~1s |
 | Go `web/internal/cluster` | 3 | **PASS** | `go test` ~1s |
 | Go `client/go` | — | SKIP | 无 `*_test.go`（`gwput_test.go` 为手工 main） |
@@ -66,7 +66,7 @@
 ## 3. C++ 单元测试（gtest）
 
 源码：`tests/{common,raft,storage,meta,compute}/*_test.cpp`  
-二进制：`build/tests/opskv_unit_tests`（`gtest_discover_tests`，label=`unit`）
+二进制：`build/tests/openkv_unit_tests`（`gtest_discover_tests`，label=`unit`）
 
 ### 3.1 按模块汇总
 
@@ -151,7 +151,7 @@
 
 ```bash
 ctest --test-dir build -R KvEngineTest --output-on-failure
-./build/tests/opskv_unit_tests --gtest_filter='KvEngineTest.*'
+./build/tests/openkv_unit_tests --gtest_filter='KvEngineTest.*'
 ```
 
 ---
@@ -199,11 +199,11 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 | 2026-10-25 | SCALE_OUT `storage-5→R1` Promote | FAIL→PASS | 快照未带 ConfState，新 Leader 丢 Learner；并发 scale 撞 Joint。已补 ConfState / busy / 串行扩容；现网补 ADD_LEARNER+PROMOTE |
 | 2026-10-25 | Split 后 Merge，`a=11` 丢失、`t=22` 仍在 | FAIL→PASS（代码） | DESTROY/空 range 快照清空共享引擎兄弟区间。已禁空 range 整库清、快照带 SKVR1；**历史 key 需重 put** |
 | 2026-10-25 | `start-cluster` 失败提示 RocksDB 损坏 | 误报 | 实为 LOCK 被旧进程占用；提示已区分 LOCK vs Corruption；`SKV_FRESH=1` 清盘后集群 PASS |
-| 2026-10-25 | `start-cluster` gateway `storage not ready`（GRPC=OFF） | 已废止 | 根因：曾允许 `OPSKV_USE_GRPC=OFF`。现已强制 gRPC，见 [flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md) |
+| 2026-10-25 | `start-cluster` gateway `storage not ready`（GRPC=OFF） | 已废止 | 根因：曾允许 `OPENKV_USE_GRPC=OFF`。现已强制 gRPC，见 [flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md) |
 | 2026-10-25 | Web「部分刷新失败」`http2: frame too large` | 已废止 | 根因：行协议双栈。现已移除 `SKV_LEGACY_TCP`；Web 仅 gRPC |
 | 2026-10-25 | gRPC 强制（拆除 OFF/LEGACY） | 代码 PASS / C++ 验收阻塞 | Go `client/go`+`web` build OK；本机 brew 无 bottle 且源码装 grpc/cmake 卡住。需系统 gRPC 或 FetchContent 后 `FORCE_CMAKE=1 ./scripts/start-cluster.sh` |
 | 2026-10-26 | 清理废 TCP listen/发包路径 | 代码 | 收窄并改名 `ExecLineHandler`；删除 LineServer 与 `tcp_line_auth`；去掉 `!GRPC` 桩。见 [flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md) |
-| 2026-10-26 | 删除 `TcpTransport`，并入 `GrpcRaftTransport` | **PASS**（编译） | 删除 `tcp_transport.*`；peer/计数并入 `GrpcRaftTransport`；`cmake --build … opskv_raft meta_server storage_node` 绿；补 `tcp_line_client.hpp` include。集群冒烟可随下次 `start-cluster` |
+| 2026-10-26 | 删除 `TcpTransport`，并入 `GrpcRaftTransport` | **PASS**（编译） | 删除 `tcp_transport.*`；peer/计数并入 `GrpcRaftTransport`；`cmake --build … openkv_raft meta_server storage_node` 绿；补 `tcp_line_client.hpp` include。集群冒烟可随下次 `start-cluster` |
 | 2026-10-26 | `TcpServer` → `ExecLineHandler` | **PASS**（编译） | 去 TCP 名；`storage_node` 链接绿。逻辑仍是 ExecLine 行协议，不并入 `grpc_server` |
 | 2026-10-26 | `MetaServer` → `MetaNode` | **PASS**（编译） | 对齐 `StorageNode`；文件 `meta_node.*`；二进制仍名 `meta_server`；`cmake --build … --target meta_server` 绿 |
 | 2026-10-26 | Helm / k8s HA 部署 | **PASS** | template 门禁绿；Colima k3s：3 meta + 3 storage + gateway Ready；`kv-example` PASS。见 [flows/K8S_HELM.md](../flows/K8S_HELM.md) |
@@ -238,11 +238,11 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 环境: darwin Colima k3s；helm+docker
 命令:
   bash scripts/it-helm-template.sh                               → PASS
-  docker build -f deploy/Dockerfile -t opskv:dev .               → PASS
-  docker build -f deploy/Dockerfile.gateway -t opskv-gateway:dev → PASS
+  docker build -f deploy/Dockerfile -t openkv:dev .               → PASS
+  docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev → PASS
   docker save … | colima ssh -- sudo k3s ctr images import -     → PASS
-  helm upgrade --install opskv deploy/helm/opskv -n opskv …      → PASS（--wait 曾因 ImageNeverPull 超时；导入镜像后 Pod Ready）
-  kubectl port-forward svc/gateway 19000 + kv-example            → PASS（value=opskv）
+  helm upgrade --install openkv deploy/helm/openkv -n openkv …      → PASS（--wait 曾因 ImageNeverPull 超时；导入镜像后 Pod Ready）
+  kubectl port-forward svc/gateway 19000 + kv-example            → PASS（value=openkv）
 结果: PASS
 摘要: 本地 k8s HA 拓扑可用
 ```
@@ -255,7 +255,7 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 环境: darwin Colima k3s
 命令:
   (cd web && go test ./internal/lifecycle ./internal/cluster)     → PASS
-  docker build -f deploy/Dockerfile.web -t opskv-web:dev .       → PASS
+  docker build -f deploy/Dockerfile.web -t openkv-web:dev .       → PASS
   k3s ctr import + rollout restart deploy/web                    → PASS
   curl /api/topology → 7 nodes up=true (DNS addrs)               → PASS
   kv-example via gateway                                         → PASS
@@ -268,13 +268,13 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 ```text
 日期: 2026-10-26
 执行人: agent
-环境: darwin, opskv（FetchContent gRPC v1.67.1）
+环境: darwin, openkv（FetchContent gRPC v1.67.1）
 命令:
   test ! -f raft/src/tcp_transport.cpp                           → PASS
   cmake -S . -B build                                            → PASS（刷新源列表）
-  cmake --build build -j4 --target opskv_raft                    → PASS
+  cmake --build build -j4 --target openkv_raft                    → PASS
   cmake --build build -j4 --target meta_server storage_node      → PASS
-  nm build/raft/libopskv_raft.a | rg TcpTransport                → 无
+  nm build/raft/libopenkv_raft.a | rg TcpTransport                → 无
 结果: PASS（编译/链接）；集群冒烟未重跑
 摘要: TcpTransport 删除并入 GrpcRaftTransport；meta 补 net::parse_host_port include
 ```
@@ -284,14 +284,14 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 ```text
 日期: 2026-10-25
 执行人: agent
-环境: darwin, 工作区 opskv（含 gRPC / 共享引擎修复）
+环境: darwin, 工作区 openkv（含 gRPC / 共享引擎修复）
 命令:
   (cd web && go test ./internal/lifecycle ./internal/cluster)     → PASS
   ./.run/kv-example 127.0.0.1:19000                              → PASS（SKV_FRESH 后）
   ctest --test-dir build -L unit                                 → 初跑 124/126 FAIL(TSO)
   gtest_filter=ClusterStateTest.AllocTs*:…GcSafePoint*           → PASS（断言已改）
   make e2e / integ-workload / fault-drill / it-scale-live        → SKIP（未跑）
-  ./build/tests/opskv_unit_tests --gtest_filter='ScalerTest.*' → PASS（5）
+  ./build/tests/openkv_unit_tests --gtest_filter='ScalerTest.*' → PASS（5）
   bash scripts/it-replica-churn.sh                               → PASS（I39）
 摘要: Go web 单测绿；清盘后 KV 冒烟绿；C++ TSO 相关 2 例已修；副本 churn 排队/取消已修并自动化。
 ```
@@ -300,7 +300,7 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 
 ## 7. 维护说明
 
-1. **新增 gtest**：放进 `tests/<module>/`，并加入 `tests/CMakeLists.txt` 的 `OPSKV_TEST_SOURCES`；本页 §3 用例数同步 +1。  
+1. **新增 gtest**：放进 `tests/<module>/`，并加入 `tests/CMakeLists.txt` 的 `OPENKV_TEST_SOURCES`；本页 §3 用例数同步 +1。  
 2. **新增集成脚本**：在 §4.2 登记，并尽量挂到 `Makefile` / `release-gate`。  
 3. **发版前**：至少 `make release-gate`；Region scatter/Merge 数据完整性按 [INTEGRATION_TEST.md](INTEGRATION_TEST.md) I30–I33 人工或脚本卡死。  
 4. 覆盖扩展设计见 [flows/IT_COVERAGE_EXPANSION.md](../flows/IT_COVERAGE_EXPANSION.md)；周跑磁盘/分区用 `make integ-extra`。

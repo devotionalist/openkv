@@ -16,7 +16,7 @@
 # storage — 存储层（引擎 + Raft Apply + TCP 内部协议 + 节点进程）
 # -----------------------------------------------------------------------------
 # 产出目标：
-#   opskv_storage  — 静态库（排除 main.cpp）
+#   openkv_storage  — 静态库（排除 main.cpp）
 #   storage_node       — 可执行文件，监听 TCP，对接 Compute Gateway
 #
 # 硬依赖：
@@ -24,34 +24,34 @@
 #   存储节点启动默认打开 RocksDB
 #
 # 可选：
-#   Seastar → OPSKV_HAS_SEASTAR=1（预留 reactor 集成）
+#   Seastar → OPENKV_HAS_SEASTAR=1（预留 reactor 集成）
 # =============================================================================
 
 # 库代码不含入口；main.cpp 单独给 executable
 skv_collect_sources(STORAGE_SRCS DIR src EXCLUDE main.cpp)
 
-add_library(opskv_storage ${STORAGE_SRCS})
-target_include_directories(opskv_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_library(openkv_storage ${STORAGE_SRCS})
+target_include_directories(openkv_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# 始终启用 RocksDB 实现（kv_engine.cpp 中 #if OPSKV_HAS_ROCKSDB）
-target_compile_definitions(opskv_storage PUBLIC OPSKV_HAS_ROCKSDB=1)
+# 始终启用 RocksDB 实现（kv_engine.cpp 中 #if OPENKV_HAS_ROCKSDB）
+target_compile_definitions(openkv_storage PUBLIC OPENKV_HAS_ROCKSDB=1)
 
 # 存储层：Raft + 公共库 + RocksDB；proto 未开 gRPC 时为 INTERFACE 占位
-target_link_libraries(opskv_storage
+target_link_libraries(openkv_storage
   PUBLIC
-    opskv_raft
-    opskv_common
-    opskv_proto
+    openkv_raft
+    openkv_common
+    openkv_proto
     RocksDB::rocksdb
 )
 
-if(OPSKV_USE_SEASTAR)
-  target_compile_definitions(opskv_storage PUBLIC OPSKV_HAS_SEASTAR=1)
-  target_link_libraries(opskv_storage PUBLIC Seastar::seastar)
+if(OPENKV_USE_SEASTAR)
+  target_compile_definitions(openkv_storage PUBLIC OPENKV_HAS_SEASTAR=1)
+  target_link_libraries(openkv_storage PUBLIC Seastar::seastar)
 endif()
 
 add_executable(storage_node src/main.cpp)
-target_link_libraries(storage_node PRIVATE opskv_storage)
-if(COMMAND opskv_link_jemalloc)
-  opskv_link_jemalloc(storage_node)
+target_link_libraries(storage_node PRIVATE openkv_storage)
+if(COMMAND openkv_link_jemalloc)
+  openkv_link_jemalloc(storage_node)
 endif()

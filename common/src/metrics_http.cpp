@@ -15,10 +15,10 @@
 // @file metrics_http.cpp
 // cpp-httplib 后台线程 listen；GET /metrics → text_fn()。
 
-#include "opskv/metrics_http.hpp"
+#include "openkv/metrics_http.hpp"
 
-#include "opskv/logging.hpp"
-#include "opskv/net/tcp_line_client.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/net/tcp_line_client.hpp"
 
 #include <httplib.h>
 
@@ -27,7 +27,7 @@
 #include <thread>
 #include <utility>
 
-namespace opskv {
+namespace openkv {
 
 struct MetricsHttpServer::Impl {
   std::unique_ptr<httplib::Server> srv;
@@ -93,4 +93,4 @@ std::string metrics_addr_from_env() {
   return {};
 }
 
-}  // namespace opskv
+}  // namespace openkv

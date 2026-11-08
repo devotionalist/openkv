@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	storagev1 "github.com/amydemo/opskv/client/go/gen/storage/v1"
-	"github.com/amydemo/opskv/client/go/internal/traffic"
+	storagev1 "github.com/devotionalist/openkv/client/go/gen/storage/v1"
+	"github.com/devotionalist/openkv/client/go/internal/traffic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"

@@ -1,4 +1,4 @@
-# OpsKV — 存算分离分布式 KV 架构
+# OpenKV — 存算分离分布式 KV 架构
 
 **文档总目录（分类）：** [README.md](../README.md)
 
@@ -47,7 +47,7 @@
 └───────────────┘
 ```
 
-默认网络为 **gRPC**（强制）：KV / Meta / Admin / 节点间 Raft 同端口多路复用。`OPSKV_USE_SEASTAR=ON` 仅链接库与占位头文件，**尚不**把 Meta/Storage IO 迁到 reactor。详见 [NETWORKING.md](../NETWORKING.md)、[SEASTAR_NET.md](SEASTAR_NET.md)、[flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md)。
+默认网络为 **gRPC**（强制）：KV / Meta / Admin / 节点间 Raft 同端口多路复用。`OPENKV_USE_SEASTAR=ON` 仅链接库与占位头文件，**尚不**把 Meta/Storage IO 迁到 reactor。详见 [NETWORKING.md](../NETWORKING.md)、[SEASTAR_NET.md](SEASTAR_NET.md)、[flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md)。
 
 ## 本地默认拓扑
 

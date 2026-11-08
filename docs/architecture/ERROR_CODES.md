@@ -2,7 +2,7 @@
 
 **状态：** 与实现对齐的目录（字符串 token，**无**统一数值 ErrorCode 枚举）  
 **读者：** 客户端 / Gateway / 运维 / 联调  
-**协议前缀：** `OK …` / `ERR <token> [k=v…]`（见 `common/include/opskv/protocol.hpp`）  
+**协议前缀：** `OK …` / `ERR <token> [k=v…]`（见 `common/include/openkv/protocol.hpp`）  
 **相关：** [NETWORKING.md](../NETWORKING.md) · [08-not-leader-redirect.md](../flows/08-not-leader-redirect.md) · [DATA_STRUCTURES.md](DATA_STRUCTURES.md) §4
 
 ---
@@ -70,7 +70,7 @@ Apply 解码失败等：`bad_command` / `bad_prewrite` / `bad_commit` / `bad_adm
 | `bad_hex` / `bad_peer` / `bad_request` | 解析 / 未知 op | 失败 |
 | `ae_trunc` / `ae_bad_hex` / `snap_bad_hex` | Raft 入站解析 | Peer 重发 |
 
-Inflight 类名：`storage/include/opskv/storage/inflight_gate.hpp`。
+Inflight 类名：`storage/include/openkv/storage/inflight_gate.hpp`。
 
 ---
 

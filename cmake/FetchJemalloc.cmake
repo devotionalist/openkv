@@ -21,27 +21,27 @@
 include_guard(GLOBAL)
 include(FetchContent)
 
-set(OPSKV_JEMALLOC_VERSION "5.3.0" CACHE STRING
+set(OPENKV_JEMALLOC_VERSION "5.3.0" CACHE STRING
     "Bundled jemalloc version (GitHub release tag)")
 
-option(OPSKV_USE_JEMALLOC
+option(OPENKV_USE_JEMALLOC
   "FetchContent 引入 jemalloc 作为进程分配器" ON)
 
-if(OPSKV_ENABLE_ASAN OR OPSKV_ENABLE_TSAN)
-  if(OPSKV_USE_JEMALLOC)
-    message(STATUS "OpsKV: jemalloc disabled (incompatible with ASan/TSan)")
+if(OPENKV_ENABLE_ASAN OR OPENKV_ENABLE_TSAN)
+  if(OPENKV_USE_JEMALLOC)
+    message(STATUS "OpenKV: jemalloc disabled (incompatible with ASan/TSan)")
   endif()
-  set(OPSKV_USE_JEMALLOC OFF CACHE BOOL
+  set(OPENKV_USE_JEMALLOC OFF CACHE BOOL
     "FetchContent 引入 jemalloc 作为进程分配器" FORCE)
 endif()
 
-if(NOT OPSKV_USE_JEMALLOC)
-  message(STATUS "OpsKV: OPSKV_USE_JEMALLOC=OFF")
+if(NOT OPENKV_USE_JEMALLOC)
+  message(STATUS "OpenKV: OPENKV_USE_JEMALLOC=OFF")
   return()
 endif()
 
 set(_jemalloc_url
-  "https://github.com/jemalloc/jemalloc/releases/download/${OPSKV_JEMALLOC_VERSION}/jemalloc-${OPSKV_JEMALLOC_VERSION}.tar.bz2")
+  "https://github.com/jemalloc/jemalloc/releases/download/${OPENKV_JEMALLOC_VERSION}/jemalloc-${OPENKV_JEMALLOC_VERSION}.tar.bz2")
 
 FetchContent_Declare(
   jemalloc
@@ -55,7 +55,7 @@ endif()
 
 FetchContent_GetProperties(jemalloc)
 if(NOT jemalloc_POPULATED)
-  message(STATUS "Fetching jemalloc ${OPSKV_JEMALLOC_VERSION} …")
+  message(STATUS "Fetching jemalloc ${OPENKV_JEMALLOC_VERSION} …")
   FetchContent_Populate(jemalloc)
 
   set(_je_cc "${CMAKE_C_COMPILER}")
@@ -94,30 +94,30 @@ if(NOT jemalloc_POPULATED)
 endif()
 
 find_package(Threads REQUIRED)
-find_program(OPSKV_JEMALLOC_MAKE NAMES gmake make REQUIRED)
+find_program(OPENKV_JEMALLOC_MAKE NAMES gmake make REQUIRED)
 
 # 最终给 Apple/通用链接用的库名
 set(_je_link_lib "${jemalloc_BINARY_DIR}/lib/libjemalloc_link.a")
 
 if(APPLE)
-  add_custom_target(opskv_build_jemalloc
-    COMMAND ${OPSKV_JEMALLOC_MAKE} build_lib_static
+  add_custom_target(openkv_build_jemalloc
+    COMMAND ${OPENKV_JEMALLOC_MAKE} build_lib_static
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${jemalloc_BINARY_DIR}/lib/_je_objs
     COMMAND ${CMAKE_COMMAND} -E make_directory ${jemalloc_BINARY_DIR}/lib/_je_objs
     # 归档含 /、//、__.SYMDEF 等非 .o 成员；ar -x 会对其刷屏，抽完后删掉再 libtool
     COMMAND /bin/sh -c "cd '${jemalloc_BINARY_DIR}/lib/_je_objs' && /usr/bin/ar -x '../libjemalloc_pic.a' 2>/dev/null; /usr/bin/find . -type f ! -name '*.o' -delete && /usr/bin/libtool -static -o '${_je_link_lib}' *.o"
     BYPRODUCTS ${_je_link_lib}
-    COMMENT "Building bundled jemalloc ${OPSKV_JEMALLOC_VERSION} (Apple libtool)"
+    COMMENT "Building bundled jemalloc ${OPENKV_JEMALLOC_VERSION} (Apple libtool)"
     VERBATIM
     WORKING_DIRECTORY ${jemalloc_BINARY_DIR}
   )
 else()
   set(_je_link_lib "${jemalloc_BINARY_DIR}/lib/libjemalloc.a")
-  add_custom_target(opskv_build_jemalloc
-    COMMAND ${OPSKV_JEMALLOC_MAKE} build_lib_static
+  add_custom_target(openkv_build_jemalloc
+    COMMAND ${OPENKV_JEMALLOC_MAKE} build_lib_static
     WORKING_DIRECTORY ${jemalloc_BINARY_DIR}
     BYPRODUCTS ${_je_link_lib}
-    COMMENT "Building bundled jemalloc ${OPSKV_JEMALLOC_VERSION}"
+    COMMENT "Building bundled jemalloc ${OPENKV_JEMALLOC_VERSION}"
     VERBATIM
   )
 endif()
@@ -126,7 +126,7 @@ add_library(jemalloc_static STATIC IMPORTED GLOBAL)
 set_target_properties(jemalloc_static PROPERTIES
   IMPORTED_LOCATION ${_je_link_lib}
 )
-add_dependencies(jemalloc_static opskv_build_jemalloc)
+add_dependencies(jemalloc_static openkv_build_jemalloc)
 
 add_library(jemalloc_iface INTERFACE)
 add_library(jemalloc::jemalloc ALIAS jemalloc_iface)
@@ -135,22 +135,22 @@ target_include_directories(jemalloc_iface INTERFACE
   $<BUILD_INTERFACE:${jemalloc_SOURCE_DIR}/include>
 )
 target_link_libraries(jemalloc_iface INTERFACE jemalloc_static Threads::Threads)
-target_compile_definitions(jemalloc_iface INTERFACE OPSKV_HAS_JEMALLOC=1)
+target_compile_definitions(jemalloc_iface INTERFACE OPENKV_HAS_JEMALLOC=1)
 
 if(UNIX AND NOT APPLE)
   target_link_libraries(jemalloc_iface INTERFACE m)
 endif()
 
-function(opskv_link_jemalloc target)
+function(openkv_link_jemalloc target)
   if(NOT TARGET jemalloc::jemalloc)
     return()
   endif()
   if(NOT TARGET ${target})
-    message(FATAL_ERROR "opskv_link_jemalloc: unknown target '${target}'")
+    message(FATAL_ERROR "openkv_link_jemalloc: unknown target '${target}'")
   endif()
   target_link_libraries(${target} PRIVATE jemalloc::jemalloc)
-  add_dependencies(${target} opskv_build_jemalloc)
+  add_dependencies(${target} openkv_build_jemalloc)
 endfunction()
 
 message(STATUS
-  "jemalloc ${OPSKV_JEMALLOC_VERSION} enabled (FetchContent → jemalloc::jemalloc)")
+  "jemalloc ${OPENKV_JEMALLOC_VERSION} enabled (FetchContent → jemalloc::jemalloc)")

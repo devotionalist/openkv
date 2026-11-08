@@ -3,9 +3,9 @@
 # 依赖：docker, kind, helm, kubectl；可选已编好的 .run/kv-example
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CLUSTER="${OPSKV_KIND_CLUSTER:-opskv}"
-NS=opskv
-TAG="${OPSKV_IMAGE_TAG:-dev}"
+CLUSTER="${OPENKV_KIND_CLUSTER:-openkv}"
+NS=openkv
+TAG="${OPENKV_IMAGE_TAG:-dev}"
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -26,19 +26,19 @@ fi
 kubectl cluster-info --context "kind-${CLUSTER}" >/dev/null
 
 echo "==> build images"
-docker build -f "$ROOT/deploy/Dockerfile" -t "opskv:${TAG}" "$ROOT"
-docker build -f "$ROOT/deploy/Dockerfile.gateway" -t "opskv-gateway:${TAG}" "$ROOT"
-kind load docker-image "opskv:${TAG}" --name "$CLUSTER"
-kind load docker-image "opskv-gateway:${TAG}" --name "$CLUSTER"
+docker build -f "$ROOT/deploy/Dockerfile" -t "openkv:${TAG}" "$ROOT"
+docker build -f "$ROOT/deploy/Dockerfile.gateway" -t "openkv-gateway:${TAG}" "$ROOT"
+kind load docker-image "openkv:${TAG}" --name "$CLUSTER"
+kind load docker-image "openkv-gateway:${TAG}" --name "$CLUSTER"
 
 echo "==> helm upgrade --install"
-helm upgrade --install opskv "$ROOT/deploy/helm/opskv" \
+helm upgrade --install openkv "$ROOT/deploy/helm/openkv" \
   --namespace "$NS" --create-namespace \
   --set namespace.create=false \
-  --set image.repository=opskv \
+  --set image.repository=openkv \
   --set image.tag="$TAG" \
   --set image.pullPolicy=Never \
-  --set gatewayImage.repository=opskv-gateway \
+  --set gatewayImage.repository=openkv-gateway \
   --set gatewayImage.tag="$TAG" \
   --set gatewayImage.pullPolicy=Never \
   --set persistence.enabled=true \
@@ -47,7 +47,7 @@ helm upgrade --install opskv "$ROOT/deploy/helm/opskv" \
 kubectl -n "$NS" get pods,svc,sts
 
 echo "==> port-forward gateway"
-kubectl -n "$NS" port-forward svc/gateway 19000:19000 >/tmp/opskv-pf-gw.log 2>&1 &
+kubectl -n "$NS" port-forward svc/gateway 19000:19000 >/tmp/openkv-pf-gw.log 2>&1 &
 PF_PID=$!
 trap 'kill $PF_PID 2>/dev/null || true' EXIT
 sleep 2

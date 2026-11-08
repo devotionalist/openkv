@@ -15,9 +15,9 @@
 // @file scheduler_cop_test.cpp
 // Scheduler latch + Coprocessor + 单 Store 引擎烟雾。
 
-#include "opskv/storage/coprocessor.hpp"
-#include "opskv/storage/kv_engine.hpp"
-#include "opskv/storage/scheduler.hpp"
+#include "openkv/storage/coprocessor.hpp"
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/scheduler.hpp"
 
 #include <gtest/gtest.h>
 
@@ -28,7 +28,7 @@
 namespace fs = std::filesystem;
 
 TEST(SchedulerTest, LatchSerializesConflict) {
-  opskv::storage::Scheduler sched;
+  openkv::storage::Scheduler sched;
   std::atomic<int> inflight{0};
   std::atomic<int> max_in{0};
   sched.set_write_fn([&](uint32_t, std::string, uint64_t*, std::string*) {
@@ -57,17 +57,17 @@ TEST(CoprocessorTest, PrefixScanInRange) {
   auto dir = fs::temp_directory_path() / ("skv_cop_" + std::to_string(::getpid()));
   fs::remove_all(dir);
   fs::create_directories(dir);
-  opskv::storage::ShardEngineManager mgr(dir.string());
+  openkv::storage::ShardEngineManager mgr(dir.string());
   auto& eng = mgr.get_or_create(0);
   eng.put("a1", "v1", 1);
   eng.put("a2", "v2", 2);
   eng.put("b1", "v3", 3);
-  opskv::storage::Coprocessor cop(&eng);
-  opskv::storage::CoprocessorRequest req;
+  openkv::storage::Coprocessor cop(&eng);
+  openkv::storage::CoprocessorRequest req;
   req.start_key = "a";
   req.end_key = "b";
   req.limit = 10;
-  opskv::KeyRange range;  // full
+  openkv::KeyRange range;  // full
   auto resp = cop.execute(req, range);
   EXPECT_EQ(resp.pairs.size(), 2u);
   EXPECT_EQ(resp.matched, 2u);
@@ -78,15 +78,15 @@ TEST(CoprocessorTest, KeyPrefixKeysOnlyAndCount) {
   auto dir = fs::temp_directory_path() / ("skv_cop2_" + std::to_string(::getpid()));
   fs::remove_all(dir);
   fs::create_directories(dir);
-  opskv::storage::ShardEngineManager mgr(dir.string());
+  openkv::storage::ShardEngineManager mgr(dir.string());
   auto& eng = mgr.get_or_create(0);
   eng.put("user:1", "alice", 1);
   eng.put("user:2", "bob", 2);
   eng.put("ord:1", "x", 3);
-  opskv::storage::Coprocessor cop(&eng);
-  opskv::KeyRange range;
+  openkv::storage::Coprocessor cop(&eng);
+  openkv::KeyRange range;
 
-  opskv::storage::CoprocessorRequest keys;
+  openkv::storage::CoprocessorRequest keys;
   keys.key_prefix = "user:";
   keys.keys_only = true;
   keys.limit = 10;
@@ -95,7 +95,7 @@ TEST(CoprocessorTest, KeyPrefixKeysOnlyAndCount) {
   EXPECT_TRUE(kr.pairs[0].value.empty());
   EXPECT_EQ(kr.matched, 2u);
 
-  opskv::storage::CoprocessorRequest cnt;
+  openkv::storage::CoprocessorRequest cnt;
   cnt.key_prefix = "user:";
   cnt.count_only = true;
   cnt.limit = 10;
@@ -103,7 +103,7 @@ TEST(CoprocessorTest, KeyPrefixKeysOnlyAndCount) {
   EXPECT_TRUE(cr.pairs.empty());
   EXPECT_EQ(cr.matched, 2u);
 
-  opskv::storage::CoprocessorRequest vp;
+  openkv::storage::CoprocessorRequest vp;
   vp.value_prefix = "a";
   vp.limit = 10;
   auto vr = cop.execute(vp, range);
@@ -115,7 +115,7 @@ TEST(ShardEngineManagerTest, SingleStoreShared) {
   auto dir = fs::temp_directory_path() / ("skv_ss_" + std::to_string(::getpid()));
   fs::remove_all(dir);
   fs::create_directories(dir);
-  opskv::storage::ShardEngineManager mgr(dir.string());
+  openkv::storage::ShardEngineManager mgr(dir.string());
   auto& a = mgr.get_or_create(1);
   auto& b = mgr.get_or_create(2);
   EXPECT_EQ(&a, &b);

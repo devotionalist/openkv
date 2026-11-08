@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	metav1 "github.com/amydemo/opskv/client/go/gen/meta/v1"
-	storagev1 "github.com/amydemo/opskv/client/go/gen/storage/v1"
+	metav1 "github.com/devotionalist/openkv/client/go/gen/meta/v1"
+	storagev1 "github.com/devotionalist/openkv/client/go/gen/storage/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"

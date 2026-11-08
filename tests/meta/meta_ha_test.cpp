@@ -15,23 +15,23 @@
 // @file meta_ha_test.cpp
 // Meta 单节点 Raft（rf=1）与命令编解码；多进程 HA 由故障演练覆盖。
 
-#include "opskv/meta/meta_fsm.hpp"
-#include "opskv/meta/meta_node.hpp"
+#include "openkv/meta/meta_fsm.hpp"
+#include "openkv/meta/meta_node.hpp"
 
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <thread>
 
-using opskv::ClusterBootstrap;
-using opskv::meta::MetaCommand;
-using opskv::meta::MetaOp;
-using opskv::meta::MetaNode;
-using opskv::meta::NodeInfo;
-using opskv::meta::NodeRole;
-using opskv::meta::apply_meta_command;
-using opskv::meta::decode_meta_command;
-using opskv::meta::encode_meta_command;
+using openkv::ClusterBootstrap;
+using openkv::meta::MetaCommand;
+using openkv::meta::MetaOp;
+using openkv::meta::MetaNode;
+using openkv::meta::NodeInfo;
+using openkv::meta::NodeRole;
+using openkv::meta::apply_meta_command;
+using openkv::meta::decode_meta_command;
+using openkv::meta::encode_meta_command;
 
 TEST(MetaFsmTest, RoundTripRegister) {
   MetaCommand c;

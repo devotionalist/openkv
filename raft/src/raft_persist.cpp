@@ -14,10 +14,10 @@
 
 // @file raft_persist.cpp
 
-#include "opskv/raft/raft_persist.hpp"
-#include "opskv/codec.hpp"
+#include "openkv/raft/raft_persist.hpp"
+#include "openkv/codec.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -26,7 +26,7 @@
 #include <fstream>
 #include <sstream>
 
-namespace opskv::raft {
+namespace openkv::raft {
 namespace fs = std::filesystem;
 
 namespace {
@@ -139,4 +139,4 @@ void RaftPersist::save(const PersistedHardState& hs, const RaftLog& log) const {
   }
 }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft

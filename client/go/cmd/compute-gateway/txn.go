@@ -21,9 +21,9 @@ import (
 	"log"
 	"strings"
 
-	kvv1 "github.com/amydemo/opskv/client/go/gen/kv/v1"
-	"github.com/amydemo/opskv/client/go/internal/route"
-	"github.com/amydemo/opskv/client/go/internal/storagetcp"
+	kvv1 "github.com/devotionalist/openkv/client/go/gen/kv/v1"
+	"github.com/devotionalist/openkv/client/go/internal/route"
+	"github.com/devotionalist/openkv/client/go/internal/storagetcp"
 )
 
 func (s *server) epochOf(region uint32) uint64 {

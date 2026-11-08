@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/net/tcp_line_client.hpp"
+#include "openkv/net/tcp_line_client.hpp"
 
-namespace opskv::net {
+namespace openkv::net {
 
 bool parse_host_port(std::string_view addr, std::string* host, uint16_t* port) {
   if (!host || !port) return false;
@@ -29,4 +29,4 @@ bool parse_host_port(std::string_view addr, std::string* host, uint16_t* port) {
   return true;
 }
 
-}  // namespace opskv::net
+}  // namespace openkv::net

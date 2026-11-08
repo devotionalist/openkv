@@ -10,7 +10,7 @@
 
 ## 方案
 
-Chart：[`deploy/helm/opskv`](../../deploy/helm/opskv)
+Chart：[`deploy/helm/openkv`](../../deploy/helm/openkv)
 
 | 组件 | 工作负载 | 说明 |
 |------|----------|------|
@@ -19,13 +19,13 @@ Chart：[`deploy/helm/opskv`](../../deploy/helm/opskv)
 | Gateway | Deployment + Service | `-metas` / `-storages` 指向 headless；`-stats-listen=0.0.0.0:19001` + Service `stats` 口，供 Web 拉 `/stats` 画网关线 |
 | Web | Deployment（默认 `web.enabled=true`） | 管控台 :19100；无 `-run-dir`，拓扑用 `-metas/-storages/-gateway` DNS 探测在线态（勿再画本机 127.0.0.1） |
 
-配置：入口脚本（[deploy/docker-entrypoint.sh](../../deploy/docker-entrypoint.sh)）按 `POD_NAME` ordinal 写 `/etc/opskv/node.conf`，生成 DNS 级 `meta_peers` / `raft_peers`，并写 `advertise_addr`（Storage `REGISTER` 可达地址；见 `NodeConfig::advertise_addr`）。
+配置：入口脚本（[deploy/docker-entrypoint.sh](../../deploy/docker-entrypoint.sh)）按 `POD_NAME` ordinal 写 `/etc/openkv/node.conf`，生成 DNS 级 `meta_peers` / `raft_peers`，并写 `advertise_addr`（Storage `REGISTER` 可达地址；见 `NodeConfig::advertise_addr`）。
 
 镜像：
 
-- `deploy/Dockerfile` → `opskv:<tag>`（`meta_server` / `storage_node`）
-- `deploy/Dockerfile.gateway` → `opskv-gateway:<tag>`（compute-gateway）
-- `deploy/Dockerfile.web` → `opskv-web:<tag>`（管控台）
+- `deploy/Dockerfile` → `openkv:<tag>`（`meta_server` / `storage_node`）
+- `deploy/Dockerfile.gateway` → `openkv-gateway:<tag>`（compute-gateway）
+- `deploy/Dockerfile.web` → `openkv-web:<tag>`（管控台）
 
 ## 边界
 
@@ -47,9 +47,9 @@ Chart：[`deploy/helm/opskv`](../../deploy/helm/opskv)
 ## 失败与回滚
 
 ```bash
-helm upgrade --install opskv deploy/helm/opskv -n opskv --create-namespace
-helm rollback opskv -n opskv
-helm uninstall opskv -n opskv
+helm upgrade --install openkv deploy/helm/openkv -n openkv --create-namespace
+helm rollback openkv -n openkv
+helm uninstall openkv -n openkv
 # PVC 默认保留；彻底清盘需手动删 PVC
 ```
 
@@ -64,9 +64,9 @@ helm uninstall opskv -n opskv
 Docker 镜像在 docker 侧，k3s 用 containerd，需导入后再 `pullPolicy=Never`：
 
 ```bash
-docker save opskv:dev | colima ssh -- sudo k3s ctr images import -
-docker save opskv-gateway:dev | colima ssh -- sudo k3s ctr images import -
-docker save opskv-web:dev | colima ssh -- sudo k3s ctr images import -
+docker save openkv:dev | colima ssh -- sudo k3s ctr images import -
+docker save openkv-gateway:dev | colima ssh -- sudo k3s ctr images import -
+docker save openkv-web:dev | colima ssh -- sudo k3s ctr images import -
 ```
 
 ## 验收
@@ -80,4 +80,4 @@ bash scripts/k8s-kind-smoke.sh
 # 期望：helm status deployed；gateway Ready；port-forward 后 kv-example PASS
 ```
 
-本机 Colima（2026-10-26）：`STATUS: deployed`；7 Pod Ready；`kv-example` → `get found=true value=opskv`。
+本机 Colima（2026-10-26）：`STATUS: deployed`；7 Pod Ready；`kv-example` → `get found=true value=openkv`。

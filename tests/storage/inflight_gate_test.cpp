@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/inflight_gate.hpp"
+#include "openkv/storage/inflight_gate.hpp"
 
 #include <gtest/gtest.h>
 
@@ -20,10 +20,10 @@
 #include <thread>
 #include <vector>
 
-using opskv::storage::classify_op;
-using opskv::storage::InflightGate;
-using opskv::storage::InflightGuard;
-using opskv::storage::ReqClass;
+using openkv::storage::classify_op;
+using openkv::storage::InflightGate;
+using openkv::storage::InflightGuard;
+using openkv::storage::ReqClass;
 
 TEST(InflightGateTest, Classify) {
   EXPECT_EQ(classify_op("PUT"), ReqClass::kClient);

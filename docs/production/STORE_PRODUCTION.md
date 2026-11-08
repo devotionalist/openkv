@@ -1,6 +1,6 @@
 # 生产级 Store（存储层）要求与路线图
 
-本文定义 OpsKV **Store** 达到工业级/生产级的能力要求。  
+本文定义 OpenKV **Store** 达到工业级/生产级的能力要求。  
 Raft 运行时见 [MULTI_RAFT_PRODUCTION.md](MULTI_RAFT_PRODUCTION.md)；本文聚焦 **数据面、Region 元数据、事务、引擎与运维**。
 
 对标：工业界 Region Store / Cockroach Store。

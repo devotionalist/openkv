@@ -15,13 +15,13 @@
 // @file compute_node.cpp
 // ComputeNode：注入 stub transport、bootstrap 路由、Meta watch 占位线程。
 
-#include "opskv/compute/compute_node.hpp"
+#include "openkv/compute/compute_node.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <chrono>
 
-namespace opskv::compute {
+namespace openkv::compute {
 
 ComputeNode::ComputeNode(NodeConfig cfg) : cfg_(std::move(cfg)) {
   router_ = std::make_unique<Router>();
@@ -80,4 +80,4 @@ void ComputeNode::watch_routing() {
   }
 }
 
-}  // namespace opskv::compute
+}  // namespace openkv::compute

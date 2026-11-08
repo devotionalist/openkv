@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	kvv1 "github.com/amydemo/opskv/client/go/gen/kv/v1"
+	kvv1 "github.com/devotionalist/openkv/client/go/gen/kv/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

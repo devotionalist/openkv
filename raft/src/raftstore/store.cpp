@@ -15,12 +15,12 @@
 // @file store.cpp
 // Store：双 FSM 调度 + Hibernate + SnapWorker + 冷卸载钩子。
 
-#include "opskv/raftstore/store.hpp"
+#include "openkv/raftstore/store.hpp"
 
-#include "opskv/codec.hpp"
-#include "opskv/logging.hpp"
-#include "opskv/raft/raw_node.hpp"
-#include "opskv/raftstore/write_batch_merge.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/raft/raw_node.hpp"
+#include "openkv/raftstore/write_batch_merge.hpp"
 
 #include <chrono>
 #include <sstream>
@@ -28,7 +28,7 @@
 #include <variant>
 #include <vector>
 
-namespace opskv::raftstore {
+namespace openkv::raftstore {
 namespace {
 
 std::vector<std::string> split_pipe(const std::string& s) {
@@ -76,7 +76,7 @@ Store::Store(Options opts, LegacyFactory factory)
       blob = std::string("SKVC1\n") + meta.conf_state + "\n" + data;
     }
     std::ostringstream oss;
-    oss << meta.index << '|' << meta.term << '|' << opskv::to_hex(blob);
+    oss << meta.index << '|' << meta.term << '|' << openkv::to_hex(blob);
     transport_fn_(rid, meta.to, "InstallSnapshotData", oss.str());
     batch_->note_snap_done();
   };
@@ -216,7 +216,7 @@ std::vector<uint32_t> Store::all_shards() const {
   return out;
 }
 
-void Store::update_peer_meta(uint32_t region_id, opskv::KeyRange range, uint64_t epoch) {
+void Store::update_peer_meta(uint32_t region_id, openkv::KeyRange range, uint64_t epoch) {
   std::lock_guard<std::mutex> lk(mu_);
   if (auto p = peer_locked(region_id)) {
     p->meta().range = range;
@@ -367,7 +367,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg) {
         raft::LogEntry e;
         e.term = std::stoull(parts[off]);
         e.index = std::stoull(parts[off + 1]);
-        if (!opskv::from_hex(parts[off + 2], &e.data)) return "ERR ae_bad_hex";
+        if (!openkv::from_hex(parts[off + 2], &e.data)) return "ERR ae_bad_hex";
         entries.push_back(std::move(e));
         off += 3;
       }
@@ -387,7 +387,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg) {
       const uint64_t last_idx = std::stoull(parts[1]);
       const uint64_t last_term = std::stoull(parts[2]);
       std::string data;
-      if (!opskv::from_hex(parts[3], &data)) return "ERR snap_bad_hex";
+      if (!openkv::from_hex(parts[3], &data)) return "ERR snap_bad_hex";
       bool success = false;
       n->on_install_snapshot(msg.from, term, last_idx, last_term, data, &success);
       process_ready_legacy(peer);
@@ -490,4 +490,4 @@ void Store::on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs) {
   }
 }
 
-}  // namespace opskv::raftstore
+}  // namespace openkv::raftstore

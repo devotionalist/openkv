@@ -15,12 +15,12 @@
 // @file raft_log_test.cpp
 // 测试 RaftLog 追加、冲突截断、match、compact_to 等日志语义。
 
-#include "opskv/raft/raft_log.hpp"
+#include "openkv/raft/raft_log.hpp"
 
 #include <gtest/gtest.h>
 
-using opskv::raft::LogEntry;
-using opskv::raft::RaftLog;
+using openkv::raft::LogEntry;
+using openkv::raft::RaftLog;
 
 TEST(RaftLogTest, AppendAndQuery) {
   RaftLog log;

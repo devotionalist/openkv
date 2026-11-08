@@ -15,14 +15,14 @@
 // @file multi_raft_test.cpp
 // 测试 MultiRaft 懒创建分片 group、tick 后选主与 leader_shards 列表。
 
-#include "opskv/raft/multi_raft.hpp"
+#include "openkv/raft/multi_raft.hpp"
 
 #include <gtest/gtest.h>
 
 #include <memory>
 
-using opskv::raft::MultiRaft;
-using opskv::raft::RaftNode;
+using openkv::raft::MultiRaft;
+using openkv::raft::RaftNode;
 
 TEST(MultiRaftTest, GetOrCreateAndLeaders) {
   MultiRaft mr([](uint32_t shard) {

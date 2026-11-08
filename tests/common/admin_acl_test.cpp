@@ -15,8 +15,8 @@
 // @file admin_acl_test.cpp
 // O1：Admin ACL 分类与连接级 AUTH（Meta handle_line）。
 
-#include "opskv/admin_acl.hpp"
-#include "opskv/meta/meta_node.hpp"
+#include "openkv/admin_acl.hpp"
+#include "openkv/meta/meta_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -24,13 +24,13 @@
 #include <cstdlib>
 #include <thread>
 
-using opskv::AdminSession;
-using opskv::ClusterBootstrap;
-using opskv::admin_allowed;
-using opskv::admin_try_auth;
-using opskv::meta_needs_admin;
-using opskv::storage_needs_admin;
-using opskv::meta::MetaNode;
+using openkv::AdminSession;
+using openkv::ClusterBootstrap;
+using openkv::admin_allowed;
+using openkv::admin_try_auth;
+using openkv::meta_needs_admin;
+using openkv::storage_needs_admin;
+using openkv::meta::MetaNode;
 
 TEST(AdminAclTest, ClassifyOps) {
   EXPECT_TRUE(storage_needs_admin("ADMIN_SPLIT"));

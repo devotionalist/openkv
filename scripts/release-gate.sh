@@ -29,7 +29,7 @@ mkdir -p "$RUN"
 step() { echo "==> $*" | tee -a "$LOG"; }
 
 step "Stage 0: unit tests"
-cmake --build build -j --target opskv_unit_tests 2>&1 | tee -a "$LOG" | tail -5
+cmake --build build -j --target openkv_unit_tests 2>&1 | tee -a "$LOG" | tail -5
 ctest --test-dir build --output-on-failure 2>&1 | tee -a "$LOG"
 step "unit OK"
 

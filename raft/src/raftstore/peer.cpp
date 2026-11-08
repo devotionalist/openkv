@@ -14,9 +14,9 @@
 
 // @file peer.cpp
 
-#include "opskv/raftstore/peer.hpp"
+#include "openkv/raftstore/peer.hpp"
 
-namespace opskv::raftstore {
+namespace openkv::raftstore {
 
 Peer::Peer(uint32_t region_id, std::unique_ptr<raft::RawNode> raw) : raw_(std::move(raw)) {
   meta_.region_id = region_id;
@@ -38,4 +38,4 @@ bool Peer::idle_for(std::chrono::milliseconds d) const {
   return std::chrono::steady_clock::now() - last_active_ >= d;
 }
 
-}  // namespace opskv::raftstore
+}  // namespace openkv::raftstore

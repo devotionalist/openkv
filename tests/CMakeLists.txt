@@ -15,7 +15,7 @@
 # =============================================================================
 # tests — GoogleTest 单元测试
 # -----------------------------------------------------------------------------
-# 单一可执行文件 opskv_unit_tests，内含各模块 TEST()/TEST_F()。
+# 单一可执行文件 openkv_unit_tests，内含各模块 TEST()/TEST_F()。
 # gtest_discover_tests 会在构建后扫描用例，把每个 TEST 注册成独立 ctest 项，
 # 便于：
 #   ctest -R RaftLogTest
@@ -23,7 +23,7 @@
 # =============================================================================
 
 # ---- 测试源文件清单（按模块分子目录，便于维护） ----------------------------
-set(OPSKV_TEST_SOURCES
+set(OPENKV_TEST_SOURCES
   # common：哈希、Range、配置、Admin ACL
   common/hash_test.cpp
   common/region_test.cpp
@@ -62,29 +62,29 @@ set(OPSKV_TEST_SOURCES
   compute/kv_proxy_test.cpp
 )
 
-add_executable(opskv_unit_tests ${OPSKV_TEST_SOURCES})
+add_executable(openkv_unit_tests ${OPENKV_TEST_SOURCES})
 
 # gtest_main 提供 main()；gmock 备用
 # 业务库全部 PRIVATE 链接进测试二进制
-target_link_libraries(opskv_unit_tests
+target_link_libraries(openkv_unit_tests
   PRIVATE
     GTest::gtest_main
     GTest::gmock
-    opskv_common
-    opskv_raft
-    opskv_storage
-    opskv_meta
-    opskv_compute
+    openkv_common
+    openkv_raft
+    openkv_storage
+    openkv_meta
+    openkv_compute
 )
 
-target_compile_features(opskv_unit_tests PRIVATE cxx_std_20)
-if(COMMAND opskv_link_jemalloc)
-  opskv_link_jemalloc(opskv_unit_tests)
+target_compile_features(openkv_unit_tests PRIVATE cxx_std_20)
+if(COMMAND openkv_link_jemalloc)
+  openkv_link_jemalloc(openkv_unit_tests)
 endif()
 
 # 将每个 TEST() 注册为 ctest 用例；WORKING_DIRECTORY 设为源码根，
 # 方便测试里用相对路径读 conf/（若需要）
-gtest_discover_tests(opskv_unit_tests
+gtest_discover_tests(openkv_unit_tests
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   PROPERTIES LABELS "unit"
   DISCOVERY_TIMEOUT 60

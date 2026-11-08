@@ -15,21 +15,21 @@
 | 取模哈希 | 早期自研、部分分库中间件 | 改 N，大量重映射 | 差 | 靠哈希打散 | 低 |
 | 一致性哈希 | Ketama、部分缓存代理 | 加节点影响邻居 | 差 | 虚拟节点缓解 | 中 |
 | 哈希槽 | **Redis Cluster**、Codis | 迁槽，公式不变 | 差 | 仍可能单 key 热 | 中 |
-| 范围分片 | **FoundationDB**、HBase、CockroachDB、**OpsKV** | 分裂/合并/搬迁 range | 强 | 需自动分裂 | 高 |
+| 范围分片 | **FoundationDB**、HBase、CockroachDB、**OpenKV** | 分裂/合并/搬迁 range | 强 | 需自动分裂 | 高 |
 | 目录/查表 | Vitess（拓扑）、云数据库控制面 | Meta 改映射 | 取决于底层 | 可精细调度 | 高（依赖 Meta） |
 
 ---
 
-## 2. OpsKV 与 Redis / FDB 的差异（速览）
+## 2. OpenKV 与 Redis / FDB 的差异（速览）
 
-| 维度 | OpsKV（当前） | Redis Cluster | FoundationDB |
+| 维度 | OpenKV（当前） | Redis Cluster | FoundationDB |
 |------|-------------------|---------------|--------------|
 | 映射 | 有序 `[start, end)` Region；`locate(key)` | `CRC16(key) % 16384` → hash slot | 有序 key 空间上的连续 `[start, end)` |
 | 扩容 | **分裂 / 合并** Region + Raft ConfChange | **迁移 slot**，key→slot 公式不变 | **分裂 / 合并 / 搬迁** range |
 | 复制 | 每 Region 一组 Raft（RF=3，多数派 2） | 主从异步（槽在主上） | 存储复制 + 中心化事务管线 |
 | 有序扫描 | 强（同 Region 内有序；跨 Region 可串联） | 弱 | 强 |
 
-结论：OpsKV 与 **FDB 等同属 Range + Multi-Raft**；与 Redis 槽位迁移不是同一套策略。尚未具备 FDB 级分布式事务与完整 DD。
+结论：OpenKV 与 **FDB 等同属 Range + Multi-Raft**；与 Redis 槽位迁移不是同一套策略。尚未具备 FDB 级分布式事务与完整 DD。
 
 ---
 
@@ -37,7 +37,7 @@
 
 ### 3.1 取模哈希 `hash(key) % N`
 
-**代表：** 手工分库分表、早期简单分片（OpsKV 早期原型曾用，已改为 Range）
+**代表：** 手工分库分表、早期简单分片（OpenKV 早期原型曾用，已改为 Range）
 
 **优点**
 
@@ -121,7 +121,7 @@
 
 **适用：** 分布式数据库、需要扫描 / 事务 / SQL 的下层 KV。
 
-**OpsKV：** 已采用本策略（Region + Meta 路由 + 每 Region Raft）；自动 merge / 跨 Region 事务仍待补齐，见 [RANGE_SHARDING.md](RANGE_SHARDING.md)。
+**OpenKV：** 已采用本策略（Region + Meta 路由 + 每 Region Raft）；自动 merge / 跨 Region 事务仍待补齐，见 [RANGE_SHARDING.md](RANGE_SHARDING.md)。
 
 ---
 
@@ -160,7 +160,7 @@
 要严格 KV 事务、有序空间、工业级数据分布
  → FoundationDB（Range）
 
-要有序 Range + 每片 Raft、可分裂合并（当前 OpsKV）
+要有序 Range + 每片 Raft、可分裂合并（当前 OpenKV）
  → Range + Multi-Raft（方案 4 / Range）
 
 按库表 / 租户切开、兼容 MySQL 协议
@@ -169,11 +169,11 @@
 
 ---
 
-## 5. 对照 OpsKV 现状与演进
+## 5. 对照 OpenKV 现状与演进
 
 当前默认：**3 Storage、开机 1 个 Region 0 覆盖全空间、每 Region RF=3**；容量靠 split/merge 增减 Region。
 
-| 维度 | 当前 OpsKV | Redis Cluster | FDB / Range-Raft KV |
+| 维度 | 当前 OpenKV | Redis Cluster | FDB / Range-Raft KV |
 |------|----------------|---------------|------------|
 | 映射 | 有序 Range Region | 固定 slot + 迁槽 | 有序 range + 分裂 |
 | 复制 | 每 Region Raft RF=3 | 主从（槽在主上） | 每 Region Raft 或等价 |

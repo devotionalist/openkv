@@ -1,4 +1,4 @@
-# OpsKV Web 管控模块
+# OpenKV Web 管控模块
 
 独立于 Meta / Storage / Gateway / Client 的 **Web 运维进程**，默认监听 `:19100`。
 

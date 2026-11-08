@@ -15,7 +15,7 @@
 // @file cluster_state_test.cpp
 // Range bootstrap、分裂、Learner、心跳。
 
-#include "opskv/meta/cluster_state.hpp"
+#include "openkv/meta/cluster_state.hpp"
 
 #include <gtest/gtest.h>
 
@@ -23,11 +23,11 @@
 #include <limits>
 #include <thread>
 
-using opskv::meta::ClusterState;
-using opskv::meta::NodeInfo;
-using opskv::meta::NodeRole;
-using opskv::meta::NodeState;
-using opskv::meta::Replica;
+using openkv::meta::ClusterState;
+using openkv::meta::NodeInfo;
+using openkv::meta::NodeRole;
+using openkv::meta::NodeState;
+using openkv::meta::Replica;
 
 static std::vector<NodeInfo> three_storages() {
   return {
@@ -157,7 +157,7 @@ TEST(ClusterStateTest, HeartbeatUpdatesLeader) {
 TEST(ClusterStateTest, MigratePersistRoundTrip) {
   ClusterState st;
   st.bootstrap_range(3, three_storages());
-  opskv::meta::PersistMigrate pm;
+  openkv::meta::PersistMigrate pm;
   pm.task_id = "mig-1";
   pm.region_id = 0;
   pm.state = 1;

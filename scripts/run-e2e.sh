@@ -40,7 +40,7 @@ trap cleanup EXIT
 
 echo "==> build C++"
 cmake -B "$BUILD_DIR" \
-  -DOPSKV_USE_SEASTAR=OFF -DOPSKV_USE_GRPC="${OPSKV_USE_GRPC:-ON}" \
+  -DOPENKV_USE_SEASTAR=OFF -DOPENKV_USE_GRPC="${OPENKV_USE_GRPC:-ON}" \
   -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib \
   >/dev/null
 cmake --build "$BUILD_DIR" -j --target meta_server storage_node

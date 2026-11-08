@@ -18,10 +18,10 @@
 // - 加载失败则用内置单机开发默认（meta-0:8500 + 3 storage）
 // - SIGINT/SIGTERM → stop MetaNode 后退出
 
-#include "opskv/logging.hpp"
-#include "opskv/meta/meta_fsm.hpp"
-#include "opskv/meta/meta_node.hpp"
-#include "opskv/metrics_http.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/meta/meta_fsm.hpp"
+#include "openkv/meta/meta_node.hpp"
+#include "openkv/metrics_http.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -34,7 +34,7 @@ void on_signal(int) { g_stop = true; }
 }  // namespace
 
 int main(int argc, char** argv) {
-  using namespace opskv;
+  using namespace openkv;
   init_logging();
   std::string config_path = "conf/bootstrap.conf";
   if (argc > 1) {

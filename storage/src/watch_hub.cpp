@@ -14,11 +14,11 @@
 
 // @file watch_hub.cpp
 
-#include "opskv/storage/watch_hub.hpp"
+#include "openkv/storage/watch_hub.hpp"
 
 #include <limits>
 
-namespace opskv::storage {
+namespace openkv::storage {
 
 WatchHub::WatchHub(size_t capacity) : capacity_(capacity == 0 ? 4096 : capacity) {}
 
@@ -43,4 +43,4 @@ std::vector<WatchRecord> WatchHub::poll(uint32_t region_id, uint64_t since, size
   return out;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

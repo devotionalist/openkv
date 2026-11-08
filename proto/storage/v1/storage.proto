@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package storage.v1;
 
-option go_package = "github.com/amydemo/opskv/client/go/gen/storage/v1;storagev1";
+option go_package = "github.com/devotionalist/openkv/client/go/gen/storage/v1;storagev1";
 option cc_enable_arenas = true;
 
 // Compute → Storage 内部 API（仅 Leader 接受写）

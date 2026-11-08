@@ -15,15 +15,15 @@
 # =============================================================================
 # raft — Multi-Raft 共识库
 # -----------------------------------------------------------------------------
-# 产出目标：opskv_raft
+# 产出目标：openkv_raft
 # 内容：RaftLog / RaftNode（单分片）/ MultiRaft（本节点托管的多个 Group）
-# 依赖：opskv_common
+# 依赖：openkv_common
 # =============================================================================
 
 skv_collect_sources(RAFT_SRCS DIR src)
 
-add_library(opskv_raft ${RAFT_SRCS})
-target_include_directories(opskv_raft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(opskv_raft PUBLIC opskv_common)
+add_library(openkv_raft ${RAFT_SRCS})
+target_include_directories(openkv_raft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(openkv_raft PUBLIC openkv_common)
 # GrpcRaftTransport 依赖 proto（gRPC 强制）
-target_link_libraries(opskv_raft PUBLIC opskv_proto)
+target_link_libraries(openkv_raft PUBLIC openkv_proto)

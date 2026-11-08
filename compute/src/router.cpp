@@ -15,18 +15,18 @@
 // @file router.cpp
 // Router：Range 定位 + Leader 选取。
 
-#include "opskv/compute/router.hpp"
+#include "openkv/compute/router.hpp"
 
-namespace opskv::compute {
+namespace openkv::compute {
 namespace {
 
-void rebuild_sorted(const RoutingTable& table, std::vector<opskv::RegionMeta>* sorted) {
+void rebuild_sorted(const RoutingTable& table, std::vector<openkv::RegionMeta>* sorted) {
   sorted->clear();
   sorted->reserve(table.regions.size());
   for (const auto& [id, rr] : table.regions) {
     sorted->push_back({id, rr.range});
   }
-  opskv::sort_regions(*sorted);
+  openkv::sort_regions(*sorted);
 }
 
 }  // namespace
@@ -43,9 +43,9 @@ uint64_t Router::version() const {
   return table_.version;
 }
 
-std::optional<opskv::RegionId> Router::region_of(std::string_view key) const {
+std::optional<openkv::RegionId> Router::region_of(std::string_view key) const {
   std::lock_guard<std::mutex> lock(mu_);
-  return opskv::locate_region(sorted_, key);
+  return openkv::locate_region(sorted_, key);
 }
 
 uint32_t Router::shard_of(std::string_view key) const {
@@ -53,7 +53,7 @@ uint32_t Router::shard_of(std::string_view key) const {
   return id ? *id : 0;
 }
 
-std::optional<std::string> Router::leader_addr(opskv::RegionId region_id) const {
+std::optional<std::string> Router::leader_addr(openkv::RegionId region_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = table_.regions.find(region_id);
   if (it == table_.regions.end()) return std::nullopt;
@@ -70,7 +70,7 @@ std::optional<std::string> Router::leader_addr_for_key(std::string_view key) con
   return leader_addr(*id);
 }
 
-std::vector<std::string> Router::replica_addrs(opskv::RegionId region_id) const {
+std::vector<std::string> Router::replica_addrs(openkv::RegionId region_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<std::string> out;
   auto it = table_.regions.find(region_id);
@@ -91,4 +91,4 @@ void Router::bootstrap_single(const std::string& storage_addr, uint32_t) {
   update(std::move(t));
 }
 
-}  // namespace opskv::compute
+}  // namespace openkv::compute

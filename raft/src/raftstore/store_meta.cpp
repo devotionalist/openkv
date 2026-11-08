@@ -14,9 +14,9 @@
 
 // @file store_meta.cpp
 
-#include "opskv/raftstore/store_meta.hpp"
+#include "openkv/raftstore/store_meta.hpp"
 
-namespace opskv::raftstore {
+namespace openkv::raftstore {
 
 void StoreMeta::upsert(RegionLocalState st) {
   std::lock_guard<std::mutex> lk(mu_);
@@ -47,7 +47,7 @@ void StoreMeta::set_epoch(uint32_t region_id, uint64_t epoch) {
   regions_[region_id].epoch = epoch;
 }
 
-void StoreMeta::set_range(uint32_t region_id, opskv::KeyRange range) {
+void StoreMeta::set_range(uint32_t region_id, openkv::KeyRange range) {
   std::lock_guard<std::mutex> lk(mu_);
   regions_[region_id].region_id = region_id;
   regions_[region_id].range = std::move(range);
@@ -72,4 +72,4 @@ std::vector<uint32_t> StoreMeta::leader_regions(const std::string& self_id) cons
   return out;
 }
 
-}  // namespace opskv::raftstore
+}  // namespace openkv::raftstore

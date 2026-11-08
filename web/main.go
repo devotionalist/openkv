@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// OpsKV Web 管控模块：独立进程，默认 :19100。
+// OpenKV Web 管控模块：独立进程，默认 :19100。
 //
 //	cd web && go run . -listen 0.0.0.0:19100
 package main
@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amydemo/opskv/web/internal/api"
+	"github.com/devotionalist/openkv/web/internal/api"
 )
 
 //go:embed static/*
@@ -64,7 +64,7 @@ func main() {
 	if strings.HasPrefix(addr, "0.0.0.0:") {
 		display = "127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
 	}
-	log.Printf("OpsKV web module → http://%s", display)
+	log.Printf("OpenKV web module → http://%s", display)
 
 	srv := &http.Server{
 		Addr:              addr,

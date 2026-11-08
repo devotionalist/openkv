@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package meta.v1;
 
-option go_package = "github.com/amydemo/opskv/client/go/gen/meta/v1;metav1";
+option go_package = "github.com/devotionalist/openkv/client/go/gen/meta/v1;metav1";
 option cc_enable_arenas = true;
 
 // 集群元数据：拓扑、路由、在线扩容

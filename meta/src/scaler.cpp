@@ -17,14 +17,14 @@
 // 状态机：Pending → AddingLearner → CatchingUp → PromotingVoter → UpdatingRoute → Completed。
 // 数据面经 add_learner_/catch_up_/promote_ 钩子打到 Storage；Meta 状态经钩子内 replicate。
 
-#include "opskv/meta/scaler.hpp"
+#include "openkv/meta/scaler.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <algorithm>
 #include <chrono>
 
-namespace opskv::meta {
+namespace openkv::meta {
 
 Scaler::Scaler(ClusterState& state, AddLearnerFn add_learner, PromoteFn promote, BumpRouteFn bump,
                CatchUpFn catch_up, std::function<bool()> is_leader)
@@ -300,4 +300,4 @@ void Scaler::advance(ScaleTask& task) {
   }
 }
 
-}  // namespace opskv::meta
+}  // namespace openkv::meta

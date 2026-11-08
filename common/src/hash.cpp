@@ -17,11 +17,11 @@
 //
 // 逻辑均在 hash.hpp；本文件无业务代码。
 
-#include "opskv/hash.hpp"
+#include "openkv/hash.hpp"
 
 // Header-only hash helpers; TU kept for linker stability.
-namespace opskv {
+namespace openkv {
 namespace {
 [[maybe_unused]] const auto kHashAnchor = &fnv1a64;
 }
-}  // namespace opskv
+}  // namespace openkv

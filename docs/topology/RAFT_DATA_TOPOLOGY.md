@@ -2,7 +2,7 @@
 
 单分片 `RaftNode` + 本机 `MultiRaft` + 持久化 / 传输。  
 图例：`字段 — 含义 / 作用`  
-代码：`raft/include/opskv/raft/*.hpp`
+代码：`raft/include/openkv/raft/*.hpp`
 
 ---
 

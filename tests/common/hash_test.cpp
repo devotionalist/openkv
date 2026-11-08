@@ -15,15 +15,15 @@
 // @file hash_test.cpp
 // 测试 fnv1a64 稳定性、空 key、shard_of 范围与 shard_count=0 行为。
 
-#include "opskv/hash.hpp"
+#include "openkv/hash.hpp"
 
 #include <gtest/gtest.h>
 
 #include <set>
 #include <string>
 
-using opskv::fnv1a64;
-using opskv::shard_of;
+using openkv::fnv1a64;
+using openkv::shard_of;
 
 TEST(HashTest, Fnv1aStable) {
   EXPECT_EQ(fnv1a64("hello"), fnv1a64("hello"));

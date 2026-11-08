@@ -1,4 +1,4 @@
-# OpsKV 待做计划（Backlog）
+# OpenKV 待做计划（Backlog）
 
 依据：`COMPONENT_MAP` / `META_PRODUCTION` / `STORE_PRODUCTION` / `MULTI_RAFT_PRODUCTION` / `TRANSACTION_SURVEY` / `SEASTAR_NET` 与近期缺口。  
 文档总目录：[README.md](./README.md)。更新：2026-10-27。

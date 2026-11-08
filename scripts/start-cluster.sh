@@ -59,12 +59,12 @@ if [[ "${SKIP_BUILD:-0}" == "1" ]]; then
   fi
   echo "==> skip C++ build (SKIP_BUILD=1)"
 else
-  # 仓库改名/搬迁后 CMakeCache 仍写旧路径（如 cplusdemo→opskv）会导致 build 失败。
+  # 仓库改名/搬迁后 CMakeCache 仍写旧路径（如 cplusdemo→openkv）会导致 build 失败。
   # 只清缓存、保留 _deps，避免重新下载 RocksDB/gRPC。
   _cmake_stale=0
   if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     _cached_home="$(grep -E '^CMAKE_HOME_DIRECTORY:' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    _cached_src="$(grep -E '^opskv_SOURCE_DIR:' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    _cached_src="$(grep -E '^openkv_SOURCE_DIR:' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -1 | cut -d= -f2- || true)"
     if [[ -n "$_cached_home" && "$_cached_home" != "$ROOT" ]] || \
        [[ -n "$_cached_src" && "$_cached_src" != "$ROOT" ]]; then
       echo "==> CMakeCache path mismatch: home=${_cached_home:-?} src=${_cached_src:-?} current=$ROOT"
@@ -72,7 +72,7 @@ else
       _cmake_stale=1
       _deps_bak=""
       if [[ -d "$BUILD_DIR/_deps" ]]; then
-        _deps_bak="$(mktemp -d "${TMPDIR:-/tmp}/opskv-deps.XXXXXX")"
+        _deps_bak="$(mktemp -d "${TMPDIR:-/tmp}/openkv-deps.XXXXXX")"
         mv "$BUILD_DIR/_deps" "$_deps_bak/_deps"
       fi
       rm -rf "$BUILD_DIR"
@@ -100,13 +100,13 @@ else
 
   # 浅克隆 gRPC（无递归子模块）；避免 FetchContent 默认 --recurse 卡在 opentelemetry/vcpkg
   if [[ ! -f "$BUILD_DIR/_deps/grpc-src/CMakeLists.txt" ]]; then
-    echo "==> seed grpc-src (shallow, no submodules; tag ${OPSKV_GRPC_GIT_TAG:-v1.67.1})"
+    echo "==> seed grpc-src (shallow, no submodules; tag ${OPENKV_GRPC_GIT_TAG:-v1.67.1})"
     mkdir -p "$BUILD_DIR/_deps"
-    _grpc_url="${OPSKV_GRPC_GIT_REPOSITORY:-https://github.com/grpc/grpc.git}"
-    _grpc_tag="${OPSKV_GRPC_GIT_TAG:-v1.67.1}"
+    _grpc_url="${OPENKV_GRPC_GIT_REPOSITORY:-https://github.com/grpc/grpc.git}"
+    _grpc_tag="${OPENKV_GRPC_GIT_TAG:-v1.67.1}"
     if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$_grpc_tag" --single-branch \
          "$_grpc_url" "$BUILD_DIR/_deps/grpc-src"; then
-      echo "hint: GitHub 慢可 OPSKV_GRPC_GIT_REPOSITORY=https://mirror.ghproxy.com/https://github.com/grpc/grpc.git" >&2
+      echo "hint: GitHub 慢可 OPENKV_GRPC_GIT_REPOSITORY=https://mirror.ghproxy.com/https://github.com/grpc/grpc.git" >&2
       echo "hint: 或 brew install grpc protobuf abseil c-ares re2 后 FORCE_CMAKE=1" >&2
       exit 1
     fi
@@ -115,20 +115,20 @@ else
     _cmake_extra+=("-DFETCHCONTENT_SOURCE_DIR_GRPC=$ROOT/$BUILD_DIR/_deps/grpc-src")
   fi
 
-  # 旧 build 曾 OPSKV_USE_GRPC=OFF：必须重配（gRPC 已强制）
+  # 旧 build 曾 OPENKV_USE_GRPC=OFF：必须重配（gRPC 已强制）
   _grpc_cache=""
   if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
-    _grpc_cache="$(grep -E '^OPSKV_USE_GRPC:' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    _grpc_cache="$(grep -E '^OPENKV_USE_GRPC:' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -1 | cut -d= -f2- || true)"
   fi
   if [[ "$_grpc_cache" == "OFF" ]]; then
-    echo "==> CMakeCache OPSKV_USE_GRPC=OFF → force reconfigure (gRPC mandatory)"
+    echo "==> CMakeCache OPENKV_USE_GRPC=OFF → force reconfigure (gRPC mandatory)"
     _cmake_stale=1
   fi
 
   if [[ "${FORCE_CMAKE:-0}" == "1" || "$_cmake_stale" == "1" || ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     echo "==> cmake configure (gRPC mandatory; first time / FORCE_CMAKE=1 / stale cache)"
     cmake -B "$BUILD_DIR" \
-      -DOPSKV_USE_SEASTAR=OFF -DOPSKV_USE_GRPC=ON \
+      -DOPENKV_USE_SEASTAR=OFF -DOPENKV_USE_GRPC=ON \
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib \
       "${_cmake_extra[@]+"${_cmake_extra[@]}"}"

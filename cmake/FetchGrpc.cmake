@@ -21,8 +21,8 @@
 
 include(FetchContent)
 
-set(OPSKV_GRPC_GIT_TAG "v1.67.1" CACHE STRING "Bundled gRPC git tag (FetchContent)")
-set(OPSKV_GRPC_GIT_REPOSITORY "https://github.com/grpc/grpc.git" CACHE STRING
+set(OPENKV_GRPC_GIT_TAG "v1.67.1" CACHE STRING "Bundled gRPC git tag (FetchContent)")
+set(OPENKV_GRPC_GIT_REPOSITORY "https://github.com/grpc/grpc.git" CACHE STRING
   "Bundled gRPC git URL（可换成镜像，如 https://mirror.ghproxy.com/https://github.com/grpc/grpc.git）")
 
 # Homebrew 前缀进 CMAKE_PREFIX_PATH，便于找 Protobuf/absl/re2/c-ares
@@ -54,12 +54,12 @@ endif()
 find_package(gRPC CONFIG QUIET)
 if(Protobuf_FOUND AND gRPC_FOUND AND TARGET gRPC::grpc++ AND TARGET gRPC::grpc_cpp_plugin)
   set(_skv_grpc_ok TRUE)
-  message(STATUS "OpsKV: using system Protobuf + gRPC")
+  message(STATUS "OpenKV: using system Protobuf + gRPC")
 endif()
 
 if(NOT _skv_grpc_ok)
   message(STATUS
-    "OpsKV: system gRPC not found — FetchContent ${OPSKV_GRPC_GIT_TAG} "
+    "OpenKV: system gRPC not found — FetchContent ${OPENKV_GRPC_GIT_TAG} "
     "(shallow, no recursive submodules; prefer Homebrew absl/protobuf/…)")
 
   set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
@@ -110,8 +110,8 @@ if(NOT _skv_grpc_ok)
   # 已设 package provider 时不需要完整 third_party 树
   FetchContent_Declare(
     grpc
-    GIT_REPOSITORY ${OPSKV_GRPC_GIT_REPOSITORY}
-    GIT_TAG        ${OPSKV_GRPC_GIT_TAG}
+    GIT_REPOSITORY ${OPENKV_GRPC_GIT_REPOSITORY}
+    GIT_TAG        ${OPENKV_GRPC_GIT_TAG}
     GIT_SHALLOW    TRUE
     GIT_PROGRESS   TRUE
     GIT_SUBMODULES ""
@@ -136,9 +136,9 @@ if(NOT _skv_grpc_ok)
      NOT TARGET gRPC::grpc++ OR NOT TARGET gRPC::grpc_cpp_plugin)
     message(FATAL_ERROR
       "Bundled gRPC did not export protobuf::*/gRPC::* targets.\n"
-      "  OPSKV_GRPC_GIT_TAG=${OPSKV_GRPC_GIT_TAG}\n"
+      "  OPENKV_GRPC_GIT_TAG=${OPENKV_GRPC_GIT_TAG}\n"
       "  Prefer: brew install grpc protobuf abseil c-ares re2\n"
-      "  Or mirror: -DOPSKV_GRPC_GIT_REPOSITORY=https://mirror.ghproxy.com/https://github.com/grpc/grpc.git")
+      "  Or mirror: -DOPENKV_GRPC_GIT_REPOSITORY=https://mirror.ghproxy.com/https://github.com/grpc/grpc.git")
   endif()
-  message(STATUS "OpsKV: bundled gRPC ${OPSKV_GRPC_GIT_TAG} ready (package providers where available)")
+  message(STATUS "OpenKV: bundled gRPC ${OPENKV_GRPC_GIT_TAG} ready (package providers where available)")
 endif()

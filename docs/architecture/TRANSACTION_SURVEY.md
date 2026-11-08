@@ -1,6 +1,6 @@
 # 分布式事务方案调研
 
-面向 OpsKV（Range + Multi-Raft KV）的事务层选型调研。  
+面向 OpenKV（Range + Multi-Raft KV）的事务层选型调研。  
 当前实现：**单 key 强一致写**（Region Leader → Raft 多数派 → Apply）；**无跨 Region / 多 key 事务**。
 
 相关文档：[ARCHITECTURE.md](ARCHITECTURE.md)、[RANGE_SHARDING.md](RANGE_SHARDING.md)、[SHARDING_STRATEGIES.md](SHARDING_STRATEGIES.md)。
@@ -26,7 +26,7 @@
 3. **提交全序**：需要可比较的时间戳或等价机制，支撑 MVCC 读与冲突检测。  
 4. **与分片共存**：Region 分裂、迁移、NotLeader 时，事务协议仍正确。
 
-### 1.3 对 OpsKV 的约束
+### 1.3 对 OpenKV 的约束
 
 - 分片已是 **Range Range Region + 每 Region Raft**。  
 - Compute（Gateway）无状态；状态在 Storage / Meta。  
@@ -48,7 +48,7 @@
   TrueTime / 原子钟 ─ Spanner（外加 2PC）
 ```
 
-| 路线 | 代表 | 时间戳 | 跨分片提交 | 与 OpsKV 契合度 |
+| 路线 | 代表 | 时间戳 | 跨分片提交 | 与 OpenKV 契合度 |
 |------|------|--------|------------|---------------------|
 | Percolator | 工业 SQL+KV | 中心 TSO | Prewrite + Commit（primary 先） | **高** |
 | FDB 管线 | FoundationDB | 版本号（Proxy） | 中心化 commit path | 中（要改控制面） |
@@ -92,7 +92,7 @@ Client/SQL
 | Gateway 可作轻量协调 | 大事务、热点 key 锁竞争明显 |
 | 可渐进：先乐观，再加悲观 | 分裂窗口要与 epoch/锁共存设计 |
 
-### 3.4 对 OpsKV
+### 3.4 对 OpenKV
 
 **首选参考实现路径**：Meta 提供 TSO（或独立 Timestamp 服务）→ Storage 扩展 lock/MVCC → Gateway（或独立 TxnClient）跑 Prewrite/Commit。
 
@@ -116,7 +116,7 @@ Client/SQL
 | 存储角色 | 持锁 + MVCC + Raft | 版本化存储 + 复制 |
 | 运维复杂度 | 锁残留、异步 resolve | Proxy/Resolver 扩展与热点 |
 
-### 4.3 对 OpsKV
+### 4.3 对 OpenKV
 
 分片相似，**控制面差一层**。若选 FDB，需新增 Proxy/Resolver 类角色，与当前「Gateway 无状态 + Storage Multi-Raft」差距更大。可作为长期对照，**不宜作为第一版事务路径**。
 
@@ -148,9 +148,9 @@ SQL+KV:    SQL ──RPC──► 多个 Region Raft（锁/数据在 KV）
 OceanBase: SQL+引擎同进程；跨分区再 2PC ──► 各分区 Paxos 组
 ```
 
-### 5.4 对 OpsKV
+### 5.4 对 OpenKV
 
-OceanBase 强依赖 **分区表 + 库内引擎** 叙事；当前 OpsKV 是纯 KV Multi-Raft。要对齐需先补分区/SQL 抽象，**与现有架构不同向**。调研结论：作对照即可，不作为默认事务方案。
+OceanBase 强依赖 **分区表 + 库内引擎** 叙事；当前 OpenKV 是纯 KV Multi-Raft。要对齐需先补分区/SQL 抽象，**与现有架构不同向**。调研结论：作对照即可，不作为默认事务方案。
 
 ---
 
@@ -198,7 +198,7 @@ OceanBase 强依赖 **分区表 + 库内引擎** 叙事；当前 OpsKV 是纯 KV
 | 跨分片 | Percolator | Resolver 管线 | 2PC | 事务记录+锁/写意图 |
 | SQL 耦合 | 低（KV 通用） | 无（纯 KV） | 高（一体化） | 中（SQL 一体） |
 
-### 7.2 工程成本（相对 OpsKV 现状）
+### 7.2 工程成本（相对 OpenKV 现状）
 
 | 方案 | 新增组件 | Storage 改动 | 风险 |
 |------|----------|--------------|------|
@@ -209,7 +209,7 @@ OceanBase 强依赖 **分区表 + 库内引擎** 叙事；当前 OpsKV 是纯 KV
 
 ---
 
-## 8. 与 OpsKV 的映射建议
+## 8. 与 OpenKV 的映射建议
 
 ### 8.1 推荐路线（第一版）
 
@@ -254,10 +254,10 @@ Txn     →  primary_key + secondary_keys + start_ts
 |------|------|
 | SQL+KV 与 OceanBase **事务方案不同** | 前者 Percolator on KV；后者分区库 MVCC + 跨分区 2PC |
 | FDB 与 Percolator 系 **分片同类、事务栈不同** | FDB 中心化 commit；Percolator 分散锁与 Prewrite |
-| OpsKV **应对齐 Percolator** | 成本最低、与 Region/Raft 一致 |
+| OpenKV **应对齐 Percolator** | 成本最低、与 Region/Raft 一致 |
 | 现状 | **P1–P3 已落地**：TSO、乐观/悲观锁、CheckTxnStatus/Resolve、Region epoch |
 
-## 10. 实现状态（OpsKV）
+## 10. 实现状态（OpenKV）
 
 | 组件 | 能力 |
 |------|------|

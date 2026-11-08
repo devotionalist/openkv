@@ -14,11 +14,11 @@
 
 // @file raftkv.cpp
 
-#include "opskv/storage/raftkv.hpp"
+#include "openkv/storage/raftkv.hpp"
 
-#include "opskv/raft/raw_node.hpp"
+#include "openkv/raft/raw_node.hpp"
 
-namespace opskv::storage {
+namespace openkv::storage {
 
 RaftKV::RaftKV(raftstore::Store* store) : store_(store) {}
 
@@ -81,4 +81,4 @@ bool RaftKV::sync_write(uint32_t region_id, std::string data, uint64_t* assigned
   return true;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

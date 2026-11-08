@@ -1,6 +1,6 @@
-# OpsKV 用户使用手册
+# OpenKV 用户使用手册
 
-OpsKV 是基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV：Meta / Storage（C++）+ Gateway / 客户端 / Web 管控台（Go）。
+OpenKV 是基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV：Meta / Storage（C++）+ Gateway / 客户端 / Web 管控台（Go）。
 
 本文说明如何**安装、访问、读写与扩容**。架构 / 流程图 / SOP / 测试见 [README.md](./README.md) 分类索引；网络协议见 [NETWORKING.md](./NETWORKING.md)。
 
@@ -80,31 +80,31 @@ go run ./examples/basic 127.0.0.1:19000
 
 ## 3. Kubernetes / Helm 部署
 
-Chart：[`deploy/helm/opskv`](../deploy/helm/opskv)。默认 **Meta×3 + Storage×3 + Gateway×1 + Web**。
+Chart：[`deploy/helm/openkv`](../deploy/helm/openkv)。默认 **Meta×3 + Storage×3 + Gateway×1 + Web**。
 
 ### 3.1 构建并导入镜像（Colima / k3s）
 
 k3s 使用 containerd，需把 Docker 镜像导入后再装：
 
 ```bash
-docker build -f deploy/Dockerfile -t opskv:dev .
-docker build -f deploy/Dockerfile.gateway -t opskv-gateway:dev .
-docker build -f deploy/Dockerfile.web -t opskv-web:dev .
+docker build -f deploy/Dockerfile -t openkv:dev .
+docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
+docker build -f deploy/Dockerfile.web -t openkv-web:dev .
 
-docker save opskv:dev         | colima ssh -- sudo k3s ctr images import -
-docker save opskv-gateway:dev | colima ssh -- sudo k3s ctr images import -
-docker save opskv-web:dev     | colima ssh -- sudo k3s ctr images import -
+docker save openkv:dev         | colima ssh -- sudo k3s ctr images import -
+docker save openkv-gateway:dev | colima ssh -- sudo k3s ctr images import -
+docker save openkv-web:dev     | colima ssh -- sudo k3s ctr images import -
 ```
 
 ### 3.2 安装
 
 ```bash
-helm upgrade --install opskv deploy/helm/opskv -n opskv --create-namespace \
+helm upgrade --install openkv deploy/helm/openkv -n openkv --create-namespace \
   --set image.pullPolicy=Never \
   --set gatewayImage.pullPolicy=Never \
   --set web.image.pullPolicy=Never
 
-kubectl -n opskv get pods
+kubectl -n openkv get pods
 ```
 
 期望 Meta / Storage / Gateway / Web 均为 Ready。
@@ -113,18 +113,18 @@ kubectl -n opskv get pods
 
 - **Web**：默认 `service.web.type=LoadBalancer`。Colima 下通常可直接打开  
   **http://127.0.0.1:19100/**  
-  （若不通：`kubectl -n opskv port-forward svc/web 19100:19100`）
+  （若不通：`kubectl -n openkv port-forward svc/web 19100:19100`）
 - **Gateway（客户端）**：
 
 ```bash
-kubectl -n opskv port-forward svc/gateway 19000:19000
+kubectl -n openkv port-forward svc/gateway 19000:19000
 ./.run/kv-example 127.0.0.1:19000
 ```
 
 ### 3.4 卸载
 
 ```bash
-helm uninstall opskv -n opskv
+helm uninstall openkv -n openkv
 # PVC 默认保留；彻底清盘需手动删除 PVC
 ```
 
@@ -146,7 +146,7 @@ Helm 把 `replicaCount.storage` 加大，**不会**自动 join / balance。
 ### 4.1 加 Gateway（无状态）
 
 ```bash
-helm upgrade opskv deploy/helm/opskv -n opskv --reuse-values \
+helm upgrade openkv deploy/helm/openkv -n openkv --reuse-values \
   --set replicaCount.gateway=2 \
   --set image.pullPolicy=Never \
   --set gatewayImage.pullPolicy=Never \
@@ -160,13 +160,13 @@ helm upgrade opskv deploy/helm/opskv -n opskv --reuse-values \
 **A — 只加节点**
 
 ```bash
-helm upgrade opskv deploy/helm/opskv -n opskv --reuse-values \
+helm upgrade openkv deploy/helm/openkv -n openkv --reuse-values \
   --set replicaCount.storage=6 \
   --set image.pullPolicy=Never \
   --set gatewayImage.pullPolicy=Never \
   --set web.image.pullPolicy=Never
 
-kubectl -n opskv get pods -l app.kubernetes.io/component=storage
+kubectl -n openkv get pods -l app.kubernetes.io/component=storage
 # 期望出现 storage-3 / storage-4 / storage-5，且为 Joining
 ```
 

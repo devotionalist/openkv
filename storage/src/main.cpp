@@ -15,12 +15,12 @@
 // @file main.cpp
 // Storage 进程入口：主端口 gRPC（Store/Raft/Admin）。行协议仅作进程内 ExecLine 适配，不 listen。
 
-#include "opskv/logging.hpp"
-#include "opskv/metrics_http.hpp"
-#include "opskv/storage/grpc_server.hpp"
-#include "opskv/storage/storage_node.hpp"
-#include "opskv/storage/store_service.hpp"
-#include "opskv/storage/exec_line_handler.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/metrics_http.hpp"
+#include "openkv/storage/grpc_server.hpp"
+#include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/store_service.hpp"
+#include "openkv/storage/exec_line_handler.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -33,7 +33,7 @@ void on_signal(int) { g_stop = true; }
 }  // namespace
 
 int main(int argc, char** argv) {
-  using namespace opskv;
+  using namespace openkv;
   init_logging();
   std::string config_path = "conf/storage.conf";
   if (argc > 1) {

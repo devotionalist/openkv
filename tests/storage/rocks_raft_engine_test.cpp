@@ -15,7 +15,7 @@
 // @file rocks_raft_engine_test.cpp
 // RocksRaftEngine：WriteBatch 原子写 state+log。
 
-#include "opskv/storage/rocks_raft_engine.hpp"
+#include "openkv/storage/rocks_raft_engine.hpp"
 
 #include <gtest/gtest.h>
 
@@ -23,10 +23,10 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
-using opskv::raft::LogEntry;
-using opskv::raft::RaftLocalState;
-using opskv::raft::SyncMode;
-using opskv::storage::RocksRaftEngine;
+using openkv::raft::LogEntry;
+using openkv::raft::RaftLocalState;
+using openkv::raft::SyncMode;
+using openkv::storage::RocksRaftEngine;
 
 TEST(RocksRaftEngineTest, ConsumeAndFetch) {
   auto dir = fs::temp_directory_path() / ("skv_rocks_raft_" + std::to_string(::getpid()));

@@ -1,4 +1,4 @@
-# OpsKV
+# OpenKV
 
 基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV（C++ Meta/Storage + Go Gateway/客户端）。分片为 **Range Region**，默认副本因子 3。
 
@@ -27,13 +27,13 @@ Storage ×N (:9100…)  · 每 Region 一组 Raft (RF=3) · RocksDB
 | **tools/skv** | C++ 运维 CLI（启停、put/get、locate/split/merge） |
 | **web/** | 独立 Web 管控模块（`:19100`）：拓扑 / Region / 运维 / KV |
 
-![OpsKV 管控台总览](docs/images/console-overview.png)
+![OpenKV 管控台总览](docs/images/console-overview.png)
 
 **文档：** [docs/README.md](docs/README.md)（用户手册 · 网络 · 架构 · 运维 · 测试 · 流程图）
 
 ## 快速开始（本地）
 
-默认路径：**强制 gRPC C++**（系统包或 FetchContent）；**不需要** Seastar（默认 `OPSKV_USE_SEASTAR=OFF`）。Storage 捆绑 RocksDB；进程分配器默认 **jemalloc**（FetchContent）。
+默认路径：**强制 gRPC C++**（系统包或 FetchContent）；**不需要** Seastar（默认 `OPENKV_USE_SEASTAR=OFF`）。Storage 捆绑 RocksDB；进程分配器默认 **jemalloc**（FetchContent）。
 
 ```bash
 make          # configure + build + unit tests
@@ -80,8 +80,8 @@ cd client/go && go run ./examples/e2e -addr 127.0.0.1:19000
 ```bash
 # 可选：仅 Linux 试验 Seastar（不改变 gRPC 协议面）
 sudo ./path/to/seastar/install-dependencies.sh
-cmake -B build -DOPSKV_USE_SEASTAR=ON
-# 可选钉版本：-DOPSKV_SEASTAR_GIT_TAG=seastar-25.05.0
+cmake -B build -DOPENKV_USE_SEASTAR=ON
+# 可选钉版本：-DOPENKV_SEASTAR_GIT_TAG=seastar-25.05.0
 cmake --build build -j
 ```
 

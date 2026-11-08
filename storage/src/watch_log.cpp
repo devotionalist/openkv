@@ -14,12 +14,12 @@
 
 // @file watch_log.cpp
 
-#include "opskv/storage/watch_log.hpp"
+#include "openkv/storage/watch_log.hpp"
 
 #include <cstring>
 #include <vector>
 
-namespace opskv::storage {
+namespace openkv::storage {
 namespace {
 
 void append_u32(std::string& out, uint32_t v) {
@@ -120,4 +120,4 @@ std::vector<WatchRecord> WatchLog::poll(const KvEngine& eng, uint32_t region_id,
   return out;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

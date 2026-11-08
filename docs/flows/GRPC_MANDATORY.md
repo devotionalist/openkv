@@ -6,7 +6,7 @@
 
 历史开关允许绕过 gRPC：
 
-- `-DOPSKV_USE_GRPC=OFF`：C++ 只听主端口行协议
+- `-DOPENKV_USE_GRPC=OFF`：C++ 只听主端口行协议
 - `SKV_LEGACY_TCP=1`：主端口 gRPC 时额外在 port+1000 听行协议；客户端改走行协议
 
 本机 GRPC=OFF 时 Gateway/Web 默认 gRPC 会 `storage not ready` / `http2: frame too large`。
@@ -27,7 +27,7 @@
 | `TcpServer`（listen + 行协议） | 删 listen；类/文件改名为 `ExecLineHandler`（`exec_line_handler.*`） |
 | `TcpTransport`（peer 表 / 出站计数 / 历史 TCP 发包） | 删除；并入 `GrpcRaftTransport`（Impl peer 表 + `PeerCounter`） |
 | `net::tcp_line` / `tcp_line_auth` | 删除；仅保留 `parse_host_port` |
-| `#else //!OPSKV_USE_GRPC` 桩（Meta/Storage/Raft gRPC） | 删除 |
+| `#else //!OPENKV_USE_GRPC` 桩（Meta/Storage/Raft gRPC） | 删除 |
 
 ## 边界
 
@@ -38,15 +38,15 @@
 
 - cmake 找不到系统 gRPC：走 FetchContent；**禁止递归子模块**（否则会卡在 opentelemetry/vcpkg）
 - `start-cluster.sh` 会浅克隆 `build/_deps/grpc-src` 并传 `FETCHCONTENT_SOURCE_DIR_GRPC`
-- GitHub 慢：`OPSKV_GRPC_GIT_REPOSITORY=https://mirror.ghproxy.com/https://github.com/grpc/grpc.git`
+- GitHub 慢：`OPENKV_GRPC_GIT_REPOSITORY=https://mirror.ghproxy.com/https://github.com/grpc/grpc.git`
 - 更省事：`brew install grpc protobuf abseil c-ares re2` 后系统 `find_package` 成功则不再 FetchContent
-- 回滚需恢复本提交前的 `OPSKV_USE_GRPC` option 与 `SKV_LEGACY_TCP` 分支（不推荐）
+- 回滚需恢复本提交前的 `OPENKV_USE_GRPC` option 与 `SKV_LEGACY_TCP` 分支（不推荐）
 
 ## 验收
 
 ```bash
 # 配置必须成功且 cache 为 ON
-grep OPSKV_USE_GRPC build/CMakeCache.txt   # → BOOL=ON
+grep OPENKV_USE_GRPC build/CMakeCache.txt   # → BOOL=ON
 
 # 无 TcpTransport 源文件
 test ! -f raft/src/tcp_transport.cpp
@@ -57,4 +57,4 @@ SKV_FRESH=1 ./scripts/start-cluster.sh
 curl -sS http://127.0.0.1:19100/api/route   # 需先 make admin-run
 ```
 
-期望：`cluster started`；kv-example PASS；route JSON 含 regions；`opskv_raft` 链入 `grpc_transport.cpp` 而非 `tcp_transport.cpp`。
+期望：`cluster started`；kv-example PASS；route JSON 含 regions；`openkv_raft` 链入 `grpc_transport.cpp` 而非 `tcp_transport.cpp`。

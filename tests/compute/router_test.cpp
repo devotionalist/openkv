@@ -15,13 +15,13 @@
 // @file router_test.cpp
 // Range 路由：bootstrap、版本守卫、定位。
 
-#include "opskv/compute/router.hpp"
+#include "openkv/compute/router.hpp"
 
 #include <gtest/gtest.h>
 
-using opskv::compute::RegionRoute;
-using opskv::compute::Router;
-using opskv::compute::RoutingTable;
+using openkv::compute::RegionRoute;
+using openkv::compute::Router;
+using openkv::compute::RoutingTable;
 
 TEST(RouterTest, BootstrapSingle) {
   Router r;

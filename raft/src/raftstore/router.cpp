@@ -14,9 +14,9 @@
 
 // @file router.cpp
 
-#include "opskv/raftstore/router.hpp"
+#include "openkv/raftstore/router.hpp"
 
-namespace opskv::raftstore {
+namespace openkv::raftstore {
 
 std::shared_ptr<Router::PeerMailbox> Router::register_peer(uint32_t region_id, size_t cap) {
   std::lock_guard<std::mutex> lk(mu_);
@@ -112,4 +112,4 @@ size_t Router::apply_queue_depth(uint32_t region_id) const {
   return it == applies_.end() ? 0 : it->second->size();
 }
 
-}  // namespace opskv::raftstore
+}  // namespace openkv::raftstore

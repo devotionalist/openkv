@@ -1,4 +1,4 @@
-# OpsKV 处理流程图索引
+# OpenKV 处理流程图索引
 
 每个流程一份独立 Markdown（内含 Mermaid）。与当前实现对齐：**Go Gateway + Meta/Storage gRPC + Range Region + Multi-Raft RF=3**。
 

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file main.cpp
-// skv — OpsKV C++ 运维 CLI（生命周期 + Meta/Storage TCP + KV）；CLI11 解析。
+// skv — OpenKV C++ 运维 CLI（生命周期 + Meta/Storage TCP + KV）；CLI11 解析。
 #include "cluster.hpp"
 #include "tcp_line.hpp"
 
@@ -907,7 +907,7 @@ int cmd_smoke() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  CLI::App app{"skv — OpsKV ops CLI (C++)"};
+  CLI::App app{"skv — OpenKV ops CLI (C++)"};
   app.require_subcommand(1);
   app.footer(
       "Env: SKV_ROOT SKV_STORAGES SKV_META SKV_GATEWAY\n"

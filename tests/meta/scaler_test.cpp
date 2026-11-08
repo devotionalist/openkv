@@ -15,7 +15,7 @@
 // @file scaler_test.cpp
 // 测试 Scaler scale-out 任务从 Pending 到 Completed 及钩子调用次数。
 
-#include "opskv/meta/scaler.hpp"
+#include "openkv/meta/scaler.hpp"
 
 #include <gtest/gtest.h>
 
@@ -23,13 +23,13 @@
 #include <chrono>
 #include <thread>
 
-using opskv::meta::ClusterState;
-using opskv::meta::NodeInfo;
-using opskv::meta::NodeRole;
-using opskv::meta::NodeState;
-using opskv::meta::Replica;
-using opskv::meta::ScaleTaskState;
-using opskv::meta::Scaler;
+using openkv::meta::ClusterState;
+using openkv::meta::NodeInfo;
+using openkv::meta::NodeRole;
+using openkv::meta::NodeState;
+using openkv::meta::Replica;
+using openkv::meta::ScaleTaskState;
+using openkv::meta::Scaler;
 
 TEST(ScalerTest, ScaleOutCompletes) {
   ClusterState st;

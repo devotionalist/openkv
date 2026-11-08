@@ -15,8 +15,8 @@
 // @file store_facade_test.cpp
 // 集成测试 StorageNode + StoreFacade：Raft 选主后 propose/get 端到端。
 
-#include "opskv/storage/storage_node.hpp"
-#include "opskv/storage/store_service.hpp"
+#include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/store_service.hpp"
 
 #include <gtest/gtest.h>
 
@@ -26,11 +26,11 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
-using opskv::NodeConfig;
-using opskv::storage::CmdOp;
-using opskv::storage::Command;
-using opskv::storage::StorageNode;
-using opskv::storage::StoreFacade;
+using openkv::NodeConfig;
+using openkv::storage::CmdOp;
+using openkv::storage::Command;
+using openkv::storage::StorageNode;
+using openkv::storage::StoreFacade;
 
 class StoreFacadeTest : public ::testing::Test {
  protected:

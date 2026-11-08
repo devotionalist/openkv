@@ -1,6 +1,6 @@
 # 网络栈：gRPC 与 Seastar
 
-本文说明 OpsKV **实际在用的通信方式**，以及可选的 Seastar 编译开关。  
+本文说明 OpenKV **实际在用的通信方式**，以及可选的 Seastar 编译开关。  
 文档总目录：[README.md](./README.md) · gRPC 强制变更：[flows/GRPC_MANDATORY.md](./flows/GRPC_MANDATORY.md) · 业务错误 token：[architecture/ERROR_CODES.md](./architecture/ERROR_CODES.md)。
 
 ---
@@ -11,7 +11,7 @@
 |--|----------|-------------|
 | 状态 | **强制**；生产与本地默认路径 | **可选**；默认 `OFF`，业务路径未接入 |
 | 作用 | 集群内外全部 RPC 协议面 | 计划中的异步 reactor 调度（不改变协议） |
-| CMake | `OPSKV_USE_GRPC` 固定 `ON` | `-DOPSKV_USE_SEASTAR=ON` 才拉取并链接 |
+| CMake | `OPENKV_USE_GRPC` 固定 `ON` | `-DOPENKV_USE_SEASTAR=ON` 才拉取并链接 |
 
 ```
 Client / skv / Web
@@ -39,7 +39,7 @@ MetaService  StoreService + RaftService + AdminService
 | `proto/kv/v1/` | 对外 KV / DS / Watch（Gateway 实现） |
 | `proto/meta/v1/` | `MetaService`：路由、TSO、节点生命周期、调度 |
 | `proto/storage/v1/` | `StoreService` / `RaftService` / `AdminService` |
-| C++ 生成 | 构建时写入 `build/generated/`（`opskv_proto`） |
+| C++ 生成 | 构建时写入 `build/generated/`（`openkv_proto`） |
 | Go 生成 | `client/go/gen/`（`make proto` / `scripts/gen_proto.sh`） |
 
 ### 2.2 按组件
@@ -65,11 +65,11 @@ MetaService  StoreService + RaftService + AdminService
 
 ```bash
 # gRPC 为硬依赖：系统包优先，否则 FetchContent 拉 grpc（首次较慢）
-cmake -B build   # OPSKV_USE_GRPC 强制 ON，无需也不应再 OFF
+cmake -B build   # OPENKV_USE_GRPC 强制 ON，无需也不应再 OFF
 cmake --build build -j
 ```
 
-鉴权：运维类 RPC 可带 `x-skv-admin-token`（与 `SKV_ADMIN_TOKEN` 对齐），见代码 `common/include/opskv/grpc_auth.hpp`。
+鉴权：运维类 RPC 可带 `x-skv-admin-token`（与 `SKV_ADMIN_TOKEN` 对齐），见代码 `common/include/openkv/grpc_auth.hpp`。
 
 ---
 
@@ -78,16 +78,16 @@ cmake --build build -j
 ### 3.1 现状（务必读）
 
 - 默认 **不编译、不运行** Seastar。
-- 打开 `-DOPSKV_USE_SEASTAR=ON` 后：FetchContent 拉 [scylladb/seastar](https://github.com/scylladb/seastar)，相关 target 链接 `Seastar::seastar`，定义 `OPSKV_HAS_SEASTAR=1`。
+- 打开 `-DOPENKV_USE_SEASTAR=ON` 后：FetchContent 拉 [scylladb/seastar](https://github.com/scylladb/seastar)，相关 target 链接 `Seastar::seastar`，定义 `OPENKV_HAS_SEASTAR=1`。
 - **Meta / Storage / Raft 运行时仍是 gRPC + 普通线程**；reactor 上跑 gRPC completion queue **尚未实现**。
-- `compute/include/opskv/compute/seastar_app.hpp` 仅为占位说明与条件 `#include`，无生产入口。
+- `compute/include/openkv/compute/seastar_app.hpp` 仅为占位说明与条件 `#include`，无生产入口。
 
 ### 3.2 相关文件
 
 | 路径 | 作用 |
 |------|------|
 | `cmake/FetchSeastar.cmake` | 拉取并编译 Seastar |
-| 根 `CMakeLists.txt` | `option(OPSKV_USE_SEASTAR … OFF)` |
+| 根 `CMakeLists.txt` | `option(OPENKV_USE_SEASTAR … OFF)` |
 | `common` / `meta` / `storage` / `compute` 的 CMake | ON 时 PUBLIC 链接 |
 | `compute/.../seastar_app.hpp` | 未来 `app_template` 示意 |
 
@@ -97,8 +97,8 @@ cmake --build build -j
 # 建议仅 Linux；先装上游系统依赖
 sudo ./path/to/seastar/install-dependencies.sh
 
-cmake -B build -DOPSKV_USE_SEASTAR=ON
-# 可选：-DOPSKV_SEASTAR_GIT_TAG=seastar-25.05.0
+cmake -B build -DOPENKV_USE_SEASTAR=ON
+# 可选：-DOPENKV_SEASTAR_GIT_TAG=seastar-25.05.0
 cmake --build build -j
 ```
 
@@ -135,8 +135,8 @@ macOS 上 ON 可能配置/编译失败，本地开发请保持 **OFF**。
 ## 6. 验收（文档与开关）
 
 ```bash
-grep OPSKV_USE_GRPC build/CMakeCache.txt    # → BOOL=ON
-grep OPSKV_USE_SEASTAR build/CMakeCache.txt # → 默认 OFF
+grep OPENKV_USE_GRPC build/CMakeCache.txt    # → BOOL=ON
+grep OPENKV_USE_SEASTAR build/CMakeCache.txt # → 默认 OFF
 # 进程：Gateway/Meta/Storage 主端口为 gRPC（可用 grpcurl 或 skv / 客户端冒烟）
 make e2e   # 或 make cluster-up + kv-example
 ```

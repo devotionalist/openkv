@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/kv"
+	"github.com/devotionalist/openkv/client/go/kv"
 )
 
 func main() {
@@ -38,7 +38,7 @@ func main() {
 	}
 	defer cli.Close()
 
-	if _, err := cli.Put(ctx, []byte("hello"), []byte("opskv")); err != nil {
+	if _, err := cli.Put(ctx, []byte("hello"), []byte("openkv")); err != nil {
 		log.Fatalf("put: %v", err)
 	}
 	val, found, rev, err := cli.Get(ctx, []byte("hello"))

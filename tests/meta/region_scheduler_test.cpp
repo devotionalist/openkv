@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/meta/cluster_state.hpp"
-#include "opskv/meta/region_scheduler.hpp"
+#include "openkv/meta/cluster_state.hpp"
+#include "openkv/meta/region_scheduler.hpp"
 
 #include <gtest/gtest.h>
 
@@ -22,12 +22,12 @@
 #include <thread>
 #include <vector>
 
-using opskv::meta::ClusterState;
-using opskv::meta::MigrateState;
-using opskv::meta::NodeInfo;
-using opskv::meta::NodeRole;
-using opskv::meta::NodeState;
-using opskv::meta::RegionScheduler;
+using openkv::meta::ClusterState;
+using openkv::meta::MigrateState;
+using openkv::meta::NodeInfo;
+using openkv::meta::NodeRole;
+using openkv::meta::NodeState;
+using openkv::meta::RegionScheduler;
 
 TEST(RegionSchedulerTest, SubmitAndCompleteRouteOnly) {
   ClusterState st;
@@ -48,7 +48,7 @@ TEST(RegionSchedulerTest, SubmitAndCompleteRouteOnly) {
       },
       [&](uint32_t rid, const std::vector<std::string>& desired) {
         ++commit_calls;
-        std::vector<opskv::meta::Replica> reps;
+        std::vector<openkv::meta::Replica> reps;
         for (const auto& id : desired) {
           auto n = st.get_node(id);
           if (!n) return false;
@@ -79,7 +79,7 @@ TEST(RegionSchedulerTest, RestorePersistedTasks) {
   st.bootstrap_range(3, {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0},
                          {"s1", NodeRole::kStorage, "127.0.0.1:9101", NodeState::kActive, 0},
                          {"s2", NodeRole::kStorage, "127.0.0.1:9102", NodeState::kActive, 0}});
-  opskv::meta::PersistMigrate pm;
+  openkv::meta::PersistMigrate pm;
   pm.task_id = "mig-9";
   pm.region_id = 0;
   pm.state = static_cast<int>(MigrateState::kPlacing);

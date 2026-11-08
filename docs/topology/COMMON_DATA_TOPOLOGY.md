@@ -2,7 +2,7 @@
 
 跨进程共享的配置、Range、ACL、计数器等。  
 图例：`字段 — 含义 / 作用`  
-代码：`common/include/opskv/*.hpp`
+代码：`common/include/openkv/*.hpp`
 
 ---
 

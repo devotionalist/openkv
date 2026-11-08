@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/kv_engine.hpp"
-#include "opskv/storage/mvcc.hpp"
-#include "opskv/storage/store_service.hpp"
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/mvcc.hpp"
+#include "openkv/storage/store_service.hpp"
 
 #include <gtest/gtest.h>
 
 #include <filesystem>
 
-using opskv::storage::KvEngine;
-using opskv::storage::LockInfo;
-using opskv::storage::MvccOp;
-using opskv::storage::MvccStore;
-using opskv::storage::WriteInfo;
-using opskv::storage::decode_prewrite_value;
-using opskv::storage::encode_prewrite_value;
+using openkv::storage::KvEngine;
+using openkv::storage::LockInfo;
+using openkv::storage::MvccOp;
+using openkv::storage::MvccStore;
+using openkv::storage::WriteInfo;
+using openkv::storage::decode_prewrite_value;
+using openkv::storage::encode_prewrite_value;
 
 TEST(MvccTest, LockRoundTrip) {
   LockInfo in;
@@ -34,9 +34,9 @@ TEST(MvccTest, LockRoundTrip) {
   in.op = MvccOp::kPut;
   in.primary = "pk";
   in.value = "v1";
-  auto bytes = opskv::storage::encode_lock(in);
+  auto bytes = openkv::storage::encode_lock(in);
   LockInfo out;
-  ASSERT_TRUE(opskv::storage::decode_lock(bytes, &out));
+  ASSERT_TRUE(openkv::storage::decode_lock(bytes, &out));
   EXPECT_EQ(out.start_ts, 42u);
   EXPECT_EQ(out.op, MvccOp::kPut);
   EXPECT_EQ(out.primary, "pk");
@@ -106,11 +106,11 @@ TEST(MvccTest, CheckTxnStatusAndPessimistic) {
   li.op = MvccOp::kPessimistic;
   li.primary = "pk";
   li.ttl_ms = 1;
-  li.lock_wall_ms = opskv::storage::wall_ms_now() - 100;
+  li.lock_wall_ms = openkv::storage::wall_ms_now() - 100;
   mvcc.put_lock("pk", li, 1);
 
   auto st = mvcc.check_txn_status("pk", 10);
-  EXPECT_EQ(st.status, opskv::storage::TxnStatus::kLocked);
+  EXPECT_EQ(st.status, openkv::storage::TxnStatus::kLocked);
   EXPECT_TRUE(st.lock_expired);
 
   mvcc.clear_lock("pk", 2);
@@ -118,11 +118,11 @@ TEST(MvccTest, CheckTxnStatusAndPessimistic) {
   mvcc.put_data("pk", 10, "v", 2);
   mvcc.put_write("pk", 20, wi, 3);
   st = mvcc.check_txn_status("pk", 10);
-  EXPECT_EQ(st.status, opskv::storage::TxnStatus::kCommitted);
+  EXPECT_EQ(st.status, openkv::storage::TxnStatus::kCommitted);
   EXPECT_EQ(st.commit_ts, 20u);
 
   st = mvcc.check_txn_status("missing", 99);
-  EXPECT_EQ(st.status, opskv::storage::TxnStatus::kRolledBack);
+  EXPECT_EQ(st.status, openkv::storage::TxnStatus::kRolledBack);
 }
 
 TEST(MvccTest, GcKeepsLatest) {

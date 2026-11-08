@@ -13,7 +13,7 @@
 
 协议与开关说明：[docs/NETWORKING.md](../NETWORKING.md)。
 
-公共编解码：`common/include/opskv/codec.hpp`（hex，无额外依赖）。
+公共编解码：`common/include/openkv/codec.hpp`（hex，无额外依赖）。
 
 ```bash
 # 示例：Storage 暴露 Prometheus HTTP

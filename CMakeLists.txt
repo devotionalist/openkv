@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # =============================================================================
-# OpsKV — 存算分离分布式 KV 存储（根 CMakeLists）
+# OpenKV — 存算分离分布式 KV 存储（根 CMakeLists）
 # -----------------------------------------------------------------------------
 # 模块关系：
 #   common → raft → storage
@@ -22,15 +22,15 @@
 #
 # 常用配置示例：
 #   cmake -B build \
-#     -DOPSKV_USE_SEASTAR=OFF \
-#     -DOPSKV_USE_JEMALLOC=ON \
-#     -DOPSKV_ENABLE_ASAN=ON
+#     -DOPENKV_USE_SEASTAR=OFF \
+#     -DOPENKV_USE_JEMALLOC=ON \
+#     -DOPENKV_ENABLE_ASAN=ON
 #   # gRPC 强制开启（系统包优先，否则 FetchContent）；RocksDB/jemalloc 同理
 #   cmake --build build -j && ctest --test-dir build --output-on-failure
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.20)
-project(opskv VERSION 0.1.0 LANGUAGES CXX)
+project(openkv VERSION 0.1.0 LANGUAGES CXX)
 
 # ---- 语言标准与 IDE 支持 ----------------------------------------------------
 set(CMAKE_CXX_STANDARD 20)
@@ -49,16 +49,16 @@ if(CMAKE_EXPORT_COMPILE_COMMANDS)
 endif()
 
 # ---- 功能开关 --------------------------------------------------------------
-option(OPSKV_BUILD_TESTS "是否编译单元测试（GoogleTest）" ON)
-option(OPSKV_USE_SEASTAR
+option(OPENKV_BUILD_TESTS "是否编译单元测试（GoogleTest）" ON)
+option(OPENKV_USE_SEASTAR
   "FetchContent 引入 scylladb/seastar（cmake/FetchSeastar.cmake）" OFF)
 # gRPC 为硬依赖；不再提供 OFF / 行协议双栈。旧 cache 的 OFF 自动抬升为 ON。
-if(DEFINED CACHE{OPSKV_USE_GRPC} AND NOT OPSKV_USE_GRPC)
+if(DEFINED CACHE{OPENKV_USE_GRPC} AND NOT OPENKV_USE_GRPC)
   message(WARNING
-    "OPSKV_USE_GRPC=OFF is removed — forcing ON (gRPC-only). "
+    "OPENKV_USE_GRPC=OFF is removed — forcing ON (gRPC-only). "
     "Clear build/ or FORCE_CMAKE=1 if configure still fails.")
 endif()
-set(OPSKV_USE_GRPC ON CACHE BOOL "gRPC/Protobuf required (mandatory)" FORCE)
+set(OPENKV_USE_GRPC ON CACHE BOOL "gRPC/Protobuf required (mandatory)" FORCE)
 # RocksDB / jemalloc：FetchContent 随工程编译（见 cmake/Fetch*.cmake）。
 
 find_package(Threads REQUIRED)
@@ -67,7 +67,7 @@ find_package(Threads REQUIRED)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(CollectSources)   # skv_collect_sources：GLOB 收集 .cpp
 include(Sanitizers)       # ASan / UBSan / TSan（须先于 jemalloc：互斥）
-include(FetchJemalloc)    # 默认 ON；导出 jemalloc::jemalloc / opskv_link_jemalloc
+include(FetchJemalloc)    # 默认 ON；导出 jemalloc::jemalloc / openkv_link_jemalloc
 include(FetchSpdlog)      # 日志
 include(FetchCLI11)       # skv CLI
 include(FetchToml11)      # .toml 配置
@@ -107,25 +107,25 @@ foreach(proto ${PROTO_FILES})
   )
   list(APPEND PROTO_SRCS ${pb_cc} ${grpc_cc})
 endforeach()
-add_library(opskv_proto ${PROTO_SRCS})
-target_include_directories(opskv_proto PUBLIC ${PROTO_GEN_DIR})
-target_link_libraries(opskv_proto PUBLIC protobuf::libprotobuf gRPC::grpc++)
-target_compile_definitions(opskv_proto PUBLIC OPSKV_USE_GRPC=1)
-set(OPSKV_HAS_PROTO_LIB TRUE)
+add_library(openkv_proto ${PROTO_SRCS})
+target_include_directories(openkv_proto PUBLIC ${PROTO_GEN_DIR})
+target_link_libraries(openkv_proto PUBLIC protobuf::libprotobuf gRPC::grpc++)
+target_compile_definitions(openkv_proto PUBLIC OPENKV_USE_GRPC=1)
+set(OPENKV_HAS_PROTO_LIB TRUE)
 
 # ---- 可选第三方：ScyllaDB Seastar（FetchContent，同 RocksDB）---------------
 # 源码：https://github.com/scylladb/seastar → cmake/FetchSeastar.cmake
 # OFF 时 Meta/Storage/Raft 走 common/net POSIX（macOS / 无系统依赖时默认）。
-if(OPSKV_USE_SEASTAR)
+if(OPENKV_USE_SEASTAR)
   if(APPLE)
     message(WARNING
-      "OPSKV_USE_SEASTAR=ON on macOS: scylladb/seastar 以 Linux 为主，"
+      "OPENKV_USE_SEASTAR=ON on macOS: scylladb/seastar 以 Linux 为主，"
       "配置/编译可能失败；本地开发请保持 OFF。")
   endif()
   include(FetchSeastar)  # 产出 Seastar::seastar
-  message(STATUS "OpsKV: OPSKV_USE_SEASTAR=ON (bundled scylladb/seastar)")
+  message(STATUS "OpenKV: OPENKV_USE_SEASTAR=ON (bundled scylladb/seastar)")
 else()
-  message(STATUS "OpsKV: OPSKV_USE_SEASTAR=OFF (POSIX thread-per-conn)")
+  message(STATUS "OpenKV: OPENKV_USE_SEASTAR=OFF (POSIX thread-per-conn)")
 endif()
 
 # ---- 业务子目录（顺序：被依赖方在前） --------------------------------------
@@ -137,7 +137,7 @@ add_subdirectory(meta)     # 元数据与在线扩容编排
 add_subdirectory(tools)    # skv 运维 CLI（C++）
 
 # ---- 单元测试 --------------------------------------------------------------
-if(OPSKV_BUILD_TESTS)
+if(OPENKV_BUILD_TESTS)
   enable_testing()
   include(FetchGoogleTest)  # FetchContent 拉取 googletest v1.15.2
   add_subdirectory(tests)

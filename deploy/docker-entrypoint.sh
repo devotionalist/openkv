@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# OpsKV 容器入口：根据 OPSKV_ROLE / POD_NAME 生成 conf 并启动。
+# OpenKV 容器入口：根据 OPENKV_ROLE / POD_NAME 生成 conf 并启动。
 # 环境变量（Helm 注入）：
-#   OPSKV_ROLE=meta|storage
+#   OPENKV_ROLE=meta|storage
 #   POD_NAME=meta-0 / storage-1
-#   OPSKV_NAMESPACE, OPSKV_META_HEADLESS, OPSKV_STORAGE_HEADLESS
-#   OPSKV_META_REPLICAS, OPSKV_STORAGE_REPLICAS
-#   OPSKV_META_PORT=8500, OPSKV_STORAGE_PORT=9100
-#   OPSKV_SHARD_COUNT, OPSKV_REPLICA_FACTOR
+#   OPENKV_NAMESPACE, OPENKV_META_HEADLESS, OPENKV_STORAGE_HEADLESS
+#   OPENKV_META_REPLICAS, OPENKV_STORAGE_REPLICAS
+#   OPENKV_META_PORT=8500, OPENKV_STORAGE_PORT=9100
+#   OPENKV_SHARD_COUNT, OPENKV_REPLICA_FACTOR
 set -euo pipefail
 
 # 显式 command（Compose/调试）优先
@@ -14,18 +14,18 @@ if [[ $# -gt 0 ]]; then
   exec "$@"
 fi
 
-ROLE="${OPSKV_ROLE:-storage}"
-NS="${OPSKV_NAMESPACE:-opskv}"
-META_HS="${OPSKV_META_HEADLESS:-meta-headless}"
-STOR_HS="${OPSKV_STORAGE_HEADLESS:-storage-headless}"
-META_N="${OPSKV_META_REPLICAS:-3}"
-STOR_N="${OPSKV_STORAGE_REPLICAS:-3}"
-META_PORT="${OPSKV_META_PORT:-8500}"
-STOR_PORT="${OPSKV_STORAGE_PORT:-9100}"
-SHARDS="${OPSKV_SHARD_COUNT:-8}"
-RF="${OPSKV_REPLICA_FACTOR:-3}"
-CONF_DIR="${OPSKV_CONF_DIR:-/etc/opskv}"
-DATA_DIR="${OPSKV_DATA_DIR:-/data}"
+ROLE="${OPENKV_ROLE:-storage}"
+NS="${OPENKV_NAMESPACE:-openkv}"
+META_HS="${OPENKV_META_HEADLESS:-meta-headless}"
+STOR_HS="${OPENKV_STORAGE_HEADLESS:-storage-headless}"
+META_N="${OPENKV_META_REPLICAS:-3}"
+STOR_N="${OPENKV_STORAGE_REPLICAS:-3}"
+META_PORT="${OPENKV_META_PORT:-8500}"
+STOR_PORT="${OPENKV_STORAGE_PORT:-9100}"
+SHARDS="${OPENKV_SHARD_COUNT:-8}"
+RF="${OPENKV_REPLICA_FACTOR:-3}"
+CONF_DIR="${OPENKV_CONF_DIR:-/etc/openkv}"
+DATA_DIR="${OPENKV_DATA_DIR:-/data}"
 CONF="${CONF_DIR}/node.conf"
 
 mkdir -p "$CONF_DIR" "$DATA_DIR"
@@ -81,7 +81,7 @@ storage_peers=${STOR_PEERS}
 compute_peers=
 EOF
   echo "starting meta_server id=${NODE_ID} adv=${ADV}"
-  exec /opt/opskv/meta_server "$CONF"
+  exec /opt/openkv/meta_server "$CONF"
 fi
 
 # storage
@@ -116,8 +116,8 @@ raft_peers=${RAFT_PEERS}
 bootstrap_regions=${BOOTSTRAP_REGIONS}
 EOF
 echo "starting storage_node id=${NODE_ID} adv=${ADV} meta=${META_ADDR} bootstrap_regions=${BOOTSTRAP_REGIONS:-<empty>} raft_peers=${RAFT_PEERS}"
-if [[ "${OPSKV_CONF_ONLY:-}" == "1" ]]; then
+if [[ "${OPENKV_CONF_ONLY:-}" == "1" ]]; then
   cat "$CONF"
   exit 0
 fi
-exec /opt/opskv/storage_node "$CONF"
+exec /opt/openkv/storage_node "$CONF"

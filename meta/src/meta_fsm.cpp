@@ -18,11 +18,11 @@
 // - apply_meta_command：按 MetaOp 分发到 ClusterState 对应写方法
 // 数值 op 码与字段顺序须保持稳定，以免破坏已落盘 Raft 日志。
 
-#include "opskv/meta/meta_fsm.hpp"
+#include "openkv/meta/meta_fsm.hpp"
 
 #include <sstream>
 
-namespace opskv::meta {
+namespace openkv::meta {
 namespace {
 
 std::string escape(std::string_view s) {
@@ -316,4 +316,4 @@ void apply_meta_command(ClusterState& state, const MetaCommand& cmd) {
   }
 }
 
-}  // namespace opskv::meta
+}  // namespace openkv::meta

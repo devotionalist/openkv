@@ -15,8 +15,8 @@
 // @file main.cpp
 // Compute 进程入口：加载配置、启动节点、演示 proxy put/get 后主循环等待信号。
 
-#include "opskv/compute/compute_node.hpp"
-#include "opskv/logging.hpp"
+#include "openkv/compute/compute_node.hpp"
+#include "openkv/logging.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -29,7 +29,7 @@ void on_signal(int) { g_stop = true; }
 }  // namespace
 
 int main(int argc, char** argv) {
-  using namespace opskv;
+  using namespace openkv;
   std::string config_path = "conf/compute.conf";
   if (argc > 1) {
     config_path = argv[1];

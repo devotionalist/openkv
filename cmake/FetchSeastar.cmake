@@ -21,7 +21,7 @@
 
 include(FetchContent)
 
-set(OPSKV_SEASTAR_GIT_TAG "seastar-25.05.0" CACHE STRING
+set(OPENKV_SEASTAR_GIT_TAG "seastar-25.05.0" CACHE STRING
     "Bundled scylladb/seastar git tag / commit (FetchContent)")
 
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
@@ -40,13 +40,13 @@ set(Seastar_EXCLUDE_DEMOS_FROM_ALL ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
   seastar
   GIT_REPOSITORY https://github.com/scylladb/seastar.git
-  GIT_TAG ${OPSKV_SEASTAR_GIT_TAG}
+  GIT_TAG ${OPENKV_SEASTAR_GIT_TAG}
   GIT_SHALLOW TRUE
   # DPDK 已关：跳过 .gitmodules 里的 dpdk，避免无用子模块拉取失败
   GIT_SUBMODULES ""
 )
 
-message(STATUS "Fetching scylladb/seastar (${OPSKV_SEASTAR_GIT_TAG}) …")
+message(STATUS "Fetching scylladb/seastar (${OPENKV_SEASTAR_GIT_TAG}) …")
 FetchContent_MakeAvailable(seastar)
 
 if(TARGET seastar AND NOT TARGET Seastar::seastar)
@@ -60,4 +60,4 @@ if(NOT TARGET Seastar::seastar)
 endif()
 
 message(STATUS
-  "Seastar enabled (FetchContent ${OPSKV_SEASTAR_GIT_TAG} → Seastar::seastar)")
+  "Seastar enabled (FetchContent ${OPENKV_SEASTAR_GIT_TAG} → Seastar::seastar)")

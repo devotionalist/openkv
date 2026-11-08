@@ -3,8 +3,8 @@
 # 用法：bash scripts/it-helm-template.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CHART="$ROOT/deploy/helm/opskv"
-OUT="${TMPDIR:-/tmp}/opskv-helm-template-$$.yaml"
+CHART="$ROOT/deploy/helm/openkv"
+OUT="${TMPDIR:-/tmp}/openkv-helm-template-$$.yaml"
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -16,8 +16,8 @@ need() {
 need helm
 
 helm lint "$CHART"
-helm template opskv "$CHART" \
-  --namespace opskv \
+helm template openkv "$CHART" \
+  --namespace openkv \
   --set namespace.create=true \
   --set persistence.enabled=false \
   >"$OUT"
@@ -30,8 +30,8 @@ grep -q 'kind: Deployment' "$OUT"
 grep -q 'name: gateway' "$OUT"
 grep -q 'stats-listen=0.0.0.0:19001' "$OUT"
 grep -q 'name: stats' "$OUT"
-grep -q 'advertise_addr\|OPSKV_ROLE' "$OUT" || grep -q 'OPSKV_ROLE' "$OUT"
-grep -q 'meta-0.meta-headless.opskv.svc' "$OUT"
+grep -q 'advertise_addr\|OPENKV_ROLE' "$OUT" || grep -q 'OPENKV_ROLE' "$OUT"
+grep -q 'meta-0.meta-headless.openkv.svc' "$OUT"
 
 # client dry-run（有 kubectl 时）
 if command -v kubectl >/dev/null 2>&1; then

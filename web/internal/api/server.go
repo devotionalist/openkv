@@ -29,9 +29,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/kv"
-	"github.com/amydemo/opskv/web/internal/cluster"
-	"github.com/amydemo/opskv/web/internal/lifecycle"
+	"github.com/devotionalist/openkv/client/go/kv"
+	"github.com/devotionalist/openkv/web/internal/cluster"
+	"github.com/devotionalist/openkv/web/internal/lifecycle"
 )
 
 // Server 是独立 Web 管控模块的 HTTP API。

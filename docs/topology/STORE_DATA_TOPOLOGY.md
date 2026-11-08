@@ -2,7 +2,7 @@
 
 `StorageNode` 托管多 Region：Multi-Raft + KvEngine/MVCC + Admin/TCP。  
 图例：`字段 — 含义 / 作用`  
-代码：`storage/include/opskv/storage/*.hpp`
+代码：`storage/include/openkv/storage/*.hpp`
 
 ---
 

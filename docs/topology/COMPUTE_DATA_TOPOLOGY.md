@@ -2,7 +2,7 @@
 
 无状态计算层：缓存 Meta 路由 + 代理 Storage RPC。  
 图例：`字段 — 含义 / 作用`  
-代码：`compute/include/opskv/compute/*.hpp`  
+代码：`compute/include/openkv/compute/*.hpp`  
 （生产 Gateway 多为 Go；本模块为 C++ 对照实现。）
 
 ---

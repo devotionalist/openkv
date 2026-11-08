@@ -22,8 +22,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/kv"
-	kvv1 "github.com/amydemo/opskv/client/go/gen/kv/v1"
+	"github.com/devotionalist/openkv/client/go/kv"
+	kvv1 "github.com/devotionalist/openkv/client/go/gen/kv/v1"
 )
 
 func main() {

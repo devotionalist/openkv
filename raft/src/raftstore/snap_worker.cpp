@@ -14,13 +14,13 @@
 
 // @file snap_worker.cpp
 
-#include "opskv/raftstore/snap_worker.hpp"
+#include "openkv/raftstore/snap_worker.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <chrono>
 
-namespace opskv::raftstore {
+namespace openkv::raftstore {
 
 SnapWorker::SnapWorker(Options opts, Provider provider, Sender sender)
     : opts_(opts), provider_(std::move(provider)), sender_(std::move(sender)) {
@@ -123,4 +123,4 @@ void SnapWorker::loop() {
   }
 }
 
-}  // namespace opskv::raftstore
+}  // namespace openkv::raftstore

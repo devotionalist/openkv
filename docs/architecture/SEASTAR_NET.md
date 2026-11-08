@@ -24,8 +24,8 @@
 
 | 开关 | 默认 | 说明 |
 |------|------|------|
-| `-DOPSKV_USE_SEASTAR=ON` | OFF | FetchContent 拉取并编译 seastar，定义 `OPSKV_HAS_SEASTAR=1` |
-| `-DOPSKV_SEASTAR_GIT_TAG=…` | `seastar-25.05.0` | 固定上游 tag / commit |
+| `-DOPENKV_USE_SEASTAR=ON` | OFF | FetchContent 拉取并编译 seastar，定义 `OPENKV_HAS_SEASTAR=1` |
+| `-DOPENKV_SEASTAR_GIT_TAG=…` | `seastar-25.05.0` | 固定上游 tag / commit |
 | macOS 本地开发 | 建议 OFF | Seastar 官方以 Linux 为主 |
 | Linux CI / 生产 | 可 ON | 先跑上游 `install-dependencies.sh` |
 
@@ -34,7 +34,7 @@
 git clone --depth 1 https://github.com/scylladb/seastar.git /tmp/seastar-deps
 sudo /tmp/seastar-deps/install-dependencies.sh
 
-cmake -B build -DOPSKV_USE_SEASTAR=ON
+cmake -B build -DOPENKV_USE_SEASTAR=ON
 cmake --build build -j
 ```
 
@@ -62,5 +62,5 @@ cmake --build build -j
 
 | 方式 | 说明 |
 |------|------|
-| FetchContent（本仓库默认） | 版本钉在 `OPSKV_SEASTAR_GIT_TAG`，与 RocksDB 一致 |
+| FetchContent（本仓库默认） | 版本钉在 `OPENKV_SEASTAR_GIT_TAG`，与 RocksDB 一致 |
 | 系统 `find_package(Seastar)` | 需自行 install；本仓库未作为默认路径 |

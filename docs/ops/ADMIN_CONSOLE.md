@@ -1,4 +1,4 @@
-# OpsKV Web 管控模块
+# OpenKV Web 管控模块
 
 独立进程 `web/`（非 Gateway、非 Client SDK），可视化运维。
 

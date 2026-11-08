@@ -17,7 +17,7 @@
 
 include(FetchContent)
 
-set(OPSKV_ROCKSDB_VERSION "9.10.0" CACHE STRING "Bundled RocksDB version (FetchContent tag)")
+set(OPENKV_ROCKSDB_VERSION "9.10.0" CACHE STRING "Bundled RocksDB version (FetchContent tag)")
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
 set(_rocksdb_off
@@ -33,11 +33,11 @@ set(WITH_ZLIB ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
   rocksdb
-  URL https://github.com/facebook/rocksdb/archive/refs/tags/v${OPSKV_ROCKSDB_VERSION}.zip
+  URL https://github.com/facebook/rocksdb/archive/refs/tags/v${OPENKV_ROCKSDB_VERSION}.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-message(STATUS "Fetching RocksDB v${OPSKV_ROCKSDB_VERSION} (build with project)...")
+message(STATUS "Fetching RocksDB v${OPENKV_ROCKSDB_VERSION} (build with project)...")
 FetchContent_MakeAvailable(rocksdb)
 
 if(TARGET rocksdb AND NOT TARGET RocksDB::rocksdb)
@@ -47,4 +47,4 @@ if(NOT TARGET RocksDB::rocksdb)
   message(FATAL_ERROR "Bundled RocksDB did not create target 'rocksdb'")
 endif()
 
-message(STATUS "RocksDB v${OPSKV_ROCKSDB_VERSION} enabled (FetchContent, static)")
+message(STATUS "RocksDB v${OPENKV_ROCKSDB_VERSION} enabled (FetchContent, static)")

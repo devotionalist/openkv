@@ -17,7 +17,7 @@
 
 include(FetchContent)
 
-set(OPSKV_HTTPLIB_VERSION "0.18.3" CACHE STRING "Bundled cpp-httplib version")
+set(OPENKV_HTTPLIB_VERSION "0.18.3" CACHE STRING "Bundled cpp-httplib version")
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
 set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
@@ -28,11 +28,11 @@ set(HTTPLIB_COMPILE OFF CACHE BOOL "" FORCE)  # header-only
 
 FetchContent_Declare(
   httplib
-  URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v${OPSKV_HTTPLIB_VERSION}.tar.gz
+  URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v${OPENKV_HTTPLIB_VERSION}.tar.gz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-message(STATUS "Fetching cpp-httplib v${OPSKV_HTTPLIB_VERSION} …")
+message(STATUS "Fetching cpp-httplib v${OPENKV_HTTPLIB_VERSION} …")
 FetchContent_MakeAvailable(httplib)
 
 if(NOT TARGET httplib::httplib)
@@ -45,4 +45,4 @@ if(NOT TARGET httplib::httplib)
     target_include_directories(httplib INTERFACE ${httplib_SOURCE_DIR})
   endif()
 endif()
-message(STATUS "cpp-httplib v${OPSKV_HTTPLIB_VERSION} enabled (FetchContent)")
+message(STATUS "cpp-httplib v${OPENKV_HTTPLIB_VERSION} enabled (FetchContent)")

@@ -1,8 +1,8 @@
-module github.com/amydemo/opskv/web
+module github.com/devotionalist/openkv/web
 
 go 1.22
 
-require github.com/amydemo/opskv/client/go v0.0.0
+require github.com/devotionalist/openkv/client/go v0.0.0
 
 require (
 	golang.org/x/net v0.28.0 // indirect
@@ -13,4 +13,4 @@ require (
 	google.golang.org/protobuf v1.35.1 // indirect
 )
 
-replace github.com/amydemo/opskv/client/go => ../client/go
+replace github.com/devotionalist/openkv/client/go => ../client/go

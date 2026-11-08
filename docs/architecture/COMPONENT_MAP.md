@@ -1,4 +1,4 @@
-# OpsKV 组件与写路径对照
+# OpenKV 组件与写路径对照
 
 本仓库角色、Storage 内部模块与 Phase 状态。  
 实现细节见 [MULTI_RAFT_PRODUCTION.md](../production/MULTI_RAFT_PRODUCTION.md)；整体拓扑见 [ARCHITECTURE.md](ARCHITECTURE.md)。
@@ -94,7 +94,7 @@ Client → gRPC Gateway → Storage gRPC → StorageNode
 | S4 gRPC | 完成 | 全链路强制 gRPC |
 | S5 调度 + Coprocessor | 完成 | 主动扫描迁移；`ADMIN_COP` |
 
-门禁参考：`opskv_unit_tests` + `scripts/it-scale-live.sh`。
+门禁参考：`openkv_unit_tests` + `scripts/it-scale-live.sh`。
 
 ---
 

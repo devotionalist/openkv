@@ -15,16 +15,16 @@
 // @file raft_node_test.cpp
 // 测试单节点选举、propose/apply、ConfChange 与 Follower 消息处理。
 
-#include "opskv/raft/raft_node.hpp"
+#include "openkv/raft/raft_node.hpp"
 
 #include <gtest/gtest.h>
 
 #include <string>
 #include <vector>
 
-using opskv::raft::ConfChange;
-using opskv::raft::RaftNode;
-using opskv::raft::Role;
+using openkv::raft::ConfChange;
+using openkv::raft::RaftNode;
+using openkv::raft::Role;
 
 namespace {
 

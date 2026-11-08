@@ -27,7 +27,7 @@
 #   skv_collect_sources(STORAGE_SRCS
 #     DIR src                 # 相对当前 CMakeLists 的目录，默认 src
 #     EXCLUDE main.cpp)       # 可排除可执行入口，避免链进静态库
-#   add_library(opskv_storage ${STORAGE_SRCS})
+#   add_library(openkv_storage ${STORAGE_SRCS})
 # =============================================================================
 
 macro(skv_collect_sources out_var)

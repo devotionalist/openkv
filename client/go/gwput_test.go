@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/internal/route"
-	"github.com/amydemo/opskv/client/go/internal/storagetcp"
+	"github.com/devotionalist/openkv/client/go/internal/route"
+	"github.com/devotionalist/openkv/client/go/internal/storagetcp"
 )
 
 func main() {

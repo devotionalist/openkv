@@ -15,13 +15,13 @@
 // @file grpc_server.cpp
 // Storage gRPC Server 实现（强制 gRPC）。
 
-#include "opskv/storage/grpc_server.hpp"
+#include "openkv/storage/grpc_server.hpp"
 
-#include "opskv/admin_acl.hpp"
-#include "opskv/grpc_auth.hpp"
-#include "opskv/logging.hpp"
-#include "opskv/protocol.hpp"
-#include "opskv/storage/storage_node.hpp"
+#include "openkv/admin_acl.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/protocol.hpp"
+#include "openkv/storage/storage_node.hpp"
 
 #include <sstream>
 #include <stdexcept>
@@ -31,7 +31,7 @@
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
-namespace opskv::storage {
+namespace openkv::storage {
 namespace {
 
 std::string extract_redirect(std::string_view s) {
@@ -445,4 +445,4 @@ void StorageGrpcServer::stop() {
   }
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

@@ -24,7 +24,7 @@
 //
 // 双后端：
 //   1) RocksDB：CMake FetchContent 固定版本随工程编译（默认，生产路径）
-//   2) 内存 unordered_map：未定义 OPSKV_HAS_ROCKSDB 时的 stub（正常构建不会走到）
+//   2) 内存 unordered_map：未定义 OPENKV_HAS_ROCKSDB 时的 stub（正常构建不会走到）
 //
 // 线程安全：
 //   - 内存后端：所有公开方法持 mu_
@@ -35,9 +35,9 @@
 //   当前实现不做多版本保留，同 key 后写覆盖前写。
 // =============================================================================
 
-#include "opskv/storage/kv_engine.hpp"
+#include "openkv/storage/kv_engine.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -47,14 +47,14 @@
 #include <stdexcept>
 #include <vector>
 
-#if defined(OPSKV_HAS_ROCKSDB) && OPSKV_HAS_ROCKSDB
+#if defined(OPENKV_HAS_ROCKSDB) && OPENKV_HAS_ROCKSDB
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/utilities/checkpoint.h>
 #include <rocksdb/write_batch.h>
 #endif
 
-namespace opskv::storage {
+namespace openkv::storage {
 namespace {
 
 // E2：MVCC 物理 key 形态 user\0{L|D|W}… → 对应 CF；其余（含 meta）走 default。
@@ -100,7 +100,7 @@ const char* KvEngine::cf_name_for_key(std::string_view key) {
 // =============================================================================
 // 实现分支 A：RocksDB 后端（存储节点启动默认路径）
 // =============================================================================
-#if defined(OPSKV_HAS_ROCKSDB) && OPSKV_HAS_ROCKSDB
+#if defined(OPENKV_HAS_ROCKSDB) && OPENKV_HAS_ROCKSDB
 
 namespace {
 
@@ -353,7 +353,7 @@ void KvEngine::for_each(const std::function<bool(std::string_view key, const KvR
 
 // Snapshot wire format: u32 key_len | key | u32 val_len | value_bytes (revision+user value)
 // range 全空 = 全表；否则只导出 range.contains(key) 的用户 key（meta 前缀始终跳过）。
-std::string KvEngine::create_snapshot(const opskv::KeyRange& range) const {
+std::string KvEngine::create_snapshot(const openkv::KeyRange& range) const {
   // E3：导出前 Flush，缩小与 Checkpoint 之间的不一致窗口
   rocks_->db->FlushWAL(true);
   rocksdb::FlushOptions fo;
@@ -388,7 +388,7 @@ std::string KvEngine::create_snapshot(const opskv::KeyRange& range) const {
   return out;
 }
 
-size_t KvEngine::delete_range(const opskv::KeyRange& range) {
+size_t KvEngine::delete_range(const openkv::KeyRange& range) {
   rocksdb::WriteBatch batch;
   size_t n = 0;
   const std::string meta_prefix = "\xff\xffskv/";
@@ -417,7 +417,7 @@ size_t KvEngine::delete_range(const opskv::KeyRange& range) {
   return n;
 }
 
-void KvEngine::apply_snapshot(std::string_view data, const opskv::KeyRange& range) {
+void KvEngine::apply_snapshot(std::string_view data, const openkv::KeyRange& range) {
   // 共享引擎：有界 range → 只替换该区间；全空 range → 禁止整库清空（会抹掉兄弟
   // Region，Merge/Place 后 DESTROY+再追快照时常见），仅 upsert。
   const bool filter = !range.start_key.empty() || !range.end_key.empty();
@@ -782,7 +782,7 @@ bool KvEngine::restore_from_checkpoint(std::string_view src_dir) {
 // 与 RocksDB 分支不同：revision 用十进制字符串，方便肉眼查看 dump。
 // value 仍可为任意字节（含 '\0' 时会截断——demo 限制；生产请用长度前缀）。
 // ---------------------------------------------------------------------------
-std::string KvEngine::create_snapshot(const opskv::KeyRange& range) const {
+std::string KvEngine::create_snapshot(const openkv::KeyRange& range) const {
   std::lock_guard<std::mutex> lock(mu_);
   const bool filter = !range.start_key.empty() || !range.end_key.empty();
   const std::string meta_prefix = "\xff\xffskv/";
@@ -795,7 +795,7 @@ std::string KvEngine::create_snapshot(const opskv::KeyRange& range) const {
   return oss.str();
 }
 
-size_t KvEngine::delete_range(const opskv::KeyRange& range) {
+size_t KvEngine::delete_range(const openkv::KeyRange& range) {
   std::lock_guard<std::mutex> lock(mu_);
   const std::string meta_prefix = "\xff\xffskv/";
   size_t n = 0;
@@ -818,7 +818,7 @@ size_t KvEngine::delete_range(const opskv::KeyRange& range) {
 // apply_snapshot：有界 range 只替换该区间；全空 → upsert-only（共享引擎安全）。
 // 字段顺序：key | revision | value（三段 '\0' 分隔）
 // ---------------------------------------------------------------------------
-void KvEngine::apply_snapshot(std::string_view data, const opskv::KeyRange& range) {
+void KvEngine::apply_snapshot(std::string_view data, const openkv::KeyRange& range) {
   std::lock_guard<std::mutex> lock(mu_);
   const bool filter = !range.start_key.empty() || !range.end_key.empty();
   const std::string meta_prefix = "\xff\xffskv/";
@@ -923,7 +923,7 @@ size_t KvEngine::migrate_all(KvEngine& dst) {
   return migrate_ge(dst, std::string());
 }
 
-#endif  // OPSKV_HAS_ROCKSDB
+#endif  // OPENKV_HAS_ROCKSDB
 
 // =============================================================================
 // ShardEngineManager：单 Store 一份 RocksDB（data_dir/kv）；Region 靠 KeyRange。
@@ -1021,4 +1021,4 @@ size_t ShardEngineManager::release(uint32_t shard_id) {
   return shared_ ? shared_.use_count() : 0;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

@@ -10,14 +10,14 @@ import (
 func TestComponentsFromAddrsShortNames(t *testing.T) {
 	comps := ComponentsFromAddrs(
 		[]string{
-			"meta-0.meta-headless.opskv.svc.cluster.local:8500",
-			"meta-1.meta-headless.opskv.svc.cluster.local:8500",
+			"meta-0.meta-headless.openkv.svc.cluster.local:8500",
+			"meta-1.meta-headless.openkv.svc.cluster.local:8500",
 		},
 		[]string{
-			"storage-0.storage-headless.opskv.svc.cluster.local:9100",
-			"storage-1.storage-headless.opskv.svc.cluster.local:9100",
+			"storage-0.storage-headless.openkv.svc.cluster.local:9100",
+			"storage-1.storage-headless.openkv.svc.cluster.local:9100",
 		},
-		"gateway.opskv.svc.cluster.local:19000",
+		"gateway.openkv.svc.cluster.local:19000",
 	)
 	if len(comps) != 5 {
 		t.Fatalf("len=%d want 5", len(comps))

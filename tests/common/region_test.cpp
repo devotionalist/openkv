@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/region.hpp"
+#include "openkv/region.hpp"
 
 #include <gtest/gtest.h>
 
-using opskv::KeyRange;
-using opskv::RegionMeta;
-using opskv::locate_region;
-using opskv::sort_regions;
+using openkv::KeyRange;
+using openkv::RegionMeta;
+using openkv::locate_region;
+using openkv::sort_regions;
 
 TEST(RegionTest, ContainsAndInf) {
   KeyRange all;

@@ -15,8 +15,8 @@
 // @file raftstore_test.cpp
 // Store / Router / Hibernate / Apply 队列 QoS 烟雾。
 
-#include "opskv/raftstore/snap_worker.hpp"
-#include "opskv/raftstore/store.hpp"
+#include "openkv/raftstore/snap_worker.hpp"
+#include "openkv/raftstore/store.hpp"
 
 #include <gtest/gtest.h>
 
@@ -25,10 +25,10 @@
 #include <stdexcept>
 #include <thread>
 
-using opskv::raft::RaftNode;
-using opskv::raftstore::SnapTask;
-using opskv::raftstore::SnapWorker;
-using opskv::raftstore::Store;
+using openkv::raft::RaftNode;
+using openkv::raftstore::SnapTask;
+using openkv::raftstore::SnapWorker;
+using openkv::raftstore::Store;
 
 TEST(RaftstoreTest, StoreTickElectsLeader) {
   Store::Options opts;
@@ -94,8 +94,8 @@ TEST(SnapWorkerTest, CoalesceSameRegion) {
   opts.coalesce_region = true;
   opts.queue_capacity = 8;
   SnapWorker w(
-      opts, [](uint32_t, opskv::raft::SnapshotMeta*) { return std::string("blob"); },
-      [&](uint32_t, const opskv::raft::SnapshotMeta&, const std::string&) { ++sends; });
+      opts, [](uint32_t, openkv::raft::SnapshotMeta*) { return std::string("blob"); },
+      [&](uint32_t, const openkv::raft::SnapshotMeta&, const std::string&) { ++sends; });
   w.start();
   SnapTask a;
   a.region_id = 7;
@@ -121,8 +121,8 @@ TEST(SnapWorkerTest, RetryThenSucceed) {
   opts.max_retries = 2;
   opts.coalesce_region = false;
   SnapWorker w(
-      opts, [](uint32_t, opskv::raft::SnapshotMeta*) { return std::string("x"); },
-      [&](uint32_t, const opskv::raft::SnapshotMeta&, const std::string&) {
+      opts, [](uint32_t, openkv::raft::SnapshotMeta*) { return std::string("x"); },
+      [&](uint32_t, const openkv::raft::SnapshotMeta&, const std::string&) {
         if (++calls <= 2) throw std::runtime_error("transient");
       });
   w.start();

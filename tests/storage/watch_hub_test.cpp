@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/watch_hub.hpp"
+#include "openkv/storage/watch_hub.hpp"
 
 #include <gtest/gtest.h>
 
-using opskv::storage::WatchHub;
-using opskv::storage::WatchRecord;
+using openkv::storage::WatchHub;
+using openkv::storage::WatchRecord;
 
 TEST(WatchHubTest, PollFiltersAndOrders) {
   WatchHub hub(8);

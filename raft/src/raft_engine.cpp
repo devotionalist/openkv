@@ -15,14 +15,14 @@
 // @file raft_engine.cpp
 // RaftEngine 辅助：编解码（含 CRC）、装载、全量 save。
 
-#include "opskv/raft/raft_engine.hpp"
+#include "openkv/raft/raft_engine.hpp"
 
-#include "opskv/raft/raft_log.hpp"
+#include "openkv/raft/raft_log.hpp"
 
 #include <cstdint>
 #include <cstring>
 
-namespace opskv::raft {
+namespace openkv::raft {
 namespace {
 
 void put_u64(std::string* out, uint64_t v) {
@@ -185,4 +185,4 @@ size_t save_group_to_engine(RaftEngine& eng, uint64_t raft_group_id, const Persi
   return eng.consume(*batch, sync);
 }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft

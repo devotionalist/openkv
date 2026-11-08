@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/latency_hist.hpp"
-#include "opskv/storage/store_service.hpp"
-#include "opskv/storage/storage_node.hpp"
+#include "openkv/storage/latency_hist.hpp"
+#include "openkv/storage/store_service.hpp"
+#include "openkv/storage/storage_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -23,13 +23,13 @@
 #include <thread>
 #include <unistd.h>
 
-using opskv::NodeConfig;
-using opskv::storage::CmdOp;
-using opskv::storage::Command;
-using opskv::storage::LatencyHistogram;
-using opskv::storage::RegionMetrics;
-using opskv::storage::StorageNode;
-using opskv::storage::StoreFacade;
+using openkv::NodeConfig;
+using openkv::storage::CmdOp;
+using openkv::storage::Command;
+using openkv::storage::LatencyHistogram;
+using openkv::storage::RegionMetrics;
+using openkv::storage::StorageNode;
+using openkv::storage::StoreFacade;
 
 TEST(LatencyHistTest, QuantilesAndPrometheus) {
   LatencyHistogram h;

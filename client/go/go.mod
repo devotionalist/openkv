@@ -1,4 +1,4 @@
-module github.com/amydemo/opskv/client/go
+module github.com/devotionalist/openkv/client/go
 
 go 1.22
 

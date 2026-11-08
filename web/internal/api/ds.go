@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/ds"
+	"github.com/devotionalist/openkv/client/go/ds"
 )
 
 // handleDS：经 Gateway DSService 调试 Hash/Set/List/ZSet。

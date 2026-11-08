@@ -15,8 +15,8 @@
 // @file kv_engine_test.cpp
 // 测试 KvEngine put/get/del、快照往返与 ShardEngineManager 多分片。
 
-#include "opskv/storage/kv_engine.hpp"
-#include "opskv/region.hpp"
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/region.hpp"
 
 #include <gtest/gtest.h>
 
@@ -24,8 +24,8 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
-using opskv::storage::KvEngine;
-using opskv::storage::ShardEngineManager;
+using openkv::storage::KvEngine;
+using openkv::storage::ShardEngineManager;
 
 class KvEngineTest : public ::testing::Test {
  protected:
@@ -78,7 +78,7 @@ TEST_F(KvEngineTest, SnapshotRangePreservesSibling) {
   KvEngine eng(dir_.string(), 4);
   ASSERT_TRUE(eng.put("aaa", "1", 1));
   ASSERT_TRUE(eng.put("zzz", "2", 2));
-  opskv::KeyRange left;
+  openkv::KeyRange left;
   left.end_key = "m";  // [-, m)
   auto snap_left = eng.create_snapshot(left);
   EXPECT_FALSE(snap_left.empty());
@@ -154,19 +154,19 @@ TEST_F(KvEngineTest, ColumnFamilyRouting) {
 }
 
 TEST_F(KvEngineTest, SyncModeAligned) {
-  EXPECT_EQ(opskv::raft::parse_sync_mode("none"), opskv::raft::SyncMode::kNone);
-  EXPECT_EQ(opskv::raft::parse_sync_mode("all"), opskv::raft::SyncMode::kAll);
-  EXPECT_EQ(opskv::raft::parse_sync_mode("bogus"), opskv::raft::SyncMode::kData);
+  EXPECT_EQ(openkv::raft::parse_sync_mode("none"), openkv::raft::SyncMode::kNone);
+  EXPECT_EQ(openkv::raft::parse_sync_mode("all"), openkv::raft::SyncMode::kAll);
+  EXPECT_EQ(openkv::raft::parse_sync_mode("bogus"), openkv::raft::SyncMode::kData);
 
-  KvEngine eng(dir_.string(), 0, opskv::raft::SyncMode::kNone);
-  EXPECT_EQ(eng.sync_mode(), opskv::raft::SyncMode::kNone);
+  KvEngine eng(dir_.string(), 0, openkv::raft::SyncMode::kNone);
+  EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kNone);
   ASSERT_TRUE(eng.put("k", "v", 1));
-  eng.set_sync_mode(opskv::raft::SyncMode::kAll);
-  EXPECT_EQ(eng.sync_mode(), opskv::raft::SyncMode::kAll);
+  eng.set_sync_mode(openkv::raft::SyncMode::kAll);
+  EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kAll);
   ASSERT_TRUE(eng.put("k2", "v2", 2));
   EXPECT_TRUE(eng.get("k2").has_value());
 
-  ShardEngineManager mgr(dir_.string(), opskv::raft::SyncMode::kData);
-  EXPECT_EQ(mgr.sync_mode(), opskv::raft::SyncMode::kData);
-  EXPECT_EQ(mgr.get_or_create(7).sync_mode(), opskv::raft::SyncMode::kData);
+  ShardEngineManager mgr(dir_.string(), openkv::raft::SyncMode::kData);
+  EXPECT_EQ(mgr.sync_mode(), openkv::raft::SyncMode::kData);
+  EXPECT_EQ(mgr.get_or_create(7).sync_mode(), openkv::raft::SyncMode::kData);
 }

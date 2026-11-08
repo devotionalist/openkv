@@ -15,7 +15,7 @@
 // @file logging.cpp
 // spdlog 后端：保持 SKV_* << 调用方式不变。
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -25,7 +25,7 @@
 #include <memory>
 #include <mutex>
 
-namespace opskv {
+namespace openkv {
 namespace {
 
 std::atomic<LogLevel> g_level{LogLevel::kInfo};
@@ -98,4 +98,4 @@ LogMessage::~LogMessage() {
   }
 }
 
-}  // namespace opskv
+}  // namespace openkv

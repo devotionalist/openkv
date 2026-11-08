@@ -14,12 +14,12 @@
 
 // @file coprocessor.cpp
 
-#include "opskv/storage/coprocessor.hpp"
+#include "openkv/storage/coprocessor.hpp"
 
-namespace opskv::storage {
+namespace openkv::storage {
 
 CoprocessorResponse Coprocessor::execute(const CoprocessorRequest& req,
-                                         const opskv::KeyRange& region_range) const {
+                                         const openkv::KeyRange& region_range) const {
   CoprocessorResponse out;
   if (!eng_) return out;
   const uint32_t lim = req.limit == 0 ? 256 : req.limit;
@@ -47,4 +47,4 @@ CoprocessorResponse Coprocessor::execute(const CoprocessorRequest& req,
   return out;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

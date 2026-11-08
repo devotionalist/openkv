@@ -53,7 +53,7 @@ StorageNode          —— 接线：gRPC/ExecLine、Region 元数据、Admin �
 ## 验收
 
 ```bash
-./build/tests/opskv_unit_tests --gtest_filter='SnapWorker*:Coprocessor*:RawNode*:StoreAdmin*'
+./build/tests/openkv_unit_tests --gtest_filter='SnapWorker*:Coprocessor*:RawNode*:StoreAdmin*'
 # 期望全部 PASS；Storage 启动日志含 raftstore=BatchSystem+Ready
 ```
 

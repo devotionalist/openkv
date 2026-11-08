@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/kv"
+	"github.com/devotionalist/openkv/client/go/kv"
 )
 
 func main() {

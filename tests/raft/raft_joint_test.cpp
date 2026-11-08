@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/raft/raft_node.hpp"
+#include "openkv/raft/raft_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -22,8 +22,8 @@
 #include <thread>
 #include <vector>
 
-using opskv::raft::ConfChange;
-using opskv::raft::RaftNode;
+using openkv::raft::ConfChange;
+using openkv::raft::RaftNode;
 
 namespace {
 

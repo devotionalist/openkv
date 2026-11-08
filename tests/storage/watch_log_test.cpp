@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/kv_engine.hpp"
-#include "opskv/storage/store_service.hpp"
-#include "opskv/storage/storage_node.hpp"
-#include "opskv/storage/watch_log.hpp"
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/store_service.hpp"
+#include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/watch_log.hpp"
 
 #include <gtest/gtest.h>
 
@@ -24,14 +24,14 @@
 #include <thread>
 #include <unistd.h>
 
-using opskv::NodeConfig;
-using opskv::storage::CmdOp;
-using opskv::storage::Command;
-using opskv::storage::KvEngine;
-using opskv::storage::StorageNode;
-using opskv::storage::StoreFacade;
-using opskv::storage::WatchLog;
-using opskv::storage::WatchRecord;
+using openkv::NodeConfig;
+using openkv::storage::CmdOp;
+using openkv::storage::Command;
+using openkv::storage::KvEngine;
+using openkv::storage::StorageNode;
+using openkv::storage::StoreFacade;
+using openkv::storage::WatchLog;
+using openkv::storage::WatchRecord;
 
 TEST(WatchLogTest, EncodeRoundTripAndKeyOrder) {
   auto p = WatchLog::encode_payload(false, "k", "v");

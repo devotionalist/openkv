@@ -25,8 +25,8 @@ import (
 	"sync"
 	"time"
 
-	metav1 "github.com/amydemo/opskv/client/go/gen/meta/v1"
-	"github.com/amydemo/opskv/client/go/internal/traffic"
+	metav1 "github.com/devotionalist/openkv/client/go/gen/meta/v1"
+	"github.com/devotionalist/openkv/client/go/internal/traffic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"

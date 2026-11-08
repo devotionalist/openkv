@@ -18,11 +18,11 @@
 
 skv_collect_sources(COMMON_SRCS DIR src)
 
-add_library(opskv_common ${COMMON_SRCS})
+add_library(openkv_common ${COMMON_SRCS})
 
-target_include_directories(opskv_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(openkv_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_link_libraries(opskv_common
+target_link_libraries(openkv_common
   PUBLIC
     Threads::Threads
     spdlog::spdlog
@@ -30,7 +30,7 @@ target_link_libraries(opskv_common
     httplib::httplib
 )
 
-if(OPSKV_USE_SEASTAR)
-  target_compile_definitions(opskv_common PUBLIC OPSKV_HAS_SEASTAR=1)
-  target_link_libraries(opskv_common PUBLIC Seastar::seastar)
+if(OPENKV_USE_SEASTAR)
+  target_compile_definitions(openkv_common PUBLIC OPENKV_HAS_SEASTAR=1)
+  target_link_libraries(openkv_common PUBLIC Seastar::seastar)
 endif()

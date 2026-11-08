@@ -15,25 +15,25 @@
 // @file exec_line_handler.cpp
 // 行协议命令解析（供 gRPC AdminService.ExecLine）。
 
-#include "opskv/storage/exec_line_handler.hpp"
+#include "openkv/storage/exec_line_handler.hpp"
 
-#include "opskv/admin_acl.hpp"
-#include "opskv/protocol.hpp"
-#include "opskv/codec.hpp"
-#include "opskv/raft/types.hpp"
-#include "opskv/storage/storage_node.hpp"
-#include "opskv/storage/watch_log.hpp"
+#include "openkv/admin_acl.hpp"
+#include "openkv/protocol.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/raft/types.hpp"
+#include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/watch_log.hpp"
 
 #include <cctype>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
 
-namespace opskv::storage {
+namespace openkv::storage {
 namespace {
 
-using opskv::from_hex;
-using opskv::to_hex;
+using openkv::from_hex;
+using openkv::to_hex;
 
 std::vector<std::string> split_ws(const std::string& line) {
   std::vector<std::string> parts;
@@ -47,7 +47,7 @@ std::vector<std::string> split_ws(const std::string& line) {
 
 }  // namespace
 
-namespace proto = opskv::proto;
+namespace proto = openkv::proto;
 
 ExecLineHandler::ExecLineHandler(StoreFacade& facade)
     : facade_(facade), admin_token_(admin_token_from_env()) {}
@@ -571,4 +571,4 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
   return "ERR bad_request";
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

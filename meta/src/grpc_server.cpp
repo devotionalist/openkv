@@ -15,14 +15,14 @@
 // @file grpc_server.cpp
 // Meta gRPC：多数 RPC 桥接到 handle_line，避免双实现。
 
-#include "opskv/meta/grpc_server.hpp"
+#include "openkv/meta/grpc_server.hpp"
 
-#include "opskv/admin_acl.hpp"
-#include "opskv/codec.hpp"
-#include "opskv/grpc_auth.hpp"
-#include "opskv/logging.hpp"
-#include "opskv/protocol.hpp"
-#include "opskv/raft/raft_node.hpp"
+#include "openkv/admin_acl.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/protocol.hpp"
+#include "openkv/raft/raft_node.hpp"
 
 #include <sstream>
 #include <stdexcept>
@@ -33,7 +33,7 @@
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
-namespace opskv::meta {
+namespace openkv::meta {
 
 
 namespace {
@@ -189,7 +189,7 @@ class MetaServiceImpl final : public pb::MetaService::Service {
                      pb::SplitRegionResponse* resp) override {
     if (auto st = auth_write(ctx); !st.ok()) return st;
     std::ostringstream oss;
-    oss << "SPLIT_REGION " << req->region_id() << " " << opskv::to_hex(req->split_key());
+    oss << "SPLIT_REGION " << req->region_id() << " " << openkv::to_hex(req->split_key());
     auto line = meta_.handle_line(oss.str());
     resp->set_ok(line_ok(line));
     if (!resp->ok()) resp->set_error(line);
@@ -314,7 +314,7 @@ class MetaServiceImpl final : public pb::MetaService::Service {
   }
 
   Status Locate(ServerContext*, const pb::LocateRequest* req, pb::LocateResponse* resp) override {
-    auto line = meta_.handle_line("LOCATE " + opskv::to_hex(req->key()));
+    auto line = meta_.handle_line("LOCATE " + openkv::to_hex(req->key()));
     resp->set_ok(line_ok(line));
     if (!resp->ok()) resp->set_error(line);
     return Status::OK;
@@ -513,4 +513,4 @@ void MetaGrpcServer::stop() {
   }
 }
 
-}  // namespace opskv::meta
+}  // namespace openkv::meta

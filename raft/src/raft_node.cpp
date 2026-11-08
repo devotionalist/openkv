@@ -15,10 +15,10 @@
 // @file raft_node.cpp
 // RaftNode：复制/选举 + 持久化 + InstallSnapshot + Joint + 异步 Apply + inflight。
 
-#include "opskv/raft/raft_node.hpp"
-#include "opskv/codec.hpp"
+#include "openkv/raft/raft_node.hpp"
+#include "openkv/codec.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -26,10 +26,10 @@
 #include <sstream>
 #include <thread>
 
-namespace opskv::raft {
+namespace openkv::raft {
 namespace {
 
-using ::opskv::to_hex;
+using ::openkv::to_hex;
 
 // 快照 blob 前缀：SKVC1\n<conf_csv>\n<kv>。conf 与 ADMIN_ENSURE 同形（id@addr[*N],...）。
 constexpr std::string_view kSnapConfMagic = "SKVC1\n";
@@ -1503,4 +1503,4 @@ void RaftNode::remove_peer(const std::string& id) {
   peer_quiet_ticks_.erase(id);
 }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft

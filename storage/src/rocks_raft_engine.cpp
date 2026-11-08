@@ -15,9 +15,9 @@
 // @file rocks_raft_engine.cpp
 // RocksDB 后端 RaftEngine（WriteBatch 原子写 state+log）。
 
-#include "opskv/storage/rocks_raft_engine.hpp"
+#include "openkv/storage/rocks_raft_engine.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
@@ -28,7 +28,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace opskv::storage {
+namespace openkv::storage {
 namespace fs = std::filesystem;
 
 namespace {
@@ -263,4 +263,4 @@ void RocksRaftEngine::clean(uint64_t raft_group_id) {
   }
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

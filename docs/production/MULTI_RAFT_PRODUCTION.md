@@ -1,6 +1,6 @@
 # 生产级 Multi-Raft 要求与路线图
 
-本文定义 OpsKV 达到 **生产级 Multi-Raft** 的能力要求、验收标准与分阶段实现。  
+本文定义 OpenKV 达到 **生产级 Multi-Raft** 的能力要求、验收标准与分阶段实现。  
 对标：工业界 Multi-Raft 运行时（如 CockroachDB），而非仅 HashiCorp 单组 Raft 库。
 
 相关实现：`raft/` · 故障演练 [FAULT_DRILL.md](../ops/FAULT_DRILL.md) · 选举流程 [flows/06-raft-election-commit.md](../flows/06-raft-election-commit.md)
@@ -82,7 +82,7 @@
 - [x] P4 冷 Region 内存卸载（`Peer::mark_unloaded` + `Store.unload_after_ms`）
 - [x] P5 Apply/Snap 队列深度 QoS（`BatchSystem::max_*_queue_depth`）
 
-**验收**：`opskv_unit_tests`（含 `RaftReadIndex*` / `RaftFrame*` / `RawNode*` / `Raftstore*`）全绿。
+**验收**：`openkv_unit_tests`（含 `RaftReadIndex*` / `RaftFrame*` / `RawNode*` / `Raftstore*`）全绿。
 
 ---
 
@@ -96,15 +96,15 @@
 | Peer / Apply | `raftstore::Peer` + `Store` 双 mailbox |
 | BatchSystem | `raftstore::BatchSystem` |
 | 单 Store RocksDB | `ShardEngineManager` → **`data_dir/kv` 一份引擎**；Region 靠 `KeyRange` |
-| Scheduler + latch | [`storage/scheduler.hpp`](../../storage/include/opskv/storage/scheduler.hpp) |
-| RaftKV | [`storage/raftkv.hpp`](../../storage/include/opskv/storage/raftkv.hpp) |
+| Scheduler + latch | [`storage/scheduler.hpp`](../../storage/include/openkv/storage/scheduler.hpp) |
+| RaftKV | [`storage/raftkv.hpp`](../../storage/include/openkv/storage/raftkv.hpp) |
 | Hibernate | 默认 `hibernate_after_ms=5000` + 低频 cold tick |
 | Snap | `SnapWorker`（合并 / 重试 / Stats） |
 | StoreMeta | `raftstore::StoreMeta` |
 | WriteBatch | `KvEngine::write_batch` + Apply 合并点 |
 | gRPC | `proto/` 强制；主端口 Store/Raft/Admin |
 | Meta 调度 | `RegionScheduler::maybe_enqueue_from_scan`；`SKV_PD_AUTO_BALANCE=1` 主动 balance |
-| Coprocessor | [`storage/coprocessor.hpp`](../../storage/include/opskv/storage/coprocessor.hpp) + `ADMIN_COP` |
+| Coprocessor | [`storage/coprocessor.hpp`](../../storage/include/openkv/storage/coprocessor.hpp) + `ADMIN_COP` |
 
 `StorageNode`：组装 Store / RaftKV / Scheduler / 单 Store 引擎；写经 Scheduler→RaftKV→propose；入站 Raft 经 `Store::apply_inbound_raft`。
 

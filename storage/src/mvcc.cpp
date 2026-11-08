@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/mvcc.hpp"
+#include "openkv/storage/mvcc.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -20,7 +20,7 @@
 #include <limits>
 #include <unordered_map>
 
-namespace opskv::storage {
+namespace openkv::storage {
 namespace {
 
 void append_u64_be(std::string& out, uint64_t v) {
@@ -366,4 +366,4 @@ size_t MvccStore::gc_below(uint64_t safe_ts) {
   return removed;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

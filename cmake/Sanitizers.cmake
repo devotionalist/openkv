@@ -16,12 +16,12 @@
 # Sanitizers.cmake — 运行时内存 / UB / 数据竞争检查
 # -----------------------------------------------------------------------------
 # 支持开关（可在 cmake 命令行传入）：
-#   -DOPSKV_ENABLE_ASAN=ON   AddressSanitizer（+ Linux 上的 LeakSanitizer）
-#   -DOPSKV_ENABLE_UBSAN=ON  UndefinedBehaviorSanitizer
-#   -DOPSKV_ENABLE_TSAN=ON   ThreadSanitizer（不可与 ASan/UBSan 同开）
+#   -DOPENKV_ENABLE_ASAN=ON   AddressSanitizer（+ Linux 上的 LeakSanitizer）
+#   -DOPENKV_ENABLE_UBSAN=ON  UndefinedBehaviorSanitizer
+#   -DOPENKV_ENABLE_TSAN=ON   ThreadSanitizer（不可与 ASan/UBSan 同开）
 #
 # 推荐用法（独立构建目录，避免污染普通 Release/Debug）：
-#   cmake -B build-asan -DOPSKV_ENABLE_ASAN=ON -DOPSKV_ENABLE_UBSAN=ON ...
+#   cmake -B build-asan -DOPENKV_ENABLE_ASAN=ON -DOPENKV_ENABLE_UBSAN=ON ...
 #   或直接：make memcheck
 #
 # 平台说明：
@@ -29,20 +29,20 @@
 #   - macOS AppleClang：不支持 detect_leaks；memcheck.sh 会优先选 Homebrew LLVM
 # =============================================================================
 
-option(OPSKV_ENABLE_ASAN  "开启 AddressSanitizer（含泄漏检测，视平台而定）" OFF)
-option(OPSKV_ENABLE_UBSAN "开启 UndefinedBehaviorSanitizer" OFF)
-option(OPSKV_ENABLE_TSAN  "开启 ThreadSanitizer（与 ASan/UBSan 互斥）" OFF)
+option(OPENKV_ENABLE_ASAN  "开启 AddressSanitizer（含泄漏检测，视平台而定）" OFF)
+option(OPENKV_ENABLE_UBSAN "开启 UndefinedBehaviorSanitizer" OFF)
+option(OPENKV_ENABLE_TSAN  "开启 ThreadSanitizer（与 ASan/UBSan 互斥）" OFF)
 
-function(opskv_apply_sanitizers)
+function(openkv_apply_sanitizers)
   set(_san_flags "")
   set(_san_link "")
 
   # TSan 与 ASan 运行时冲突，禁止同时开启
-  if(OPSKV_ENABLE_TSAN AND (OPSKV_ENABLE_ASAN OR OPSKV_ENABLE_UBSAN))
+  if(OPENKV_ENABLE_TSAN AND (OPENKV_ENABLE_ASAN OR OPENKV_ENABLE_UBSAN))
     message(FATAL_ERROR "TSan 不能与 ASan/UBSan 同时开启")
   endif()
 
-  if(OPSKV_ENABLE_ASAN)
+  if(OPENKV_ENABLE_ASAN)
     # -fno-omit-frame-pointer：保留栈帧，便于 ASan 打印可读调用栈
     list(APPEND _san_flags -fsanitize=address -fno-omit-frame-pointer -g)
     list(APPEND _san_link -fsanitize=address)
@@ -54,14 +54,14 @@ function(opskv_apply_sanitizers)
     message(STATUS "Sanitizer: AddressSanitizer ON")
   endif()
 
-  if(OPSKV_ENABLE_UBSAN)
+  if(OPENKV_ENABLE_UBSAN)
     # -fno-sanitize-recover：遇到 UB 立即失败，避免静默继续
     list(APPEND _san_flags -fsanitize=undefined -fno-sanitize-recover=undefined -g)
     list(APPEND _san_link -fsanitize=undefined)
     message(STATUS "Sanitizer: UndefinedBehaviorSanitizer ON")
   endif()
 
-  if(OPSKV_ENABLE_TSAN)
+  if(OPENKV_ENABLE_TSAN)
     list(APPEND _san_flags -fsanitize=thread -fno-omit-frame-pointer -g)
     list(APPEND _san_link -fsanitize=thread)
     message(STATUS "Sanitizer: ThreadSanitizer ON")
@@ -71,10 +71,10 @@ function(opskv_apply_sanitizers)
     # 全局施加到后续所有 target（本文件在 add_subdirectory 之前 include）
     add_compile_options(${_san_flags})
     add_link_options(${_san_link})
-    # 代码里可用 #ifdef OPSKV_SANITIZER 做条件逻辑
-    add_compile_definitions(OPSKV_SANITIZER=1)
+    # 代码里可用 #ifdef OPENKV_SANITIZER 做条件逻辑
+    add_compile_definitions(OPENKV_SANITIZER=1)
   endif()
 endfunction()
 
 # 配置阶段立即应用（若对应 option 为 ON）
-opskv_apply_sanitizers()
+openkv_apply_sanitizers()

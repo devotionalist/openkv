@@ -40,9 +40,9 @@ flowchart LR
 Gateway 无 Joining 态，加 Deployment 副本即可（无 join）：
 
 ```bash
-helm upgrade opskv deploy/helm/opskv -n opskv \
+helm upgrade openkv deploy/helm/openkv -n openkv \
   --reuse-values --set replicaCount.gateway=2 "${HELM_IMG[@]}"
-kubectl -n opskv get pods -l app.kubernetes.io/component=gateway
+kubectl -n openkv get pods -l app.kubernetes.io/component=gateway
 ```
 
 ---
@@ -63,11 +63,11 @@ kubectl -n opskv get pods -l app.kubernetes.io/component=gateway
 ### 2.2 Helm 拉起（示例 3 → 4）
 
 ```bash
-helm upgrade opskv deploy/helm/opskv -n opskv \
+helm upgrade openkv deploy/helm/openkv -n openkv \
   --reuse-values --set replicaCount.storage=4 "${HELM_IMG[@]}"
 
-kubectl -n opskv rollout status sts/storage --timeout=180s
-kubectl -n opskv get pods -l app.kubernetes.io/component=storage
+kubectl -n openkv rollout status sts/storage --timeout=180s
+kubectl -n openkv get pods -l app.kubernetes.io/component=storage
 ```
 
 须用 `helm upgrade`，不要只 `kubectl scale sts/storage`（Gateway/Web `-storages` 与 conf 会对不齐）。
@@ -80,7 +80,7 @@ kubectl -n opskv get pods -l app.kubernetes.io/component=storage
 - **尚未** Active，路由上**无**该 Store 副本（或 regions=0）
 
 ```bash
-kubectl -n opskv exec storage-3 -- cat /etc/opskv/node.conf
+kubectl -n openkv exec storage-3 -- cat /etc/openkv/node.conf
 curl -sS http://127.0.0.1:19100/api/nodes \
   | jq '.nodes[] | select(.id=="storage-3") | {id,state,up,regions}'
 ```
@@ -153,6 +153,6 @@ bash scripts/it-helm-template.sh
 
 # B：运维页加入 + Balance 后
 curl -sS http://127.0.0.1:19100/api/nodes | jq '.nodes[] | {id,state,regions}'
-kubectl -n opskv port-forward svc/gateway 19000:19000 &
+kubectl -n openkv port-forward svc/gateway 19000:19000 &
 ./.run/kv-example 127.0.0.1:19000    # get found=true
 ```

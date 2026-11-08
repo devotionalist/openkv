@@ -15,8 +15,8 @@
 // @file raw_node_test.cpp
 // RawNode 纯内存 Ready 循环：无盘、无网。
 
-#include "opskv/raft/raw_node.hpp"
-#include "opskv/raft/raft_node.hpp"
+#include "openkv/raft/raw_node.hpp"
+#include "openkv/raft/raft_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -26,10 +26,10 @@
 
 namespace {
 
-using opskv::raft::LogEntry;
-using opskv::raft::Peer;
-using opskv::raft::RawNode;
-using opskv::raft::Ready;
+using openkv::raft::LogEntry;
+using openkv::raft::Peer;
+using openkv::raft::RawNode;
+using openkv::raft::Ready;
 
 RawNode make_single(const std::string& id = "n1") {
   RawNode::Options o;

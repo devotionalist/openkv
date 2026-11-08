@@ -15,11 +15,11 @@
 // @file raw_node.cpp
 // RawNode：RaftNode(external_io) 薄封装，对齐 raft-rs Ready/Step/Advance。
 
-#include "opskv/raft/raw_node.hpp"
+#include "openkv/raft/raw_node.hpp"
 
-#include "opskv/raft/raft_node.hpp"
+#include "openkv/raft/raft_node.hpp"
 
-namespace opskv::raft {
+namespace openkv::raft {
 
 struct RawNode::Impl {
   RaftNode node;
@@ -150,4 +150,4 @@ bool RawNode::consume_activity_flag() { return impl_->node.consume_activity_flag
 RaftNode* RawNode::raft_node() { return &impl_->node; }
 const RaftNode* RawNode::raft_node() const { return &impl_->node; }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft

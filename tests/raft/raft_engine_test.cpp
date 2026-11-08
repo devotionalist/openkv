@@ -15,9 +15,9 @@
 // @file raft_engine_test.cpp
 // FileRaftEngine：LogBatch 原子写 + 恢复。
 
-#include "opskv/raft/file_raft_engine.hpp"
-#include "opskv/raft/raft_engine.hpp"
-#include "opskv/raft/raft_log.hpp"
+#include "openkv/raft/file_raft_engine.hpp"
+#include "openkv/raft/raft_engine.hpp"
+#include "openkv/raft/raft_log.hpp"
 
 #include <gtest/gtest.h>
 
@@ -25,11 +25,11 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
-using opskv::raft::FileRaftEngine;
-using opskv::raft::LogEntry;
-using opskv::raft::PersistedHardState;
-using opskv::raft::RaftLocalState;
-using opskv::raft::SyncMode;
+using openkv::raft::FileRaftEngine;
+using openkv::raft::LogEntry;
+using openkv::raft::PersistedHardState;
+using openkv::raft::RaftLocalState;
+using openkv::raft::SyncMode;
 
 TEST(RaftEngineTest, FileLogBatchRoundTrip) {
   auto dir = fs::temp_directory_path() / ("skv_raft_eng_" + std::to_string(::getpid()));
@@ -74,16 +74,16 @@ TEST(RaftEngineTest, FileLogBatchRoundTrip) {
 
 TEST(RaftEngineTest, EntryCrcRoundTrip) {
   LogEntry e{9, 42, "payload-with-crc"};
-  auto blob = opskv::raft::encode_log_entry(e);
+  auto blob = openkv::raft::encode_log_entry(e);
   ASSERT_TRUE(blob.substr(0, 4) == "RLE2");
   LogEntry out;
-  ASSERT_TRUE(opskv::raft::decode_log_entry(blob, &out));
+  ASSERT_TRUE(openkv::raft::decode_log_entry(blob, &out));
   EXPECT_EQ(out.term, 9u);
   EXPECT_EQ(out.index, 42u);
   EXPECT_EQ(out.data, "payload-with-crc");
   // 翻坏 CRC
   blob.back() = static_cast<char>(blob.back() ^ 0x7f);
-  EXPECT_FALSE(opskv::raft::decode_log_entry(blob, &out));
+  EXPECT_FALSE(openkv::raft::decode_log_entry(blob, &out));
 }
 
 TEST(RaftEngineTest, FilePureAppend) {

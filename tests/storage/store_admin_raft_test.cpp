@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/store_service.hpp"
-#include "opskv/storage/storage_node.hpp"
+#include "openkv/storage/store_service.hpp"
+#include "openkv/storage/storage_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -24,14 +24,14 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
-using opskv::NodeConfig;
-using opskv::storage::CmdOp;
-using opskv::storage::Command;
-using opskv::storage::StorageNode;
-using opskv::storage::StoreFacade;
-using opskv::storage::decode_command;
-using opskv::storage::encode_command;
-using opskv::storage::region_epoch_storage_key;
+using openkv::NodeConfig;
+using openkv::storage::CmdOp;
+using openkv::storage::Command;
+using openkv::storage::StorageNode;
+using openkv::storage::StoreFacade;
+using openkv::storage::decode_command;
+using openkv::storage::encode_command;
+using openkv::storage::region_epoch_storage_key;
 
 TEST(StoreAdminRaftTest, AdminCommandRoundTrip) {
   Command c;
@@ -150,7 +150,7 @@ TEST(StoreAdminRaftTest, ApplyConflictVisibleToClient) {
   Command cmd;
   cmd.op = CmdOp::kPrewrite;
   cmd.key = "k";
-  cmd.value = opskv::storage::encode_prewrite_value(20, 0, "k", "v2");
+  cmd.value = openkv::storage::encode_prewrite_value(20, 0, "k", "v2");
   auto r = facade.propose(0, cmd);
   EXPECT_FALSE(r.ok);
   EXPECT_EQ(r.error, "locked");
@@ -159,7 +159,7 @@ TEST(StoreAdminRaftTest, ApplyConflictVisibleToClient) {
   Command c2;
   c2.op = CmdOp::kCommit;
   c2.key = "missing";
-  c2.value = opskv::storage::encode_commit_value(1, 2);
+  c2.value = openkv::storage::encode_commit_value(1, 2);
   auto r2 = facade.propose(0, c2);
   EXPECT_FALSE(r2.ok);
   EXPECT_EQ(r2.error, "lock_not_found");
@@ -276,7 +276,7 @@ TEST(StoreAdminRaftTest, ProposeIdempotentByRequestId) {
 TEST(StoreAdminRaftTest, MigrateGeAtomicBatches) {
   auto dir = fs::temp_directory_path() / ("skv_mig_" + std::to_string(::getpid()));
   fs::remove_all(dir);
-  opskv::storage::ShardEngineManager mgr(dir.string());
+  openkv::storage::ShardEngineManager mgr(dir.string());
   auto& left = mgr.get_or_create(0);
   auto& right = mgr.get_or_create(1);
   left.put("a", "1", 1);

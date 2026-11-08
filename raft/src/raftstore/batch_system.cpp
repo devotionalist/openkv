@@ -14,13 +14,13 @@
 
 // @file batch_system.cpp
 
-#include "opskv/raftstore/batch_system.hpp"
+#include "openkv/raftstore/batch_system.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <thread>
 
-namespace opskv::raftstore {
+namespace openkv::raftstore {
 
 BatchSystem::BatchSystem(std::shared_ptr<Router> router, Options opts)
     : router_(std::move(router)), opts_(opts) {
@@ -117,4 +117,4 @@ void BatchSystem::apply_worker_loop(size_t worker_id) {
   }
 }
 
-}  // namespace opskv::raftstore
+}  // namespace openkv::raftstore

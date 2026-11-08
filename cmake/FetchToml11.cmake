@@ -17,7 +17,7 @@
 
 include(FetchContent)
 
-set(OPSKV_TOML11_VERSION "4.2.0" CACHE STRING "Bundled toml11 version")
+set(OPENKV_TOML11_VERSION "4.2.0" CACHE STRING "Bundled toml11 version")
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
 set(TOML11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -27,11 +27,11 @@ set(TOML11_PRECOMPILE OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
   toml11
-  URL https://github.com/ToruNiina/toml11/archive/refs/tags/v${OPSKV_TOML11_VERSION}.tar.gz
+  URL https://github.com/ToruNiina/toml11/archive/refs/tags/v${OPENKV_TOML11_VERSION}.tar.gz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-message(STATUS "Fetching toml11 v${OPSKV_TOML11_VERSION} …")
+message(STATUS "Fetching toml11 v${OPENKV_TOML11_VERSION} …")
 FetchContent_MakeAvailable(toml11)
 
 if(NOT TARGET toml11::toml11)
@@ -41,4 +41,4 @@ if(NOT TARGET toml11::toml11)
     message(FATAL_ERROR "Bundled toml11 did not create toml11::toml11")
   endif()
 endif()
-message(STATUS "toml11 v${OPSKV_TOML11_VERSION} enabled (FetchContent)")
+message(STATUS "toml11 v${OPENKV_TOML11_VERSION} enabled (FetchContent)")

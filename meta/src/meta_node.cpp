@@ -20,15 +20,15 @@
 // - handle_line：行协议分发（读可走 Follower；写走 replicate；运维需 AUTH）
 // - tick_loop：raft tick + 周期 ADVANCE_SAFE_POINT / SWEEP_STALE
 
-#include "opskv/meta/meta_node.hpp"
+#include "openkv/meta/meta_node.hpp"
 
-#include "opskv/admin_acl.hpp"
-#include "opskv/protocol.hpp"
-#include "opskv/codec.hpp"
-#include "opskv/grpc_auth.hpp"
-#include "opskv/logging.hpp"
-#include "opskv/meta/grpc_server.hpp"
-#include "opskv/net/tcp_line_client.hpp"
+#include "openkv/admin_acl.hpp"
+#include "openkv/protocol.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/meta/grpc_server.hpp"
+#include "openkv/net/tcp_line_client.hpp"
 
 #include <grpcpp/grpcpp.h>
 #include "storage/v1/storage.grpc.pb.h"
@@ -44,12 +44,12 @@
 #include <string_view>
 #include <thread>
 
-namespace opskv::meta {
-namespace proto = opskv::proto;
+namespace openkv::meta {
+namespace proto = openkv::proto;
 namespace {
 
-using opskv::from_hex;
-using opskv::to_hex;
+using openkv::from_hex;
+using openkv::to_hex;
 
 std::vector<std::string> split_ws(const std::string& line) {
   std::vector<std::string> parts;
@@ -1370,4 +1370,4 @@ void MetaNode::tick_loop() {
   }
 }
 
-}  // namespace opskv::meta
+}  // namespace openkv::meta

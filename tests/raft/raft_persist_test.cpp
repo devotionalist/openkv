@@ -15,7 +15,7 @@
 // @file raft_persist_test.cpp
 // Raft 持久化装载与宕机恢复（单节点）。
 
-#include "opskv/raft/raft_node.hpp"
+#include "openkv/raft/raft_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -25,8 +25,8 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
-using opskv::raft::RaftNode;
-using opskv::raft::TransportSend;
+using openkv::raft::RaftNode;
+using openkv::raft::TransportSend;
 
 TEST(RaftPersistTest, SaveAndRecoverApplied) {
   auto dir = fs::temp_directory_path() / ("skv_raft_persist_" + std::to_string(::getpid()));

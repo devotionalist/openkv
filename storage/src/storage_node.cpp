@@ -15,25 +15,25 @@
 // @file storage_node.cpp
 // StorageNode：Multi-Raft + Range 分片 + 持久化 / 快照 / 自动分裂。
 
-#include "opskv/storage/storage_node.hpp"
+#include "openkv/storage/storage_node.hpp"
 
-#include "opskv/admin_acl.hpp"
-#include "opskv/codec.hpp"
-#include "opskv/grpc_auth.hpp"
-#include "opskv/logging.hpp"
-#include "opskv/protocol.hpp"
+#include "openkv/admin_acl.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/protocol.hpp"
 #include <grpcpp/grpcpp.h>
 #include "meta/v1/meta.grpc.pb.h"
 #include "meta/v1/meta.pb.h"
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
-#include "opskv/raft/file_raft_engine.hpp"
-#include "opskv/raft/raft_engine.hpp"
-#include "opskv/raft/raft_persist.hpp"
-#include "opskv/raftstore/msg.hpp"
-#include "opskv/storage/mvcc.hpp"
-#include "opskv/storage/store_service.hpp"
-#include "opskv/storage/watch_log.hpp"
+#include "openkv/raft/file_raft_engine.hpp"
+#include "openkv/raft/raft_engine.hpp"
+#include "openkv/raft/raft_persist.hpp"
+#include "openkv/raftstore/msg.hpp"
+#include "openkv/storage/mvcc.hpp"
+#include "openkv/storage/store_service.hpp"
+#include "openkv/storage/watch_log.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -46,23 +46,23 @@
 #include <thread>
 #include <unordered_map>
 
-namespace opskv::storage {
-namespace proto = opskv::proto;
+namespace openkv::storage {
+namespace proto = openkv::proto;
 namespace {
 
-using opskv::from_hex;
-using opskv::to_hex;
+using openkv::from_hex;
+using openkv::to_hex;
 
 // 快照 KV blob 前缀：SKVR1\nhex(start)|hex(end)\n<data>
 // 接收端用发送方区间 apply，避免本地 region_ranges_ 丢失后空 range 清空整库。
 constexpr std::string_view kSnapRangeMagic = "SKVR1\n";
 
-std::string wrap_snap_range(const opskv::KeyRange& range, std::string kv) {
+std::string wrap_snap_range(const openkv::KeyRange& range, std::string kv) {
   return std::string(kSnapRangeMagic) + to_hex(range.start_key) + "|" + to_hex(range.end_key) +
          "\n" + std::move(kv);
 }
 
-bool peel_snap_range(std::string_view data, opskv::KeyRange* range, std::string_view* kv) {
+bool peel_snap_range(std::string_view data, openkv::KeyRange* range, std::string_view* kv) {
   if (!data.starts_with(kSnapRangeMagic)) {
     if (kv) *kv = data;
     return false;
@@ -428,7 +428,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
         engines_->share_with(right, shard_id);
       }
       auto left_range = region_range(shard_id);
-      opskv::KeyRange right_range;
+      openkv::KeyRange right_range;
       right_range.start_key = cmd.key;
       right_range.end_key = left_range.end_key;
       left_range.end_key = cmd.key;
@@ -966,14 +966,14 @@ void StorageNode::persist_epoch(uint32_t region_id, uint64_t epoch) {
   eng.put(region_epoch_storage_key(region_id), v, /*revision=*/0);
 }
 
-opskv::KeyRange StorageNode::region_range(uint32_t region_id) const {
+openkv::KeyRange StorageNode::region_range(uint32_t region_id) const {
   std::lock_guard<std::mutex> lock(range_mu_);
   auto it = region_ranges_.find(region_id);
   if (it != region_ranges_.end()) return it->second;
   return {};  // 默认全空间
 }
 
-void StorageNode::set_region_range(uint32_t region_id, opskv::KeyRange range) {
+void StorageNode::set_region_range(uint32_t region_id, openkv::KeyRange range) {
   {
     std::lock_guard<std::mutex> lock(range_mu_);
     region_ranges_[region_id] = range;
@@ -2048,7 +2048,7 @@ void StorageNode::start() {
     auto snap_applier = [this, shard_id](uint64_t last_idx, uint64_t /*last_term*/,
                                          std::string_view data) {
       auto& eng = engines_->get_or_create(shard_id);
-      opskv::KeyRange range;
+      openkv::KeyRange range;
       std::string_view kv = data;
       if (!peel_snap_range(data, &range, &kv)) {
         range = region_range(shard_id);
@@ -2075,7 +2075,7 @@ void StorageNode::start() {
 
   // bootstrap_regions：首批 Region（通常仅 0）；空则等 PLACE/ENSURE
   for (uint32_t rid : cfg_.bootstrap_regions) {
-    set_region_range(rid, opskv::KeyRange{});  // 全 key 空间
+    set_region_range(rid, openkv::KeyRange{});  // 全 key 空间
     auto& g = multi_raft_->get_or_create(rid);
     g.recover_apply();
     if (uint64_t e = load_epoch_from_engine(rid); e != 0) {
@@ -2267,4 +2267,4 @@ void StorageNode::register_and_heartbeat() {
   }
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

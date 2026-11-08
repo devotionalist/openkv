@@ -14,7 +14,7 @@
 
 package hash
 
-// FNV-1a 64-bit，与 C++ opskv::fnv1a64 保持一致
+// FNV-1a 64-bit，与 C++ openkv::fnv1a64 保持一致
 func FNV1a64(data []byte) uint64 {
 	var h uint64 = 14695981039346656037
 	for _, c := range data {

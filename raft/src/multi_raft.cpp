@@ -15,11 +15,11 @@
 // @file multi_raft.cpp
 // MultiRaft：薄封装，生命周期与 tick 交给 raftstore::Store。
 
-#include "opskv/raft/multi_raft.hpp"
+#include "openkv/raft/multi_raft.hpp"
 
-#include "opskv/raftstore/store.hpp"
+#include "openkv/raftstore/store.hpp"
 
-namespace opskv::raft {
+namespace openkv::raft {
 
 MultiRaft::MultiRaft(GroupFactory factory) : MultiRaft(std::move(factory), Options{}) {}
 
@@ -64,9 +64,9 @@ std::vector<uint32_t> MultiRaft::leader_shards() const { return store_->leader_s
 
 std::vector<uint32_t> MultiRaft::all_shards() const { return store_->all_shards(); }
 
-void MultiRaft::update_peer_meta(uint32_t region_id, opskv::KeyRange range, uint64_t epoch) {
+void MultiRaft::update_peer_meta(uint32_t region_id, openkv::KeyRange range, uint64_t epoch) {
   store_->update_peer_meta(region_id, std::move(range), epoch);
 }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft
 

@@ -30,10 +30,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/internal/route"
-	"github.com/amydemo/opskv/client/go/internal/storagetcp"
-	"github.com/amydemo/opskv/client/go/internal/traffic"
-	kvv1 "github.com/amydemo/opskv/client/go/gen/kv/v1"
+	"github.com/devotionalist/openkv/client/go/internal/route"
+	"github.com/devotionalist/openkv/client/go/internal/storagetcp"
+	"github.com/devotionalist/openkv/client/go/internal/traffic"
+	kvv1 "github.com/devotionalist/openkv/client/go/gen/kv/v1"
 	"google.golang.org/grpc"
 )
 

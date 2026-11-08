@@ -1,6 +1,6 @@
 # 故障演练计划
 
-验证 OpsKV 在上下线、进程崩溃、网络抖动、磁盘类故障下能否**自动恢复服务**（Raft 选主 / 追赶 / Gateway 重试），以及运维侧如何拉起进程。
+验证 OpenKV 在上下线、进程崩溃、网络抖动、磁盘类故障下能否**自动恢复服务**（Raft 选主 / 追赶 / Gateway 重试），以及运维侧如何拉起进程。
 
 - **设计总览：** [DATA_HA.md](../architecture/DATA_HA.md)（数据面 RF=3 + Meta×3、边界与验收 ID）
 - 实现流程：[flows/04-fault-recovery.md](../flows/04-fault-recovery.md)（WAL / AE / Snapshot）· [05-meta-ha.md](../flows/05-meta-ha.md)

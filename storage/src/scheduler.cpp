@@ -14,9 +14,9 @@
 
 // @file scheduler.cpp
 
-#include "opskv/storage/scheduler.hpp"
+#include "openkv/storage/scheduler.hpp"
 
-namespace opskv::storage {
+namespace openkv::storage {
 
 uint64_t Latches::lock(const std::vector<std::string>& keys) {
   std::unique_lock<std::mutex> lk(mu_);
@@ -67,4 +67,4 @@ bool Scheduler::schedule_write(uint32_t region_id, const std::string& latch_key,
   return ok;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

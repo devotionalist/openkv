@@ -15,10 +15,10 @@
 // @file store_service.cpp
 // Command 二进制编解码与 StoreFacade 读写编排（含 propose 后轮询 apply 的 demo 同步）。
 
-#include "opskv/storage/store_service.hpp"
+#include "openkv/storage/store_service.hpp"
 
-#include "opskv/logging.hpp"
-#include "opskv/storage/mvcc.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/storage/mvcc.hpp"
 
 #include <chrono>
 #include <cstring>
@@ -26,7 +26,7 @@
 
 namespace {
 struct ScopedRegionTimer {
-  opskv::storage::RegionMetrics* metrics{nullptr};
+  openkv::storage::RegionMetrics* metrics{nullptr};
   uint32_t region{0};
   bool propose{true};
   std::chrono::steady_clock::time_point t0{std::chrono::steady_clock::now()};
@@ -44,7 +44,7 @@ struct ScopedRegionTimer {
 };
 }  // namespace
 
-namespace opskv::storage {
+namespace openkv::storage {
 namespace {
 
 void append_u32(std::string& out, uint32_t v) {
@@ -581,4 +581,4 @@ CheckTxnResult StoreFacade::check_txn_status(uint32_t shard_id, std::string_view
   return r;
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

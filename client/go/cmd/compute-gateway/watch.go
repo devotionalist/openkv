@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amydemo/opskv/client/go/internal/storagetcp"
-	kvv1 "github.com/amydemo/opskv/client/go/gen/kv/v1"
+	"github.com/devotionalist/openkv/client/go/internal/storagetcp"
+	kvv1 "github.com/devotionalist/openkv/client/go/gen/kv/v1"
 )
 
 func (s *server) matchWatch(req *kvv1.WatchRequest, key []byte) bool {

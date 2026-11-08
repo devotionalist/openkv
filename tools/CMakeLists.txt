@@ -23,10 +23,10 @@ add_executable(skv
 target_include_directories(skv PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/skv
 )
-target_link_libraries(skv PRIVATE opskv_common opskv_proto CLI11::CLI11)
+target_link_libraries(skv PRIVATE openkv_common openkv_proto CLI11::CLI11)
 target_compile_features(skv PRIVATE cxx_std_20)
-if(COMMAND opskv_link_jemalloc)
-  opskv_link_jemalloc(skv)
+if(COMMAND openkv_link_jemalloc)
+  openkv_link_jemalloc(skv)
 endif()
 
 # 安装到 build/tools/skv，方便 PATH / scripts 引用

@@ -17,10 +17,10 @@
 // 副本放置、TSO/GC、迁移持久化、MSK1 快照序列化。
 // 所有公开写方法内部加 mu_；须由 Meta Raft apply 路径调用以保证多副本一致。
 
-#include "opskv/meta/cluster_state.hpp"
-#include "opskv/codec.hpp"
+#include "openkv/meta/cluster_state.hpp"
+#include "openkv/codec.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -29,11 +29,11 @@
 #include <sstream>
 #include <unordered_set>
 
-namespace opskv::meta {
+namespace openkv::meta {
 namespace {
 
-using opskv::from_hex;
-using opskv::to_hex;
+using openkv::from_hex;
+using openkv::to_hex;
 
 int64_t now_ms() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -373,7 +373,7 @@ std::vector<NodeInfo> ClusterState::list_nodes(std::optional<NodeRole> role) con
   return out;
 }
 
-RegionInfo* ClusterState::mutable_region(opskv::RegionId id) {
+RegionInfo* ClusterState::mutable_region(openkv::RegionId id) {
   for (auto& r : route_.regions) {
     if (r.region_id == id) return &r;
   }
@@ -472,8 +472,8 @@ void ClusterState::bump_route_version() {
 }
 
 // 左保留 [start,split)，右新建 [split,end)；右副本默认继承或用 peer_ids。
-std::optional<opskv::RegionId> ClusterState::split_region(
-    opskv::RegionId region_id, std::string split_key,
+std::optional<openkv::RegionId> ClusterState::split_region(
+    openkv::RegionId region_id, std::string split_key,
     const std::vector<std::string>& peer_ids) {
   std::lock_guard<std::mutex> lock(mu_);
   auto* left = mutable_region(region_id);
@@ -516,7 +516,7 @@ std::optional<opskv::RegionId> ClusterState::split_region(
 }
 
 // 要求相邻；删除 right，扩展 left.end，副本沿用 left。
-bool ClusterState::merge_regions(opskv::RegionId left_id, opskv::RegionId right_id) {
+bool ClusterState::merge_regions(openkv::RegionId left_id, openkv::RegionId right_id) {
   std::lock_guard<std::mutex> lock(mu_);
   if (left_id == right_id) return false;
   RegionInfo* left = mutable_region(left_id);
@@ -545,7 +545,7 @@ std::optional<NodeInfo> ClusterState::get_node(const std::string& id) const {
   return it->second;
 }
 
-std::optional<RegionInfo> ClusterState::find_region(opskv::RegionId id) const {
+std::optional<RegionInfo> ClusterState::find_region(openkv::RegionId id) const {
   std::lock_guard<std::mutex> lock(mu_);
   for (const auto& r : route_.regions) {
     if (r.region_id == id) return r;
@@ -553,15 +553,15 @@ std::optional<RegionInfo> ClusterState::find_region(opskv::RegionId id) const {
   return std::nullopt;
 }
 
-std::optional<opskv::RegionId> ClusterState::locate(std::string_view key) const {
+std::optional<openkv::RegionId> ClusterState::locate(std::string_view key) const {
   std::lock_guard<std::mutex> lock(mu_);
-  std::vector<opskv::RegionMeta> metas;
+  std::vector<openkv::RegionMeta> metas;
   metas.reserve(route_.regions.size());
   for (const auto& r : route_.regions) {
     metas.push_back({r.region_id, r.range});
   }
-  opskv::sort_regions(metas);
-  return opskv::locate_region(metas, key);
+  openkv::sort_regions(metas);
+  return openkv::locate_region(metas, key);
 }
 
 // 按「已持有 Region 数」升序选 RF 个 Active Storage；avoid 降权。
@@ -710,8 +710,8 @@ std::optional<std::pair<uint32_t, std::vector<std::string>>> ClusterState::sugge
   return std::nullopt;
 }
 
-std::optional<opskv::RegionId> ClusterState::adjacent_right(
-    opskv::RegionId left_id) const {
+std::optional<openkv::RegionId> ClusterState::adjacent_right(
+    openkv::RegionId left_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   const RegionInfo* left = nullptr;
   for (const auto& r : route_.regions) {
@@ -941,4 +941,4 @@ bool ClusterState::load_snapshot(std::string_view data) {
   }
 }
 
-}  // namespace opskv::meta
+}  // namespace openkv::meta

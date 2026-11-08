@@ -16,7 +16,7 @@
 
 include(FetchContent)
 
-set(OPSKV_CLI11_VERSION "2.4.2" CACHE STRING "Bundled CLI11 version")
+set(OPENKV_CLI11_VERSION "2.4.2" CACHE STRING "Bundled CLI11 version")
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
 set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -26,14 +26,14 @@ set(CLI11_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
   cli11
-  URL https://github.com/CLIUtils/CLI11/archive/refs/tags/v${OPSKV_CLI11_VERSION}.tar.gz
+  URL https://github.com/CLIUtils/CLI11/archive/refs/tags/v${OPENKV_CLI11_VERSION}.tar.gz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-message(STATUS "Fetching CLI11 v${OPSKV_CLI11_VERSION} …")
+message(STATUS "Fetching CLI11 v${OPENKV_CLI11_VERSION} …")
 FetchContent_MakeAvailable(cli11)
 
 if(NOT TARGET CLI11::CLI11)
   message(FATAL_ERROR "Bundled CLI11 did not create CLI11::CLI11")
 endif()
-message(STATUS "CLI11 v${OPSKV_CLI11_VERSION} enabled (FetchContent)")
+message(STATUS "CLI11 v${OPENKV_CLI11_VERSION} enabled (FetchContent)")

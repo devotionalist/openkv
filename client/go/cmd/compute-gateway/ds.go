@@ -18,8 +18,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/amydemo/opskv/client/go/internal/dsencode"
-	kvv1 "github.com/amydemo/opskv/client/go/gen/kv/v1"
+	"github.com/devotionalist/openkv/client/go/internal/dsencode"
+	kvv1 "github.com/devotionalist/openkv/client/go/gen/kv/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

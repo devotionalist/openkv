@@ -15,7 +15,7 @@
 // @file config.cpp
 // 配置加载：.conf 为 key=value；.toml 走 toml11（字段名与 conf 一致）。
 
-#include "opskv/config.hpp"
+#include "openkv/config.hpp"
 
 #include <toml.hpp>
 
@@ -26,7 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace opskv {
+namespace openkv {
 namespace {
 
 std::string trim(std::string s) {
@@ -194,4 +194,4 @@ ClusterBootstrap load_bootstrap(const std::string& path) {
   return b;
 }
 
-}  // namespace opskv
+}  // namespace openkv

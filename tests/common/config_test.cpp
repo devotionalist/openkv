@@ -15,7 +15,7 @@
 // @file config_test.cpp
 // 测试 load_node_config / load_bootstrap：key=value 解析、临时文件与默认值。
 
-#include "opskv/config.hpp"
+#include "openkv/config.hpp"
 
 #include <gtest/gtest.h>
 
@@ -48,7 +48,7 @@ TEST_F(ConfigTest, LoadNodeConfig) {
 # comment
 node_id=storage-9
 listen_addr=0.0.0.0:9199
-advertise_addr=storage-9.storage-headless.opskv.svc.cluster.local:9199
+advertise_addr=storage-9.storage-headless.openkv.svc.cluster.local:9199
 meta_addr=127.0.0.1:8500
 data_dir=./data/x
 shard_count=32
@@ -56,10 +56,10 @@ raft_election_timeout_ms=1500
 raft_heartbeat_ms=120
 persist_sync=all
 )");
-  auto c = opskv::load_node_config(p.string());
+  auto c = openkv::load_node_config(p.string());
   EXPECT_EQ(c.node_id, "storage-9");
   EXPECT_EQ(c.listen_addr, "0.0.0.0:9199");
-  EXPECT_EQ(c.advertise_addr, "storage-9.storage-headless.opskv.svc.cluster.local:9199");
+  EXPECT_EQ(c.advertise_addr, "storage-9.storage-headless.openkv.svc.cluster.local:9199");
   EXPECT_EQ(c.shard_count, 32u);
   EXPECT_EQ(c.raft_election_timeout_ms, 1500u);
   EXPECT_EQ(c.raft_heartbeat_ms, 120u);
@@ -73,7 +73,7 @@ TEST_F(ConfigTest, LoadBootstrapPeers) {
                       "replica_factor=3\n"
                       "storage_peers=s0@127.0.0.1:9100,s1@127.0.0.1:9101\n"
                       "compute_peers=c0@127.0.0.1:19000\n");
-  auto b = opskv::load_bootstrap(p.string());
+  auto b = openkv::load_bootstrap(p.string());
   EXPECT_EQ(b.shard_count, 8u);
   ASSERT_EQ(b.storage_peers.size(), 2u);
   EXPECT_EQ(b.storage_peers[0].node_id, "s0");
@@ -83,5 +83,5 @@ TEST_F(ConfigTest, LoadBootstrapPeers) {
 }
 
 TEST_F(ConfigTest, MissingFileThrows) {
-  EXPECT_THROW(opskv::load_node_config((dir_ / "nope.conf").string()), std::runtime_error);
+  EXPECT_THROW(openkv::load_node_config((dir_ / "nope.conf").string()), std::runtime_error);
 }

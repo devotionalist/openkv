@@ -1,6 +1,6 @@
 # 生产级 Meta（管控面）要求与路线图
 
-本文定义 OpsKV **Meta** 达到工业级/生产级的能力要求。  
+本文定义 OpenKV **Meta** 达到工业级/生产级的能力要求。  
 Store 见 [STORE_PRODUCTION.md](STORE_PRODUCTION.md)；Raft 运行时见 [MULTI_RAFT_PRODUCTION.md](MULTI_RAFT_PRODUCTION.md)。
 
 对标：**中心元数据服务**（主）、**etcd**（共识/Watch）、**CockroachDB** 节点 liveness / 调度（辅）。
@@ -9,7 +9,7 @@ Store 见 [STORE_PRODUCTION.md](STORE_PRODUCTION.md)；Raft 运行时见 [MULTI_
 
 ## 1. 业界对标（Meta 管什么）
 
-| 能力域 | 典型 PD 类控制面 | etcd | CRDB | OpsKV Meta 现状 |
+| 能力域 | 典型 PD 类控制面 | etcd | CRDB | OpenKV Meta 现状 |
 |--------|---------|------|------|---------------------|
 | 共识底座 | etcd 集群 | 原生 Raft | 元数据在 KV + gossip | **单 Raft 组 + `ClusterState` 快照**（已持久化） |
 | Store 存活 | Heartbeat / TTL / down | Lease | Node liveness | **REGISTER+HEARTBEAT + sweep offline** |

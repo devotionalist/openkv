@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/storage/latency_hist.hpp"
+#include "openkv/storage/latency_hist.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <sstream>
 
-namespace opskv::storage {
+namespace openkv::storage {
 
 void LatencyHistogram::observe(uint64_t us) {
   size_t i = 0;
@@ -123,4 +123,4 @@ std::string RegionMetrics::prometheus_text() const {
   return oss.str();
 }
 
-}  // namespace opskv::storage
+}  // namespace openkv::storage

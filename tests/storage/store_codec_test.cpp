@@ -15,14 +15,14 @@
 // @file store_codec_test.cpp
 // 测试 Command encode/decode 对 Put/Delete 及非法 payload 的处理。
 
-#include "opskv/storage/store_service.hpp"
+#include "openkv/storage/store_service.hpp"
 
 #include <gtest/gtest.h>
 
-using opskv::storage::CmdOp;
-using opskv::storage::Command;
-using opskv::storage::decode_command;
-using opskv::storage::encode_command;
+using openkv::storage::CmdOp;
+using openkv::storage::Command;
+using openkv::storage::decode_command;
+using openkv::storage::encode_command;
 
 TEST(StoreCodecTest, PutRoundTrip) {
   Command in{CmdOp::kPut, "hello", "world", 1234};

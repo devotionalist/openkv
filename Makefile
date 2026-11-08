@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # =============================================================================
-# OpsKV Makefile — 常用开发入口
+# OpenKV Makefile — 常用开发入口
 # -----------------------------------------------------------------------------
 # 默认使用系统 clang++/ar，避免 Homebrew binutils 的 ar 与 Apple ld 不兼容。
 # 变量可覆盖，例如：
@@ -23,8 +23,8 @@
 BUILD_DIR ?= build
 
 # RocksDB 由 CMake FetchContent 固定版本随工程编译，无需系统预装
-# gRPC 强制（系统包优先，否则 FetchContent）；勿再传 -DOPSKV_USE_GRPC=OFF
-CMAKE_FLAGS ?= -DOPSKV_USE_SEASTAR=OFF \
+# gRPC 强制（系统包优先，否则 FetchContent）；勿再传 -DOPENKV_USE_GRPC=OFF
+CMAKE_FLAGS ?= -DOPENKV_USE_SEASTAR=OFF \
 	-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib
 
 .PHONY: all configure build test gtest run-meta run-storage run-compute proto go-mod clean \
@@ -49,7 +49,7 @@ test: build
 
 # 直接跑 gtest 二进制（可用 --gtest_filter=HashTest.* 过滤）
 gtest: build
-	./$(BUILD_DIR)/tests/opskv_unit_tests --gtest_color=yes
+	./$(BUILD_DIR)/tests/openkv_unit_tests --gtest_color=yes
 
 # 内存泄漏 / 非法访问 / UB 检查（独立 build-asan，不污染普通构建）
 memcheck asan:

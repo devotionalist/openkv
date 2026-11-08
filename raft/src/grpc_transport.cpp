@@ -15,10 +15,10 @@
 // @file grpc_transport.cpp
 // Raft 出站 gRPC（peer 表在 Impl，出站计数在 GrpcRaftTransport）。
 
-#include "opskv/raft/grpc_transport.hpp"
+#include "openkv/raft/grpc_transport.hpp"
 
-#include "opskv/codec.hpp"
-#include "opskv/logging.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/logging.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -36,7 +36,7 @@
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
-namespace opskv::raft {
+namespace openkv::raft {
 
 namespace {
 
@@ -230,7 +230,7 @@ struct GrpcRaftTransport::Impl {
           e->set_term(std::stoull(parts[idx]));
           e->set_index(std::stoull(parts[idx + 1]));
           std::string bin;
-          if (opskv::from_hex(parts[idx + 2], &bin)) {
+          if (openkv::from_hex(parts[idx + 2], &bin)) {
             e->set_data(bin);
           } else {
             e->set_data(parts[idx + 2]);
@@ -259,7 +259,7 @@ struct GrpcRaftTransport::Impl {
         const uint64_t last_idx = std::stoull(parts[1]);
         const uint64_t last_term = std::stoull(parts[2]);
         std::string bin;
-        if (!opskv::from_hex(parts[3], &bin)) bin = parts[3];
+        if (!openkv::from_hex(parts[3], &bin)) bin = parts[3];
 
         grpc::ClientContext ctx;
         ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(60));
@@ -436,4 +436,4 @@ uint64_t GrpcRaftTransport::out_sync_total() const {
   return s;
 }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft

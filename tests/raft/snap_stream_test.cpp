@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/raft/snap_stream.hpp"
+#include "openkv/raft/snap_stream.hpp"
 
 #include <gtest/gtest.h>
 
-using opskv::raft::SnapStreamBuffer;
-using opskv::raft::snap_from_hex;
-using opskv::raft::snap_to_hex;
+using openkv::raft::SnapStreamBuffer;
+using openkv::raft::snap_from_hex;
+using openkv::raft::snap_to_hex;
 
 TEST(SnapStreamTest, HexRoundTrip) {
   const std::string raw("hello\0world", 11);

@@ -15,11 +15,11 @@
 // @file file_raft_engine.cpp
 // FileRaftEngine：RLG2 追加式日志；有 cut 时才整文件重写；state+log 同批落盘。
 
-#include "opskv/raft/file_raft_engine.hpp"
+#include "openkv/raft/file_raft_engine.hpp"
 
-#include "opskv/logging.hpp"
-#include "opskv/raft/raft_log.hpp"
-#include "opskv/raft/raft_persist.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/raft/raft_log.hpp"
+#include "openkv/raft/raft_persist.hpp"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -29,7 +29,7 @@
 #include <string_view>
 #include <unordered_map>
 
-namespace opskv::raft {
+namespace openkv::raft {
 namespace fs = std::filesystem;
 
 namespace {
@@ -388,4 +388,4 @@ bool FileRaftEngine::migrate_legacy_persist_dir(const std::string& legacy_dir,
   return true;
 }
 
-}  // namespace opskv::raft
+}  // namespace openkv::raft

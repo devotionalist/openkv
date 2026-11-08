@@ -15,11 +15,11 @@
 // @file kv_proxy.cpp
 // KvProxy：按 key 路由到 Leader，not_leader 时轮询副本地址重试。
 
-#include "opskv/compute/kv_proxy.hpp"
+#include "openkv/compute/kv_proxy.hpp"
 
-#include "opskv/logging.hpp"
+#include "openkv/logging.hpp"
 
-namespace opskv::compute {
+namespace openkv::compute {
 
 KvProxy::KvProxy(Router& router, StorageGetFn get_fn, StoragePutFn put_fn)
     : router_(router), get_fn_(std::move(get_fn)), put_fn_(std::move(put_fn)) {}
@@ -77,4 +77,4 @@ ProxyPutResult KvProxy::del(std::string_view key) {
   return put(key, std::string_view(marker, sizeof(marker)));
 }
 
-}  // namespace opskv::compute
+}  // namespace openkv::compute

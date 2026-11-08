@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "opskv/raft/raft_frame.hpp"
-#include "opskv/raft/raft_node.hpp"
+#include "openkv/raft/raft_frame.hpp"
+#include "openkv/raft/raft_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -21,16 +21,16 @@
 #include <string>
 #include <vector>
 
-using opskv::raft::RaftNode;
-using opskv::raft::decode_frame_header;
-using opskv::raft::encode_frame;
-using opskv::raft::FrameType;
-using opskv::raft::is_binary_frame;
+using openkv::raft::RaftNode;
+using openkv::raft::decode_frame_header;
+using openkv::raft::encode_frame;
+using openkv::raft::FrameType;
+using openkv::raft::is_binary_frame;
 
 TEST(RaftFrameTest, EncodeDecodeRoundTrip) {
   auto wire = encode_frame(FrameType::kAppendEntries, 7, "RAFT_AE 0 n0 1");
   ASSERT_TRUE(is_binary_frame(wire));
-  opskv::raft::DecodedFrame fr;
+  openkv::raft::DecodedFrame fr;
   size_t total = 0;
   ASSERT_TRUE(decode_frame_header(wire, &fr, &total));
   EXPECT_EQ(total, wire.size());
