@@ -1,7 +1,7 @@
 # 网络栈：gRPC 与 Seastar
 
 本文说明 OpenKV **实际在用的通信方式**，以及可选的 Seastar 编译开关。  
-文档总目录：[README.md](./README.md) · gRPC 强制变更：[flows/GRPC_MANDATORY.md](./flows/GRPC_MANDATORY.md) · 业务错误 token：[architecture/ERROR_CODES.md](./architecture/ERROR_CODES.md)。
+文档总目录：[中文索引](./zh/README.md) · 英文 [networking](./en/networking.md) · gRPC 强制变更：[flows/GRPC_MANDATORY.md](./flows/GRPC_MANDATORY.md) · 业务错误 token：[architecture/ERROR_CODES.md](./architecture/ERROR_CODES.md)。
 
 ---
 

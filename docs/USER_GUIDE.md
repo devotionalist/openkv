@@ -2,7 +2,7 @@
 
 OpenKV 是基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV：Meta / Storage（C++）+ Gateway / 客户端 / Web 管控台（Go）。
 
-本文说明如何**安装、访问、读写与扩容**。架构 / 流程图 / SOP / 测试见 [README.md](./README.md) 分类索引；网络协议见 [NETWORKING.md](./NETWORKING.md)。
+本文说明如何**安装、访问、读写与扩容**。架构 / 流程图 / SOP / 测试见 [中文索引](./zh/README.md)；英文入门见 [docs/en/](./en/README.md)；网络协议见 [NETWORKING.md](./NETWORKING.md)。
 
 ---
 

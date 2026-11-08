@@ -2,7 +2,7 @@
 
 每个流程一份独立 Markdown（内含 Mermaid）。与当前实现对齐：**Go Gateway + Meta/Storage gRPC + Range Region + Multi-Raft RF=3**。
 
-上级目录：[`docs/README.md`](../README.md) · 公开网络说明：[docs/NETWORKING.md](../NETWORKING.md)
+上级目录：[`docs/zh/`](../zh/README.md) · 公开网络说明：[docs/NETWORKING.md](../NETWORKING.md) · 英文入口：[docs/en/](../en/README.md)
 
 ---
 

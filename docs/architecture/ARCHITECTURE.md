@@ -1,6 +1,6 @@
 # OpenKV — 存算分离分布式 KV 架构
 
-**文档总目录（分类）：** [README.md](../README.md)
+**文档总目录（分类）：** [中文索引](../zh/README.md) · 英文摘要：[architecture](../en/architecture.md)
 
 处理流程图：[flows/README.md](../flows/README.md) · 运维 CLI：[SKV_CLI.md](../ops/SKV_CLI.md)  
 组件对照：[COMPONENT_MAP.md](COMPONENT_MAP.md) · **高可用**：[DATA_HA.md](DATA_HA.md) · **扩容**：[DATA_SCALE.md](DATA_SCALE.md) · **缩容**：[DATA_SCALE_IN.md](DATA_SCALE_IN.md) · **错误码**：[ERROR_CODES.md](ERROR_CODES.md) · 分片：[RANGE_SHARDING.md](RANGE_SHARDING.md) · [SHARDING_STRATEGIES.md](SHARDING_STRATEGIES.md)  
