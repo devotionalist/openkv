@@ -195,6 +195,8 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 
 | 日期 | 场景 | 结果 | 根因 / 处置 |
 |------|------|------|-------------|
+| 2026-11-09 | 独立客户端仓 openkv-client-{go,rust,java,typescript} | **PASS** | 同级四仓 `go test` / `cargo test` / `mvn test` / `npm test`；设计 [15-multi-client-sdk.md](../flows/15-multi-client-sdk.md) |
+| 2026-11-09 | KV TTL（TiKV：懒过期 + TTL Checker） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'`；设计 [14-kv-ttl.md](../flows/14-kv-ttl.md)；SDK `PutTTL` |
 | 2026-11-09 | Version CAS（plain + MVCC） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Cas*'` → 3/3；设计 [13-version-cas.md](../flows/13-version-cas.md)；SDK `PutCAS`/`DeleteCAS` |
 | 2026-10-25 | Gateway Put/Get | FAIL→PASS | Meta 硬重启 TSO 回退 + epoch 错位；TSO 墙钟下界 + epoch 修复 |
 | 2026-10-25 | SCALE_OUT `storage-5→R1` Promote | FAIL→PASS | 快照未带 ConfState，新 Leader 丢 Learner；并发 scale 撞 Joint。已补 ConfState / busy / 串行扩容；现网补 ADD_LEARNER+PROMOTE |

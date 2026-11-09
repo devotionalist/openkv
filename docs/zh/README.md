@@ -102,7 +102,8 @@ K8s：[flows/K8S_HELM.md](../flows/K8S_HELM.md) · [flows/K8S_SCALE.md](../flows
 
 ## 6. 流程图 — `flows/`
 
-分类索引：[flows/README.md](../flows/README.md)（读写 · Raft/故障 · Region/扩缩容 · 工程变更 · K8s）。
+分类索引：[flows/README.md](../flows/README.md)（读写 · Raft/故障 · Region/扩缩容 · 工程变更 · K8s）。  
+多语言客户端（独立仓）：[flows/15-multi-client-sdk.md](../flows/15-multi-client-sdk.md) · `openkv-client-{go,rust,java,typescript}`。
 
 ---
 

@@ -54,6 +54,7 @@ struct Command {
   CmdOp op{CmdOp::kPut};
   std::string key;
   std::string value;
+  /// 用户 KV：propose 前打成绝对 expire_at_ms（0=永久）。锁路径仍用独立 value 编码的相对 ttl。
   int64_t ttl_ms{0};
   /// E4：非 0 时 Leader 去重；编码为 payload 尾部 u64（旧消息无尾部则视为 0）。
   uint64_t request_id{0};
@@ -61,6 +62,9 @@ struct Command {
   bool cas{false};
   uint64_t expected_revision{0};
 };
+
+/// 相对 ttl_ms → 绝对 expire_at；ttl<=0 返回 0。
+int64_t stamp_expire_at_ms(int64_t ttl_ms);
 
 std::string encode_command(const Command& cmd);
 bool decode_command(const std::string& data, Command* out);
@@ -139,7 +143,7 @@ class StoreFacade {
   ProposeResult prewrite(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                          std::string_view primary, uint8_t mvcc_op, std::string_view value,
                          uint64_t expected_epoch = 0, bool cas = false,
-                         uint64_t expected_revision = 0);
+                         uint64_t expected_revision = 0, int64_t expire_at_ms = 0);
   ProposeResult commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        uint64_t commit_ts, uint64_t expected_epoch = 0);
   ProposeResult rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,

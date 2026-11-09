@@ -37,11 +37,21 @@
 
 namespace openkv::storage {
 
+/// revision 最高位标记：payload 含 expire_at_ms（TiKV 风格 value 头扩展；兼容旧无 TTL 记录）。
+inline constexpr uint64_t kKvRevExpireFlag = 1ULL << 63;
+
 /// 单 key 的值与 Raft log index 作为 revision（便于 MVCC/调试）。
 struct KvRecord {
   std::string value;
   uint64_t revision{0};
+  /// 绝对过期时间（unix ms）；0 = 永不过期。
+  int64_t expire_at_ms{0};
 };
+
+std::string encode_kv_payload(uint64_t revision, int64_t expire_at_ms, std::string_view value);
+bool decode_kv_payload(std::string_view payload, KvRecord* out);
+/// expire_at>0 且 now>=expire_at → 过期；now_ms<=0 时取当前墙钟。
+bool kv_record_expired(const KvRecord& rec, int64_t now_ms = 0);
 
 // RocksDB 封装；未链接 RocksDB 时回退到内存 map（便于本地开发）
 /// `store_level=false`：data_dir/shard_<id>；`true`：data_dir 即为 DB 根（单 Store）。
@@ -54,13 +64,17 @@ class KvEngine {
   KvEngine(const KvEngine&) = delete;
   KvEngine& operator=(const KvEngine&) = delete;
 
-  /// revision 通常取 Raft apply index；内存后端会覆盖同 key。
-  bool put(std::string_view key, std::string_view value, uint64_t revision);
+  /// revision 通常取 Raft apply index；expire_at_ms=0 永不过期。
+  bool put(std::string_view key, std::string_view value, uint64_t revision,
+           int64_t expire_at_ms = 0);
   bool del(std::string_view key, uint64_t revision);
   /// 批量写（跨 Region Apply WriteBatch）；pairs 为 (key,value,revision)，del_keys 为删除。
   bool write_batch(const std::vector<std::tuple<std::string, std::string, uint64_t>>& puts,
                    const std::vector<std::string>& dels);
-  std::optional<KvRecord> get(std::string_view key) const;
+  /// hide_expired=true（默认）：过期 key 视为不存在（TiKV 读过滤）。
+  std::optional<KvRecord> get(std::string_view key, bool hide_expired = true) const;
+  /// 催促 TTL CompactionFilter 回收（简化版 TiKV TTL Checker）。
+  void compact_for_ttl();
 
   /// 按字典序扫描 prefix 下的 key；fn 返回 false 则停止。
   void scan_prefix(std::string_view prefix,

@@ -241,7 +241,7 @@ func (s *server) TxnPrewrite(ctx context.Context, req *kvv1.TxnPrewriteRequest) 
 		}
 		key := m.Key
 		err := s.withLeaderEpoch(region, func(c *storagetcp.Client, epoch uint64) error {
-			_, e := c.PrewriteCAS(region, key, req.StartTs, primary, op, val, epoch, req.Cas, req.ExpectedRevision)
+			_, e := c.PrewriteCAS(region, key, req.StartTs, primary, op, val, epoch, req.Cas, req.ExpectedRevision, req.ExpireAtMs)
 			return e
 		})
 		if err != nil {

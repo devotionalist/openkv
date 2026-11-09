@@ -204,11 +204,12 @@ type LockedError struct {
 func (e *LockedError) Error() string { return e.Raw }
 
 func (c *Client) Prewrite(shard uint32, key []byte, startTs uint64, primary []byte, op uint8, value []byte, epoch uint64) (uint64, error) {
-	return c.PrewriteCAS(shard, key, startTs, primary, op, value, epoch, false, 0)
+	return c.PrewriteCAS(shard, key, startTs, primary, op, value, epoch, false, 0, 0)
 }
 
 // PrewriteCAS 在 Prewrite 上附加版本 CAS（expectedRev 为可见版本 commit_ts；0=create-only）。
-func (c *Client) PrewriteCAS(shard uint32, key []byte, startTs uint64, primary []byte, op uint8, value []byte, epoch uint64, cas bool, expectedRev uint64) (uint64, error) {
+// expireAtMs 为绝对过期 unix ms（0=永久）；由 Gateway 在 Put 时 stamp。
+func (c *Client) PrewriteCAS(shard uint32, key []byte, startTs uint64, primary []byte, op uint8, value []byte, epoch uint64, cas bool, expectedRev uint64, expireAtMs int64) (uint64, error) {
 	// 空 value 用 "-" 占位，避免 split_ws 吃掉空字段导致 epoch/value 错位（Delete prewrite）。
 	valHex := hex.EncodeToString(value)
 	if valHex == "" {
@@ -217,8 +218,13 @@ func (c *Client) PrewriteCAS(shard uint32, key []byte, startTs uint64, primary [
 	line := fmt.Sprintf("PREWRITE %d %s %d %s %d %s",
 		shard, hex.EncodeToString(key), startTs, hex.EncodeToString(primary), op, valHex)
 	if cas {
-		// CAS 必须带 epoch（可为 0）：… value epoch cas expected_rev
+		// CAS 必须带 epoch（可为 0）：… value epoch cas expected_rev [expire_at]
 		line += fmt.Sprintf(" %d 1 %d", epoch, expectedRev)
+		if expireAtMs != 0 {
+			line += fmt.Sprintf(" %d", expireAtMs)
+		}
+	} else if expireAtMs != 0 {
+		line += fmt.Sprintf(" %d %d", epoch, expireAtMs)
 	} else if epoch != 0 {
 		line += fmt.Sprintf(" %d", epoch)
 	}

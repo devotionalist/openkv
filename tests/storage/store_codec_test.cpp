@@ -15,8 +15,10 @@
 // @file store_codec_test.cpp
 // 测试 Command encode/decode 对 Put/Delete 及非法 payload 的处理。
 
+#include "openkv/storage/kv_engine.hpp"
 #include "openkv/storage/store_service.hpp"
 
+#include <cstring>
 #include <gtest/gtest.h>
 
 using openkv::storage::CmdOp;
@@ -88,4 +90,34 @@ TEST(StoreCodecTest, CasTrailerRoundTrip) {
   EXPECT_TRUE(out.cas);
   EXPECT_EQ(out.expected_revision, 42u);
   EXPECT_EQ(out.request_id, 7u);
+}
+
+TEST(StoreCodecTest, KvPayloadExpireRoundTripAndLegacy) {
+  using openkv::storage::KvRecord;
+  using openkv::storage::decode_kv_payload;
+  using openkv::storage::encode_kv_payload;
+  using openkv::storage::kv_record_expired;
+
+  auto neu = encode_kv_payload(9, 1234567890, "hello");
+  KvRecord r;
+  ASSERT_TRUE(decode_kv_payload(neu, &r));
+  EXPECT_EQ(r.revision, 9u);
+  EXPECT_EQ(r.expire_at_ms, 1234567890);
+  EXPECT_EQ(r.value, "hello");
+  EXPECT_TRUE(kv_record_expired(r, 1234567890));
+  EXPECT_FALSE(kv_record_expired(r, 1234567889));
+
+  // 旧格式：仅 revision|value
+  std::string legacy(sizeof(uint64_t) + 3, '\0');
+  uint64_t rev = 3;
+  std::memcpy(legacy.data(), &rev, sizeof(rev));
+  legacy[8] = 'a';
+  legacy[9] = 'b';
+  legacy[10] = 'c';
+  KvRecord old;
+  ASSERT_TRUE(decode_kv_payload(legacy, &old));
+  EXPECT_EQ(old.revision, 3u);
+  EXPECT_EQ(old.expire_at_ms, 0);
+  EXPECT_EQ(old.value, "abc");
+  EXPECT_FALSE(kv_record_expired(old, 999999999999LL));
 }

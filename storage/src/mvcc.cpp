@@ -119,6 +119,7 @@ std::string encode_lock(const LockInfo& li) {
   out.append(reinterpret_cast<const char*>(&li.for_update_ts), sizeof(li.for_update_ts));
   out.append(reinterpret_cast<const char*>(&li.ttl_ms), sizeof(li.ttl_ms));
   out.append(reinterpret_cast<const char*>(&li.lock_wall_ms), sizeof(li.lock_wall_ms));
+  out.append(reinterpret_cast<const char*>(&li.user_expire_at_ms), sizeof(li.user_expire_at_ms));
   return out;
 }
 
@@ -136,6 +137,7 @@ bool decode_lock(std::string_view payload, LockInfo* out) {
   out->for_update_ts = 0;
   out->ttl_ms = 5000;
   out->lock_wall_ms = 0;
+  out->user_expire_at_ms = 0;
   if (off + sizeof(uint64_t) <= payload.size()) {
     read_u64(payload, off, out->for_update_ts);
   }
@@ -145,6 +147,9 @@ bool decode_lock(std::string_view payload, LockInfo* out) {
   if (off + sizeof(int64_t) <= payload.size()) {
     read_i64(payload, off, out->lock_wall_ms);
   }
+  if (off + sizeof(int64_t) <= payload.size()) {
+    read_i64(payload, off, out->user_expire_at_ms);
+  }
   return true;
 }
 
@@ -152,13 +157,18 @@ std::string encode_write(const WriteInfo& wi) {
   std::string out;
   out.append(reinterpret_cast<const char*>(&wi.start_ts), sizeof(wi.start_ts));
   out.push_back(static_cast<char>(wi.op));
+  out.append(reinterpret_cast<const char*>(&wi.expire_at_ms), sizeof(wi.expire_at_ms));
   return out;
 }
 
 bool decode_write(std::string_view payload, WriteInfo* out) {
   size_t off = 0;
   if (!read_u64(payload, off, out->start_ts) || off >= payload.size()) return false;
-  out->op = static_cast<MvccOp>(static_cast<uint8_t>(payload[off]));
+  out->op = static_cast<MvccOp>(static_cast<uint8_t>(payload[off++]));
+  out->expire_at_ms = 0;
+  if (off + sizeof(int64_t) <= payload.size()) {
+    read_i64(payload, off, out->expire_at_ms);
+  }
   return true;
 }
 
@@ -279,10 +289,19 @@ std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t st
     return false;
   });
   if (!chosen) return std::nullopt;
-  if (out_commit_ts) *out_commit_ts = chosen_ts;
   if (chosen->op == MvccOp::kDelete) return std::nullopt;
-  auto data = eng_.get(data_key(user, chosen->start_ts));
+  // TiKV 风格：过期对读不可见（不依赖 compaction 已跑完）
+  if (chosen->expire_at_ms > 0 && wall_ms_now() >= chosen->expire_at_ms) {
+    if (out_commit_ts) *out_commit_ts = 0;
+    return std::nullopt;
+  }
+  if (out_commit_ts) *out_commit_ts = chosen_ts;
+  auto data = eng_.get(data_key(user, chosen->start_ts), /*hide_expired=*/false);
   if (!data) return std::nullopt;
+  if (kv_record_expired(*data)) {
+    if (out_commit_ts) *out_commit_ts = 0;
+    return std::nullopt;
+  }
   return data->value;
 }
 
@@ -291,13 +310,13 @@ void MvccStore::put_lock(std::string_view user, const LockInfo& li, uint64_t rev
 }
 
 void MvccStore::put_data(std::string_view user, uint64_t start_ts, std::string_view value,
-                         uint64_t rev) {
-  eng_.put(data_key(user, start_ts), value, rev);
+                         uint64_t rev, int64_t expire_at_ms) {
+  eng_.put(data_key(user, start_ts), value, rev, expire_at_ms);
 }
 
 void MvccStore::put_write(std::string_view user, uint64_t commit_ts, const WriteInfo& wi,
                           uint64_t rev) {
-  eng_.put(write_key(user, commit_ts), encode_write(wi), rev);
+  eng_.put(write_key(user, commit_ts), encode_write(wi), rev, wi.expire_at_ms);
 }
 
 void MvccStore::clear_lock(std::string_view user, uint64_t rev) {

@@ -238,7 +238,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
           break;
         }
       }
-      eng.put(cmd.key, cmd.value, index);
+      eng.put(cmd.key, cmd.value, index, cmd.ttl_ms);
       {
         WatchRecord wr{shard_id, index, false, cmd.key, cmd.value};
         WatchLog::append(eng, wr);
@@ -312,9 +312,10 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
       li.primary = std::move(primary);
       li.value = value;
       li.lock_wall_ms = wall_ms_now();
+      li.user_expire_at_ms = cmd.ttl_ms;  // 已在 propose 入口打成绝对 expire_at
       mvcc.put_lock(cmd.key, li, index);
       if (li.op == MvccOp::kPut) {
-        mvcc.put_data(cmd.key, start_ts, value, index);
+        mvcc.put_data(cmd.key, start_ts, value, index, li.user_expire_at_ms);
       }
       finish();
       break;
@@ -343,6 +344,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
       WriteInfo wi;
       wi.start_ts = start_ts;
       wi.op = lk->op;
+      wi.expire_at_ms = lk->user_expire_at_ms;
       const bool is_del = lk->op == MvccOp::kDelete;
       std::string watch_val = is_del ? std::string{} : lk->value;
       mvcc.put_write(cmd.key, commit_ts, wi, index);
@@ -2204,15 +2206,32 @@ void StorageNode::tick_loop() {
     }
     return true;  // 默认开：过期锁 + 版本 GC
   }();
+  const bool ttl_compact = [] {
+    if (const char* e = std::getenv("SKV_KV_TTL_COMPACT")) {
+      return std::string(e) != "0" && std::string(e) != "false";
+    }
+    return true;  // TiKV 风格：催促 CompactionFilter 回收过期 KV
+  }();
+  int ttl_ticks = 0;
   while (running_) {
     multi_raft_->tick_all();
-    // 周期性检查自动分裂 / 合并（Leader + 阈值）
+    // 周期性检查自动分裂 / 合并（Leader + 配额）
     if (++split_ticks >= 20) {  // ~1s
       split_ticks = 0;
       auto leaders = multi_raft_->leader_shards();
       for (uint32_t rid : leaders) {
         maybe_auto_split(rid);
         maybe_auto_merge(rid);
+      }
+    }
+    // TTL Checker（简化）：约 30s 本地扫删过期 KV（各副本独立，与 TiKV filter 一样不经 Raft）
+    if (ttl_compact && ++ttl_ticks >= 600) {
+      ttl_ticks = 0;
+      // 单 Store 共享引擎：对任意 region 调一次即可
+      if (auto* eng = engines_->get(0)) {
+        eng->compact_for_ttl();
+      } else if (auto leaders = multi_raft_->leader_shards(); !leaders.empty()) {
+        if (auto* eng = engines_->get(leaders.front())) eng->compact_for_ttl();
       }
     }
     // 事务 GC 较重，约 10s 一次

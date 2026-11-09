@@ -42,11 +42,14 @@ struct LockInfo {
   uint64_t for_update_ts{0};
   uint64_t ttl_ms{5000};
   int64_t lock_wall_ms{0};
+  /// 用户 KV TTL（绝对 ms）；与锁租约 ttl_ms 无关。0=永久。
+  int64_t user_expire_at_ms{0};
 };
 
 struct WriteInfo {
   uint64_t start_ts{0};
   MvccOp op{MvccOp::kPut};
+  int64_t expire_at_ms{0};
 };
 
 enum class TxnStatus : uint8_t {
@@ -92,7 +95,8 @@ class MvccStore {
   CheckTxnStatusResult check_txn_status(std::string_view primary, uint64_t lock_ts) const;
 
   void put_lock(std::string_view user, const LockInfo& li, uint64_t rev);
-  void put_data(std::string_view user, uint64_t start_ts, std::string_view value, uint64_t rev);
+  void put_data(std::string_view user, uint64_t start_ts, std::string_view value, uint64_t rev,
+                int64_t expire_at_ms = 0);
   void put_write(std::string_view user, uint64_t commit_ts, const WriteInfo& wi, uint64_t rev);
   void clear_lock(std::string_view user, uint64_t rev);
   void clear_data(std::string_view user, uint64_t start_ts, uint64_t rev);

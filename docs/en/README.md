@@ -16,6 +16,8 @@ OpenKV is a compute/storage-separated distributed KV store: **Multi-Raft + Rocks
 | [Architecture](architecture.md) | Topology, components, HA / scale boundaries |
 | [Contributing](contributing.md) | PR-only workflow, owner approval, tags/releases |
 | [Version CAS (ZH)](../flows/13-version-cas.md) | Single-key revision CAS (Gateway + plain Propose) |
+| [KV TTL (ZH)](../flows/14-kv-ttl.md) | TiKV-style Put TTL: expire_at on value, lazy read filter, TTL checker |
+| [Multi-lang clients (ZH)](../flows/15-multi-client-sdk.md) | Sibling repos: openkv-client-{go,rust,java,typescript} |
 
 ## Additional design / SOP / test docs
 

@@ -73,7 +73,7 @@ class StoreServiceImpl final : public pb::StoreService::Service {
     cmd.op = req->op() == pb::ProposeRequest::DELETE ? CmdOp::kDelete : CmdOp::kPut;
     cmd.key = req->key();
     cmd.value = req->value();
-    cmd.ttl_ms = req->ttl_ms();
+    cmd.ttl_ms = stamp_expire_at_ms(req->ttl_ms());  // 相对 → 绝对
     cmd.request_id = req->request_id();
     cmd.cas = req->cas();
     cmd.expected_revision = req->expected_revision();

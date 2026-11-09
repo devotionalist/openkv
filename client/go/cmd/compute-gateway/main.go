@@ -161,12 +161,17 @@ func (s *server) Put(ctx context.Context, req *kvv1.PutRequest) (*kvv1.PutRespon
 		}
 		// 短 Put 也登记 start_ts，防止 GC 水位越过进行中的 Prewrite
 		s.activeTs.add(start)
+		var expireAt int64
+		if req.TtlMs > 0 {
+			expireAt = time.Now().UnixMilli() + req.TtlMs
+		}
 		pw, err := s.TxnPrewrite(ctx, &kvv1.TxnPrewriteRequest{
-			StartTs:           start,
-			PrimaryKey:        req.Key,
-			Mutations:         []*kvv1.TxnMutation{{Key: req.Key, Value: req.Value}},
-			Cas:               req.Cas,
-			ExpectedRevision:  req.ExpectedRevision,
+			StartTs:          start,
+			PrimaryKey:       req.Key,
+			Mutations:        []*kvv1.TxnMutation{{Key: req.Key, Value: req.Value}},
+			Cas:              req.Cas,
+			ExpectedRevision: req.ExpectedRevision,
+			ExpireAtMs:       expireAt,
 		})
 		if err != nil {
 			s.activeTs.remove(start)

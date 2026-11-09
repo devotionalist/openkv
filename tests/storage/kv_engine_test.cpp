@@ -20,7 +20,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
+#include <thread>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -39,6 +41,23 @@ class KvEngineTest : public ::testing::Test {
   fs::path dir_;
   static inline int counter_{0};
 };
+
+TEST_F(KvEngineTest, TtlHideExpiredAndCompact) {
+  KvEngine eng(dir_.string(), 0);
+  const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+  ASSERT_TRUE(eng.put("t", "v", 1, now + 200));
+  auto hit = eng.get("t");
+  ASSERT_TRUE(hit) << "expire_at=" << (now + 200);
+  EXPECT_EQ(hit->value, "v");
+  EXPECT_EQ(hit->expire_at_ms, now + 200);
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  EXPECT_FALSE(eng.get("t"));
+  EXPECT_TRUE(eng.get("t", false));
+  eng.compact_for_ttl();
+  EXPECT_FALSE(eng.get("t", false));
+}
 
 TEST_F(KvEngineTest, PutGetDelete) {
   KvEngine eng(dir_.string(), 0);

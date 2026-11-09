@@ -16,6 +16,8 @@
 | Watch | [11-watch.md](11-watch.md) |
 | Hash / Set / List / ZSet | [12-data-structures.md](12-data-structures.md) · [DATA_STRUCTURES.md](../architecture/DATA_STRUCTURES.md) |
 | 版本 CAS | [13-version-cas.md](13-version-cas.md) |
+| KV TTL（TiKV 风格） | [14-kv-ttl.md](14-kv-ttl.md) |
+| 多语言客户端（独立仓） | [15-multi-client-sdk.md](15-multi-client-sdk.md) · `openkv-client-{go,rust,java,typescript}` |
 
 ---
 

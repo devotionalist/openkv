@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package kv 为历史路径，仍供本仓 gateway/examples 使用。
+// 对外独立 SDK：github.com/devotionalist/openkv-client-go/kv
 package kv
 
 import (
@@ -118,9 +120,14 @@ func (c *Client) Watch(ctx context.Context, key, prefix []byte, startRev uint64)
 }
 
 func (c *Client) Put(ctx context.Context, key, value []byte) (rev uint64, err error) {
+	return c.PutTTL(ctx, key, value, 0)
+}
+
+// PutTTL 写入并设置相对 TTL（毫秒）；ttlMs=0 表示永不过期（TiKV RawKV 风格）。
+func (c *Client) PutTTL(ctx context.Context, key, value []byte, ttlMs int64) (rev uint64, err error) {
 	ctx, cancel := c.ctx(ctx)
 	defer cancel()
-	resp, err := c.raw.Put(ctx, &kvv1.PutRequest{Key: key, Value: value})
+	resp, err := c.raw.Put(ctx, &kvv1.PutRequest{Key: key, Value: value, TtlMs: ttlMs})
 	if err != nil {
 		return 0, err
 	}

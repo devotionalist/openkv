@@ -159,3 +159,47 @@ TEST_F(StoreFacadeTest, MvccCasViaPrewrite) {
   auto create = facade_->prewrite(0, "m-new", 500, "m-new", 0, "x", 0, true, 0);
   ASSERT_TRUE(create.ok) << create.error;
 }
+
+TEST_F(StoreFacadeTest, PlainTtlLazyExpireAndCompact) {
+  using openkv::storage::stamp_expire_at_ms;
+  Command cmd;
+  cmd.op = CmdOp::kPut;
+  cmd.key = "ttl-plain";
+  cmd.value = "soon";
+  cmd.ttl_ms = stamp_expire_at_ms(500);
+  auto pr = facade_->propose(0, cmd);
+  ASSERT_TRUE(pr.ok) << pr.error;
+
+  auto hit = facade_->get(0, "ttl-plain", true);
+  ASSERT_TRUE(hit.found) << "redirect=" << hit.redirect_to << " rev=" << hit.revision;
+  EXPECT_EQ(hit.value, "soon");
+  auto* eng = node_->engines().get(0);
+  ASSERT_NE(eng, nullptr);
+  auto raw0 = eng->get("ttl-plain", false);
+  ASSERT_TRUE(raw0) << "missing raw after put";
+  EXPECT_GT(raw0->expire_at_ms, 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+  auto miss = facade_->get(0, "ttl-plain", true);
+  EXPECT_FALSE(miss.found);
+
+  eng->compact_for_ttl();
+  EXPECT_FALSE(eng->get("ttl-plain", /*hide_expired=*/false).has_value());
+}
+
+TEST_F(StoreFacadeTest, MvccTtlViaPrewrite) {
+  using openkv::storage::stamp_expire_at_ms;
+  const int64_t exp = stamp_expire_at_ms(500);
+  auto pw = facade_->prewrite(0, "ttl-m", 1000, "ttl-m", 0, "v", 0, false, 0, exp);
+  ASSERT_TRUE(pw.ok) << pw.error;
+  ASSERT_TRUE(facade_->commit(0, "ttl-m", 1000, 1100, 0).ok);
+
+  auto tg = facade_->txn_get(0, "ttl-m", ~uint64_t{0}, true);
+  ASSERT_TRUE(tg.found) << tg.error;
+  EXPECT_EQ(tg.value, "v");
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+  auto gone = facade_->txn_get(0, "ttl-m", ~uint64_t{0}, true);
+  EXPECT_FALSE(gone.found);
+  EXPECT_EQ(gone.revision, 0u);
+}

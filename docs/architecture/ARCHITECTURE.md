@@ -108,7 +108,8 @@ raft/            轻量 Multi-Raft
 storage/         RocksDB + Storage Node（gRPC；raftstore Ready）
 compute/         C++ 路由库占位（生产 Gateway 为 Go）
 meta/            集群状态 + Meta Raft + Scaler（gRPC）
-client/go/       Go SDK + compute-gateway
+client/go/       compute-gateway + legacy Go SDK path
+                 对外 SDK 见同级仓 openkv-client-{go,rust,java,typescript}
 web/             独立 Web 管控模块（HTTP 运维台 → gRPC）
 tools/skv/       C++ 运维 CLI
 docs/            全部文档（架构 / 运维 / 测试 / 流程图）

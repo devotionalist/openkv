@@ -205,6 +205,11 @@ bool decode_command(const std::string& data, Command* out) {
   return false;
 }
 
+int64_t stamp_expire_at_ms(int64_t ttl_ms) {
+  if (ttl_ms <= 0) return 0;
+  return wall_ms_now() + ttl_ms;
+}
+
 StoreFacade::StoreFacade(StorageNode& node) : node_(node) {}
 
 ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_epoch) {
@@ -379,7 +384,7 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
 ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                     std::string_view primary, uint8_t mvcc_op,
                                     std::string_view value, uint64_t expected_epoch, bool cas,
-                                    uint64_t expected_revision) {
+                                    uint64_t expected_revision, int64_t expire_at_ms) {
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) return gate;
   auto* eng = node_.engines().get(shard_id);
@@ -424,6 +429,7 @@ ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uin
   cmd.op = CmdOp::kPrewrite;
   cmd.key = std::string(key);
   cmd.value = encode_prewrite_value(start_ts, mvcc_op, primary, value);
+  cmd.ttl_ms = expire_at_ms;  // 绝对时间；入口已 stamp
   cmd.cas = cas;
   cmd.expected_revision = expected_revision;
   return propose(shard_id, cmd);

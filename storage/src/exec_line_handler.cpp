@@ -343,17 +343,26 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
           shard, parts[2], std::stoull(parts[3]), std::stoull(parts[4]), std::stoull(parts[5]),
           std::stoull(parts[6]), std::stoull(parts[7]), parts[8] != "0", chunk);
     }
-    // PUT shard hex_key hex_value [cas expected_rev]
-    if (op == proto::kOpPut && (parts.size() == 4 || parts.size() == 6)) {
+    // PUT shard hex_key hex_value [ttl_ms] [cas expected_rev]
+    // ttl_ms 相对寿命；缺省 0。带 CAS 时：PUT s k v ttl cas expected
+    if (op == proto::kOpPut &&
+        (parts.size() == 4 || parts.size() == 5 || parts.size() == 6 || parts.size() == 7)) {
       uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
       std::string key, value;
       if (!from_hex(parts[2], &key) || !from_hex(parts[3], &value)) {
         return "ERR bad_hex";
       }
       Command cmd{CmdOp::kPut, key, value, 0};
-      if (parts.size() == 6) {
+      if (parts.size() == 5) {
+        cmd.ttl_ms = stamp_expire_at_ms(std::stoll(parts[4]));
+      } else if (parts.size() == 6) {
+        // 兼容旧：PUT s k v cas expected（无 ttl）
         cmd.cas = parts[4] != "0";
         cmd.expected_revision = std::stoull(parts[5]);
+      } else if (parts.size() == 7) {
+        cmd.ttl_ms = stamp_expire_at_ms(std::stoll(parts[4]));
+        cmd.cas = parts[5] != "0";
+        cmd.expected_revision = std::stoull(parts[6]);
       }
       auto r = facade_.propose(shard, cmd);
       if (!r.ok) {
@@ -401,11 +410,12 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       }
       return "OK DEL " + std::to_string(r.revision) + " 1";
     }
-    // PREWRITE rid hex_key start_ts hex_primary op hex_value [epoch] [cas expected_rev]
+    // PREWRITE rid hex_key start_ts hex_primary op hex_value [epoch] [cas expected_rev] [expire_at]
     // hex_value 可为 "-" 表示空（Delete）；避免空白字段被 split 吃掉。
     // CAS 时必须带 epoch（可为 0）：… value epoch cas expected_rev → 10 fields
-    if (op == proto::kOpPrewrite &&
-        (parts.size() == 7 || parts.size() == 8 || parts.size() == 10)) {
+    // 可选尾部 expire_at（绝对 ms）：11 fields（无 cas）或 11 with cas… 用：
+    //   7 | 8(epoch) | 9(epoch+expire) | 10(cas) | 11(cas+expire)
+    if (op == proto::kOpPrewrite && parts.size() >= 7 && parts.size() <= 11) {
       uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
       std::string key, primary, value;
       if (!from_hex(parts[2], &key) || !from_hex(parts[4], &primary)) {
@@ -421,14 +431,24 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       uint64_t epoch = 0;
       bool cas = false;
       uint64_t expected_rev = 0;
+      int64_t expire_at = 0;
       if (parts.size() == 8) {
         epoch = std::stoull(parts[7]);
+      } else if (parts.size() == 9) {
+        epoch = std::stoull(parts[7]);
+        expire_at = std::stoll(parts[8]);
       } else if (parts.size() == 10) {
         epoch = std::stoull(parts[7]);
         cas = parts[8] != "0";
         expected_rev = std::stoull(parts[9]);
+      } else if (parts.size() == 11) {
+        epoch = std::stoull(parts[7]);
+        cas = parts[8] != "0";
+        expected_rev = std::stoull(parts[9]);
+        expire_at = std::stoll(parts[10]);
       }
-      auto r = facade_.prewrite(shard, key, start_ts, primary, mop, value, epoch, cas, expected_rev);
+      auto r = facade_.prewrite(shard, key, start_ts, primary, mop, value, epoch, cas, expected_rev,
+                                expire_at);
       if (!r.ok) {
         return "ERR " + (r.error.empty() ? "prewrite_failed" : r.error) +
                (r.redirect_to.empty() ? "" : (" redirect=" + r.redirect_to));

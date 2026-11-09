@@ -40,12 +40,62 @@
 #include "openkv/logging.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+
+namespace openkv::storage {
+namespace {
+
+int64_t wall_ms_now_local() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+}  // namespace
+
+std::string encode_kv_payload(uint64_t revision, int64_t expire_at_ms, std::string_view value) {
+  // 始终写新格式（含 expire）；revision 最高位标记可读旧库无 flag 的记录。
+  const uint64_t wire_rev = (revision & ~kKvRevExpireFlag) | kKvRevExpireFlag;
+  std::string payload(sizeof(uint64_t) + sizeof(int64_t) + value.size(), '\0');
+  std::memcpy(payload.data(), &wire_rev, sizeof(wire_rev));
+  std::memcpy(payload.data() + sizeof(uint64_t), &expire_at_ms, sizeof(expire_at_ms));
+  if (!value.empty()) {
+    std::memcpy(payload.data() + sizeof(uint64_t) + sizeof(int64_t), value.data(), value.size());
+  }
+  return payload;
+}
+
+bool decode_kv_payload(std::string_view payload, KvRecord* out) {
+  if (!out || payload.size() < sizeof(uint64_t)) return false;
+  uint64_t wire_rev = 0;
+  std::memcpy(&wire_rev, payload.data(), sizeof(wire_rev));
+  if (wire_rev & kKvRevExpireFlag) {
+    if (payload.size() < sizeof(uint64_t) + sizeof(int64_t)) return false;
+    out->revision = wire_rev & ~kKvRevExpireFlag;
+    std::memcpy(&out->expire_at_ms, payload.data() + sizeof(uint64_t), sizeof(out->expire_at_ms));
+    out->value.assign(payload.data() + sizeof(uint64_t) + sizeof(int64_t),
+                      payload.size() - sizeof(uint64_t) - sizeof(int64_t));
+    return true;
+  }
+  out->revision = wire_rev;
+  out->expire_at_ms = 0;
+  out->value.assign(payload.data() + sizeof(uint64_t), payload.size() - sizeof(uint64_t));
+  return true;
+}
+
+bool kv_record_expired(const KvRecord& rec, int64_t now_ms) {
+  if (rec.expire_at_ms <= 0) return false;
+  if (now_ms <= 0) now_ms = wall_ms_now_local();
+  return now_ms >= rec.expire_at_ms;
+}
+
+}  // namespace openkv::storage
 
 #if defined(OPENKV_HAS_ROCKSDB) && OPENKV_HAS_ROCKSDB
 #include <rocksdb/db.h>
@@ -103,22 +153,6 @@ const char* KvEngine::cf_name_for_key(std::string_view key) {
 #if defined(OPENKV_HAS_ROCKSDB) && OPENKV_HAS_ROCKSDB
 
 namespace {
-
-std::string encodeValueWithRevision(uint64_t revision, std::string_view value) {
-  std::string payload(sizeof(uint64_t) + value.size(), '\0');
-  memcpy(payload.data(), &revision, sizeof(uint64_t));
-  memcpy(payload.data() + sizeof(uint64_t), value.data(), value.size());
-  return payload;
-}
-
-bool decodeKvRecord(std::string_view payload, KvRecord& out) {
-  if (payload.size() < sizeof(uint64_t)) {
-    return false;
-  }
-  memcpy(&out.revision, payload.data(), sizeof(uint64_t));
-  out.value.assign(payload.data() + sizeof(uint64_t), payload.size() - sizeof(uint64_t));
-  return true;
-}
 
 void appendU32(std::string& out, uint32_t n) {
   out.append(reinterpret_cast<const char*>(&n), sizeof(n));
@@ -219,7 +253,6 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
   options.create_missing_column_families = true;
   options.compression = rocksdb::kNoCompression;
   options.use_fsync = (sync_ == raft::SyncMode::kAll);
-
   rocksdb::ColumnFamilyOptions cf_opts(options);
   std::vector<rocksdb::ColumnFamilyDescriptor> descriptors;
   descriptors.emplace_back(rocksdb::kDefaultColumnFamilyName, cf_opts);
@@ -267,10 +300,11 @@ KvEngine::~KvEngine() {
   rocks_->default_cf = rocks_->lock_cf = rocks_->data_cf = rocks_->write_cf = nullptr;
 }
 
-bool KvEngine::put(std::string_view key, std::string_view value, uint64_t revision) {
+bool KvEngine::put(std::string_view key, std::string_view value, uint64_t revision,
+                   int64_t expire_at_ms) {
   auto* cf = rocks_->cf(classify_key(key));
   return rocks_->db
-      ->Put(rocks_->wo, cf, std::string(key), encodeValueWithRevision(revision, value))
+      ->Put(rocks_->wo, cf, std::string(key), encode_kv_payload(revision, expire_at_ms, value))
       .ok();
 }
 
@@ -278,7 +312,7 @@ bool KvEngine::write_batch(const std::vector<std::tuple<std::string, std::string
                            const std::vector<std::string>& dels) {
   rocksdb::WriteBatch batch;
   for (const auto& [k, v, rev] : puts) {
-    batch.Put(rocks_->cf(classify_key(k)), k, encodeValueWithRevision(rev, v));
+    batch.Put(rocks_->cf(classify_key(k)), k, encode_kv_payload(rev, 0, v));
   }
   for (const auto& k : dels) {
     const CfId id = classify_key(k);
@@ -298,7 +332,7 @@ bool KvEngine::del(std::string_view key, uint64_t /*revision*/) {
   return st.ok();
 }
 
-std::optional<KvRecord> KvEngine::get(std::string_view key) const {
+std::optional<KvRecord> KvEngine::get(std::string_view key, bool hide_expired) const {
   const std::string k(key);
   const CfId id = classify_key(key);
   std::string payload;
@@ -308,7 +342,29 @@ std::optional<KvRecord> KvEngine::get(std::string_view key) const {
   }
   if (!st.ok()) return std::nullopt;
   KvRecord r;
-  return decodeKvRecord(payload, r) ? std::optional<KvRecord>(std::move(r)) : std::nullopt;
+  if (!decode_kv_payload(payload, &r)) return std::nullopt;
+  if (hide_expired && kv_record_expired(r)) return std::nullopt;
+  return r;
+}
+
+void KvEngine::compact_for_ttl() {
+  if (!rocks_ || !rocks_->db) return;
+  // RocksDB 本仓库以 -fno-rtti 构建，无法挂 CompactionFilter 子类；
+  // 对齐 TiKV TTL Checker：扫描删除过期项，再 CompactRange 回收空间。
+  std::vector<std::string> doomed;
+  for_each([&](std::string_view key, const KvRecord& rec) {
+    if (kv_record_expired(rec)) doomed.emplace_back(key);
+    return true;
+  });
+  for (const auto& k : doomed) {
+    del(k, 0);
+  }
+  if (!doomed.empty()) {
+    rocksdb::CompactRangeOptions cro;
+    for (auto* cf : rocks_->all) {
+      rocks_->db->CompactRange(cro, cf, nullptr, nullptr);
+    }
+  }
 }
 
 void KvEngine::scan_prefix(
@@ -322,7 +378,7 @@ void KvEngine::scan_prefix(
     const auto key = it->key().ToString();
     if (key.compare(0, pref.size(), pref) != 0) break;
     KvRecord r;
-    if (!decodeKvRecord(it->value().ToString(), r)) continue;
+    if (!decode_kv_payload(it->value().ToString(), &r)) continue;
     if (!fn(key, r)) return;
   }
   // 兼容：prefix 指向 lock/data/write 时也扫一遍 default 旧数据
@@ -334,7 +390,7 @@ void KvEngine::scan_prefix(
       if (key.compare(0, pref.size(), pref) != 0) break;
       if (classify_key(key) != id) continue;
       KvRecord r;
-      if (!decodeKvRecord(it2->value().ToString(), r)) continue;
+      if (!decode_kv_payload(it2->value().ToString(), &r)) continue;
       if (!fn(key, r)) return;
     }
   }
@@ -345,7 +401,7 @@ void KvEngine::for_each(const std::function<bool(std::string_view key, const KvR
     std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
       KvRecord r;
-      if (!decodeKvRecord(it->value().ToString(), r)) continue;
+      if (!decode_kv_payload(it->value().ToString(), &r)) continue;
       if (!fn(it->key().ToString(), r)) return;
     }
   }
@@ -630,7 +686,7 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
       if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
       const auto val = it->value().ToString();
       KvRecord r;
-      if (!decodeKvRecord(val, r)) continue;
+      if (!decode_kv_payload(val, &r)) continue;
       const CfId id = classify_key(key);
       put_batch.Put(dst.rocks_->cf(id), key, val);
       del_batch.Delete(cf, key);
@@ -687,9 +743,10 @@ void KvEngine::set_sync_mode(raft::SyncMode m) { sync_ = m; }
 // ---------------------------------------------------------------------------
 // put：覆盖写；持锁，保证与 get/del/snapshot 互斥
 // ---------------------------------------------------------------------------
-bool KvEngine::put(std::string_view key, std::string_view value, uint64_t revision) {
+bool KvEngine::put(std::string_view key, std::string_view value, uint64_t revision,
+                   int64_t expire_at_ms) {
   std::lock_guard<std::mutex> lock(mu_);
-  mem_[std::string(key)] = KvRecord{std::string(value), revision};
+  mem_[std::string(key)] = KvRecord{std::string(value), revision, expire_at_ms};
   return true;
 }
 
@@ -697,7 +754,7 @@ bool KvEngine::write_batch(const std::vector<std::tuple<std::string, std::string
                            const std::vector<std::string>& dels) {
   std::lock_guard<std::mutex> lock(mu_);
   for (const auto& [k, v, rev] : puts) {
-    mem_[k] = KvRecord{v, rev};
+    mem_[k] = KvRecord{v, rev, 0};
   }
   for (const auto& k : dels) mem_.erase(k);
   return true;
@@ -714,13 +771,26 @@ bool KvEngine::del(std::string_view key, uint64_t /*revision*/) {
 // ---------------------------------------------------------------------------
 // get：拷贝返回 KvRecord；调用方拿到的是快照副本，与后续写互不影响
 // ---------------------------------------------------------------------------
-std::optional<KvRecord> KvEngine::get(std::string_view key) const {
+std::optional<KvRecord> KvEngine::get(std::string_view key, bool hide_expired) const {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = mem_.find(std::string(key));
   if (it == mem_.end()) {
     return std::nullopt;
   }
+  if (hide_expired && kv_record_expired(it->second)) return std::nullopt;
   return it->second;
+}
+
+void KvEngine::compact_for_ttl() {
+  std::lock_guard<std::mutex> lock(mu_);
+  const int64_t now = wall_ms_now_local();
+  for (auto it = mem_.begin(); it != mem_.end();) {
+    if (kv_record_expired(it->second, now)) {
+      it = mem_.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 void KvEngine::scan_prefix(
@@ -910,7 +980,7 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
     }
   }
   for (const auto& [k, r] : moved) {
-    dst.put(k, r.value, r.revision);
+    dst.put(k, r.value, r.revision, r.expire_at_ms);
   }
   {
     std::lock_guard<std::mutex> lock(mu_);

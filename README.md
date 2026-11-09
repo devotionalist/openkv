@@ -89,7 +89,7 @@ common/    config, Region, logging
 raft/      Multi-Raft + GrpcRaftTransport
 storage/   RocksDB + Storage node (gRPC)
 meta/      cluster state + scaler (gRPC)
-client/go/ Go SDK + gateway
+client/go/ Go gateway + legacy SDK path
 tools/skv/ ops CLI
 web/       admin console
 docs/      documentation (en + zh index + deep Chinese design docs)
