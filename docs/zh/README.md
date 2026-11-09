@@ -10,6 +10,7 @@
 
 | 你想… | 去 |
 |-------|-----|
+| **接客户端（Go/Rust/Java/TS）** | [独立 SDK 仓](#0-客户端独立仓库) · [15-multi-client-sdk](../flows/15-multi-client-sdk.md) |
 | 本地 / Helm 怎么用 | [USER_GUIDE.md](../USER_GUIDE.md) · 英文 [user-guide](../en/user-guide.md) |
 | gRPC / Seastar | [NETWORKING.md](../NETWORKING.md) · 英文 [networking](../en/networking.md) |
 | 架构长什么样 | [architecture/](#1-架构与模型) · 英文摘要 [architecture](../en/architecture.md) |
@@ -18,6 +19,21 @@
 | 门禁怎么跑 | [test/](#5-测试与演练) |
 | 还缺什么 | [BACKLOG.md](../BACKLOG.md) |
 | 怎么贡献代码 | [contributing](../en/contributing.md) · [中文](contributing.md) |
+
+---
+
+## 0. 客户端（独立仓库）
+
+对外 SDK **不在本仓**，请用：
+
+| 语言 | 仓库 |
+|------|------|
+| Go | [openkv-client-go](https://github.com/devotionalist/openkv-client-go) |
+| Rust | [openkv-client-rust](https://github.com/devotionalist/openkv-client-rust) |
+| Java | [openkv-client-java](https://github.com/devotionalist/openkv-client-java) |
+| TypeScript | [openkv-client-typescript](https://github.com/devotionalist/openkv-client-typescript) |
+
+本仓 `client/go` 是 **Compute Gateway**（及历史内嵌路径）。说明：[flows/15-multi-client-sdk.md](../flows/15-multi-client-sdk.md)。
 
 ---
 
@@ -102,8 +118,7 @@ K8s：[flows/K8S_HELM.md](../flows/K8S_HELM.md) · [flows/K8S_SCALE.md](../flows
 
 ## 6. 流程图 — `flows/`
 
-分类索引：[flows/README.md](../flows/README.md)（读写 · Raft/故障 · Region/扩缩容 · 工程变更 · K8s）。  
-多语言客户端（独立仓）：[flows/15-multi-client-sdk.md](../flows/15-multi-client-sdk.md) · `openkv-client-{go,rust,java,typescript}`。
+分类索引：[flows/README.md](../flows/README.md)（读写 · Raft/故障 · Region/扩缩容 · 工程变更 · K8s）。
 
 ---
 

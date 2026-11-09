@@ -6,16 +6,16 @@
 
 ## 布局
 
-客户端**不在** openkv 主仓内发版；与主仓同级、各自 Git 仓：
+客户端**不在** openkv 主仓内发版；各自独立 GitHub 仓库：
 
-| 库 | 本地路径（同级） | 模块 / 包 |
-|----|------------------|-----------|
-| [openkv-client-go](https://github.com/devotionalist/openkv-client-go) | `../openkv-client-go` | `github.com/devotionalist/openkv-client-go` |
-| [openkv-client-rust](https://github.com/devotionalist/openkv-client-rust) | `../openkv-client-rust` | crate `openkv-client-rust` |
-| [openkv-client-java](https://github.com/devotionalist/openkv-client-java) | `../openkv-client-java` | `io.openkv:openkv-client-java` |
-| [openkv-client-typescript](https://github.com/devotionalist/openkv-client-typescript) | `../openkv-client-typescript` | npm `openkv-client-typescript` |
+| 库 | GitHub | 模块 / 包 |
+|----|--------|-----------|
+| **Go** | https://github.com/devotionalist/openkv-client-go | `github.com/devotionalist/openkv-client-go` |
+| **Rust** | https://github.com/devotionalist/openkv-client-rust | crate `openkv-client-rust` |
+| **Java** | https://github.com/devotionalist/openkv-client-java | `io.openkv:openkv-client-java` |
+| **TypeScript** | https://github.com/devotionalist/openkv-client-typescript | npm `openkv-client-typescript` |
 
-本仓 `client/go` **仅**保留 compute-gateway、内部工具与历史 SDK 路径；新业务请依赖上述独立库。
+本仓 `client/go` **仅**保留 Compute Gateway、内部工具与历史内嵌路径；应用请依赖上表独立库。根 [README](../../README.md) 顶部有 Clients 入口。
 
 ## IDL 同步
 
