@@ -22,8 +22,10 @@
 | API | 行为 |
 |-----|------|
 | `Put` / `PutTTL`，`ttl_ms` | `0` 永久；`>0` 相对寿命，**propose 前**打成 `expire_at_ms = now + ttl` |
-| `Get` / `TxnGet` | 过期 ⇒ `found=false`（懒过期） |
-| `TTL(key)` | 剩余 ms；不存在/过期 `-2`；永久 `-1` |
+| `Get` / `TxnGet` / `Scan` | 过期 ⇒ 不可见（懒过期） |
+| `TTL(key)` | 剩余 ms；不存在/过期 `-2`；永久 `-1`（`TXN_TTL`） |
+| `Expire(key, ttl_ms)` | 读出 value 后写回并 stamp 新寿命；`ttl_ms<=0` 永久；不存在 `found=false` |
+| `Persist(key)` | 等价 `Expire(key, 0)` |
 
 线性一致：带 `linearizable` 的读走 Leader，与 TiKV「Leader 判定过期后它处不可读」同目标（副本落后读仍可能用本地钟，属 `linearizable=false` 语义）。
 
@@ -32,6 +34,8 @@
 ## 确定性
 
 相对 `ttl_ms` → 绝对 `expire_at_ms` 只在 **propose 入口**（Gateway / StoreFacade / ExecLine）计算一次，写入 Command / Prewrite；`on_apply` 只落盘，各副本结果一致。
+
+`Expire`/`Persist` 走与 `Put` 相同的 Prewrite+Commit（新 commit_ts = 新 revision）。
 
 ---
 
@@ -49,8 +53,9 @@ revision(8) | user_value                       // 旧格式：最高位 0 → ex
 ### MVCC
 
 - `WriteInfo.expire_at_ms`；`LockInfo.user_expire_at_ms`（prewrite→commit 传递）
-- `put_write` / `put_data` 同时把 `expire_at` 写入 `KvRecord` 头，供 CompactionFilter 回收
-- `txn_get`：选中 write 后若已过期 ⇒ 当不存在（`revision=0`）
+- `put_write` / `put_data` 同时把 `expire_at` 写入 `KvRecord` 头
+- `txn_get` / `txn_ttl`：选中 write 后若已过期 ⇒ 当不存在
+- 行协议：`TXN_TTL rid hex_key start_ts [lin]` → `OK TXN_TTL <ttl_ms>`
 
 ### 回收
 
@@ -68,6 +73,8 @@ revision(8) | user_value                       // 旧格式：最高位 0 → ex
 ```bash
 cmake --build build -j --target openkv_unit_tests
 ./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'
+# 集群起好后：
+go run ./client/go/examples/ttl
 ```
 
-期望：未到期可读；到期后 Get/TxnGet 不可见；compact 后物理 key 可消失（单测可用强制 CompactRange）。
+期望：`TTL` 码正确；`Expire`/`Persist` 改寿命；到期后 Get/TTL 不可见。

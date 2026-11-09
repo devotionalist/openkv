@@ -189,7 +189,8 @@ TEST_F(StoreFacadeTest, PlainTtlLazyExpireAndCompact) {
 
 TEST_F(StoreFacadeTest, MvccTtlViaPrewrite) {
   using openkv::storage::stamp_expire_at_ms;
-  const int64_t exp = stamp_expire_at_ms(500);
+  // 寿命须覆盖 fixture 选主耗时；过短会导致 commit 后立刻不可见（假失败）
+  const int64_t exp = stamp_expire_at_ms(5000);
   auto pw = facade_->prewrite(0, "ttl-m", 1000, "ttl-m", 0, "v", 0, false, 0, exp);
   ASSERT_TRUE(pw.ok) << pw.error;
   ASSERT_TRUE(facade_->commit(0, "ttl-m", 1000, 1100, 0).ok);
@@ -198,7 +199,14 @@ TEST_F(StoreFacadeTest, MvccTtlViaPrewrite) {
   ASSERT_TRUE(tg.found) << tg.error;
   EXPECT_EQ(tg.value, "v");
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+  // 直接把 expire 打到过去：避免再 sleep 数秒
+  auto* eng = facade_->node().engines().get(0);
+  ASSERT_NE(eng, nullptr);
+  openkv::storage::MvccStore mvcc(*eng);
+  const int64_t past = openkv::storage::wall_ms_now() - 10;
+  mvcc.put_data("ttl-m", 1000, "v", 1100, past);
+  mvcc.put_write("ttl-m", 1100, openkv::storage::WriteInfo{1000, openkv::storage::MvccOp::kPut, past},
+                 1100);
   auto gone = facade_->txn_get(0, "ttl-m", ~uint64_t{0}, true);
   EXPECT_FALSE(gone.found);
   EXPECT_EQ(gone.revision, 0u);

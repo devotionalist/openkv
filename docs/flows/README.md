@@ -18,6 +18,7 @@
 | 版本 CAS | [13-version-cas.md](13-version-cas.md) |
 | KV TTL（TiKV 风格） | [14-kv-ttl.md](14-kv-ttl.md) |
 | 多语言客户端（独立仓） | [15-multi-client-sdk.md](15-multi-client-sdk.md) · `openkv-client-{go,rust,java,typescript}` |
+| Scan / ListPrefix（无旁路索引） | [16-scan-list-prefix.md](16-scan-list-prefix.md) |
 
 ---
 

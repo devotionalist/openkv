@@ -162,3 +162,80 @@ TEST(MvccTest, GcKeepsFloorBelowSafe) {
   ASSERT_TRUE(at40.has_value());
   EXPECT_EQ(*at40, "v30");
 }
+
+TEST(MvccTest, TxnTtlRemainingPersistAndMissing) {
+  auto dir = std::filesystem::temp_directory_path() / "skv_mvcc_ttl_api";
+  std::filesystem::remove_all(dir);
+  KvEngine eng(dir.string(), 94);
+  MvccStore mvcc(eng);
+  bool locked = false;
+
+  auto miss = mvcc.txn_ttl("k", 100, &locked);
+  ASSERT_TRUE(miss.has_value());
+  EXPECT_EQ(*miss, -2);
+  EXPECT_FALSE(locked);
+
+  const int64_t exp = openkv::storage::wall_ms_now() + 5000;
+  mvcc.put_data("k", 1, "v", 1, exp);
+  mvcc.put_write("k", 10, WriteInfo{1, MvccOp::kPut, exp}, 10);
+  auto rem = mvcc.txn_ttl("k", 100, &locked);
+  ASSERT_TRUE(rem.has_value());
+  EXPECT_GT(*rem, 0);
+  EXPECT_LE(*rem, 5000);
+
+  mvcc.put_data("k", 2, "v2", 2, 0);
+  mvcc.put_write("k", 20, WriteInfo{2, MvccOp::kPut, 0}, 20);
+  auto perm = mvcc.txn_ttl("k", 100, &locked);
+  ASSERT_TRUE(perm.has_value());
+  EXPECT_EQ(*perm, -1);
+
+  const int64_t past = openkv::storage::wall_ms_now() - 10;
+  mvcc.put_data("k", 3, "gone", 3, past);
+  mvcc.put_write("k", 30, WriteInfo{3, MvccOp::kPut, past}, 30);
+  auto expired = mvcc.txn_ttl("k", 100, &locked);
+  ASSERT_TRUE(expired.has_value());
+  EXPECT_EQ(*expired, -2);
+}
+
+TEST(MvccTest, TxnScanPrefixVisibilityAndPage) {
+  auto dir = std::filesystem::temp_directory_path() / "skv_mvcc_scan";
+  std::filesystem::remove_all(dir);
+  KvEngine eng(dir.string(), 95);
+  MvccStore mvcc(eng);
+
+  auto put = [&](std::string_view k, std::string_view v, uint64_t start, uint64_t commit) {
+    mvcc.put_data(k, start, v, commit);
+    mvcc.put_write(k, commit, WriteInfo{start, MvccOp::kPut}, commit);
+  };
+  put("user:a", "1", 1, 10);
+  put("user:b", "2", 2, 20);
+  put("user:c", "3", 3, 30);
+  put("other:x", "9", 4, 40);
+  // delete user:b
+  mvcc.put_write("user:b", 50, WriteInfo{5, MvccOp::kDelete}, 50);
+
+  auto all = mvcc.txn_scan("user:", "user;", "", /*start_ts=*/100, 10, false);
+  ASSERT_EQ(all.pairs.size(), 2u);
+  EXPECT_EQ(all.pairs[0].key, "user:a");
+  EXPECT_EQ(all.pairs[0].value, "1");
+  EXPECT_EQ(all.pairs[1].key, "user:c");
+  EXPECT_EQ(all.pairs[1].value, "3");
+  EXPECT_FALSE(all.truncated);
+
+  auto page1 = mvcc.txn_scan("user:", "user;", "", 100, 1, false);
+  ASSERT_EQ(page1.pairs.size(), 1u);
+  EXPECT_EQ(page1.pairs[0].key, "user:a");
+  EXPECT_TRUE(page1.truncated);
+  EXPECT_EQ(page1.next_key, "user:a");
+
+  auto page2 = mvcc.txn_scan("user:", "user;", page1.next_key, 100, 10, false);
+  ASSERT_EQ(page2.pairs.size(), 1u);
+  EXPECT_EQ(page2.pairs[0].key, "user:c");
+  EXPECT_FALSE(page2.truncated);
+
+  // start_ts=15 → 只见 user:a（commit 10）；user:c commit 30 不可见
+  auto snap = mvcc.txn_scan("user:", "user;", "", 15, 10, true);
+  ASSERT_EQ(snap.pairs.size(), 1u);
+  EXPECT_EQ(snap.pairs[0].key, "user:a");
+  EXPECT_TRUE(snap.pairs[0].value.empty());
+}

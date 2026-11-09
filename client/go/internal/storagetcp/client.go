@@ -333,8 +333,58 @@ func (c *Client) CheckTxnStatus(shard uint32, primary []byte, lockTs uint64) (st
 	return parts[2], commitTs, nil
 }
 
+// ScanPair 与 TXN_SCAN 一行结果对齐。
+type ScanPair struct {
+	Key      []byte
+	Value    []byte
+	Revision uint64
+}
+
+// TxnScanResult 为单 Region MVCC 范围扫结果。
+type TxnScanResult struct {
+	Pairs     []ScanPair
+	Truncated bool
+	NextKey   []byte
+}
+
 func (c *Client) TxnGet(shard uint32, key []byte, startTs uint64) (value []byte, found bool, rev uint64, err error) {
 	return c.TxnGetOpt(shard, key, startTs, true)
+}
+
+// TxnTTL 返回剩余 TTL：-2 不存在/过期；-1 永久；>=0 剩余 ms。
+func (c *Client) TxnTTL(shard uint32, key []byte, startTs uint64) (ttlMs int64, err error) {
+	return c.TxnTTLOpt(shard, key, startTs, true)
+}
+
+func (c *Client) TxnTTLOpt(shard uint32, key []byte, startTs uint64, linearizable bool) (ttlMs int64, err error) {
+	lin := 1
+	if !linearizable {
+		lin = 0
+	}
+	resp, err := c.call(fmt.Sprintf("TXN_TTL %d %s %d %d", shard, hex.EncodeToString(key), startTs, lin))
+	if err != nil {
+		return 0, err
+	}
+	parts := strings.Fields(resp)
+	if len(parts) >= 1 && parts[0] == "ERR" {
+		if strings.Contains(resp, "locked") {
+			le := &LockedError{Raw: resp}
+			for _, f := range parts {
+				if strings.HasPrefix(f, "primary=") {
+					le.Primary, _ = hex.DecodeString(strings.TrimPrefix(f, "primary="))
+				}
+				if strings.HasPrefix(f, "lock_ts=") {
+					le.LockTs, _ = strconv.ParseUint(strings.TrimPrefix(f, "lock_ts="), 10, 64)
+				}
+			}
+			return 0, le
+		}
+		return 0, c.txnErr(resp, "txn_ttl")
+	}
+	if len(parts) < 3 || parts[0] != "OK" || parts[1] != "TXN_TTL" {
+		return 0, fmt.Errorf("txn_ttl: %s", resp)
+	}
+	return strconv.ParseInt(parts[2], 10, 64)
 }
 
 // TxnGetOpt linearizable=false 可读任意副本本地 MVCC（可能落后）。
@@ -378,6 +428,83 @@ func (c *Client) TxnGetOpt(shard uint32, key []byte, startTs uint64, linearizabl
 		return nil, false, 0, err
 	}
 	return value, true, rev, nil
+}
+
+// TxnScan MVCC 用户键范围扫。start/end 空切片表示不限；startAfter 排他游标。
+func (c *Client) TxnScan(shard uint32, start, end, startAfter []byte, startTs uint64, limit uint32,
+	keysOnly, linearizable bool) (*TxnScanResult, error) {
+	return c.TxnScanOpt(shard, start, end, startAfter, startTs, limit, keysOnly, linearizable)
+}
+
+func (c *Client) TxnScanOpt(shard uint32, start, end, startAfter []byte, startTs uint64, limit uint32,
+	keysOnly, linearizable bool) (*TxnScanResult, error) {
+	startHex := "-"
+	if len(start) > 0 {
+		startHex = hex.EncodeToString(start)
+	}
+	endHex := "-"
+	if len(end) > 0 {
+		endHex = hex.EncodeToString(end)
+	}
+	lin := 1
+	if !linearizable {
+		lin = 0
+	}
+	line := fmt.Sprintf("TXN_SCAN %d %s %s %d %d", shard, startHex, endHex, startTs, limit)
+	if len(startAfter) > 0 {
+		line += " after=" + hex.EncodeToString(startAfter)
+	}
+	if keysOnly {
+		line += " keys_only"
+	}
+	line += fmt.Sprintf(" %d", lin)
+	resp, err := c.call(line)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Fields(resp)
+	if len(parts) >= 1 && parts[0] == "ERR" {
+		return nil, c.txnErr(resp, "txn_scan")
+	}
+	// OK TXN_SCAN matched truncated n [k:v:rev ...] [next=hex]
+	if len(parts) < 5 || parts[0] != "OK" || parts[1] != "TXN_SCAN" {
+		return nil, fmt.Errorf("txn_scan: %s", resp)
+	}
+	truncated := parts[3] == "1"
+	n, _ := strconv.Atoi(parts[4])
+	out := &TxnScanResult{Truncated: truncated}
+	idx := 5
+	for i := 0; i < n && idx < len(parts); i++ {
+		tok := parts[idx]
+		idx++
+		if strings.HasPrefix(tok, "next=") {
+			idx--
+			break
+		}
+		segs := strings.Split(tok, ":")
+		if len(segs) != 3 {
+			return nil, fmt.Errorf("txn_scan pair: %s", tok)
+		}
+		k, err := hex.DecodeString(segs[0])
+		if err != nil {
+			return nil, err
+		}
+		var v []byte
+		if segs[1] != "-" {
+			v, err = hex.DecodeString(segs[1])
+			if err != nil {
+				return nil, err
+			}
+		}
+		rev, _ := strconv.ParseUint(segs[2], 10, 64)
+		out.Pairs = append(out.Pairs, ScanPair{Key: k, Value: v, Revision: rev})
+	}
+	for ; idx < len(parts); idx++ {
+		if strings.HasPrefix(parts[idx], "next=") {
+			out.NextKey, _ = hex.DecodeString(strings.TrimPrefix(parts[idx], "next="))
+		}
+	}
+	return out, nil
 }
 
 // WatchEvent 与 Storage WATCH_POLL 对齐。

@@ -31,7 +31,7 @@ go get github.com/devotionalist/openkv-client-go@latest
 npm install openkv-client-typescript
 ```
 
-API surface (v0.1): `Dial`/`connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS`.  
+API surface (v0.1): `Dial`/`connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist`.  
 Design notes: [docs/flows/15-multi-client-sdk.md](docs/flows/15-multi-client-sdk.md).
 
 > This repo’s `client/go` hosts the **Compute Gateway** (and a legacy in-tree Go path). Prefer the repos above for applications.
@@ -69,6 +69,7 @@ After `make admin-run`, open `http://127.0.0.1:19100` for the live console. See 
 | Architecture | [architecture](docs/en/architecture.md) | [ARCHITECTURE](docs/architecture/ARCHITECTURE.md) |
 | Clients | [15-multi-client-sdk](docs/flows/15-multi-client-sdk.md) | same |
 | Version CAS / TTL | [13](docs/flows/13-version-cas.md) · [14](docs/flows/14-kv-ttl.md) | same |
+| Scan / ListPrefix | [16](docs/flows/16-scan-list-prefix.md) | same |
 | Contributing | [contributing](docs/en/contributing.md) | [中文](docs/zh/contributing.md) |
 | Ops / SOP / flows | — | [ops](docs/ops/) · [flows](docs/flows/README.md) |
 | Tests | — | [TEST_CASES](docs/test/TEST_CASES.md) |

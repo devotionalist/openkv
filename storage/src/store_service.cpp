@@ -591,6 +591,94 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
   return r;
 }
 
+TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_key,
+                                    std::string_view end_key, std::string_view start_after,
+                                    uint64_t start_ts, uint32_t limit, bool keys_only,
+                                    bool linearizable) {
+  TxnScanResult r;
+  auto* group = node_.multi_raft().get(shard_id);
+  if (!group) {
+    r.redirect_to = "no_region";
+    return r;
+  }
+  r.is_leader = group->is_leader();
+  if (linearizable && !r.is_leader) {
+    r.redirect_to = group->leader_address();
+    if (r.redirect_to.empty()) {
+      r.redirect_to = node_.peer_address(group->soft_state().leader_id);
+    }
+    return r;
+  }
+  if (linearizable && r.is_leader) {
+    uint64_t read_ci = 0;
+    if (!group->read_index(&read_ci)) {
+      r.redirect_to = group->leader_address();
+      r.error = "read_index_failed";
+      return r;
+    }
+    for (int i = 0; i < 200; ++i) {
+      if (group->soft_state().last_applied >= read_ci) break;
+      if (i % 10 == 9) group->tick();
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+  }
+  auto* eng = node_.engines().get(shard_id);
+  if (!eng) return r;
+  if (limit == 0) limit = 256;
+  if (limit > 4096) limit = 4096;
+  auto range = node_.region_range(shard_id);
+  auto sr = MvccStore(*eng).txn_scan(start_key, end_key, start_after, start_ts, limit, keys_only,
+                                     range);
+  r.pairs = std::move(sr.pairs);
+  r.truncated = sr.truncated;
+  r.next_key = std::move(sr.next_key);
+  return r;
+}
+
+TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint64_t start_ts,
+                                  bool linearizable) {
+  TxnTtlResult r;
+  auto* group = node_.multi_raft().get(shard_id);
+  if (!group) {
+    r.redirect_to = "no_region";
+    return r;
+  }
+  r.is_leader = group->is_leader();
+  if (linearizable && !r.is_leader) {
+    r.redirect_to = group->leader_address();
+    if (r.redirect_to.empty()) {
+      r.redirect_to = node_.peer_address(group->soft_state().leader_id);
+    }
+    return r;
+  }
+  if (linearizable && r.is_leader) {
+    uint64_t read_ci = 0;
+    if (!group->read_index(&read_ci)) {
+      r.redirect_to = group->leader_address();
+      r.error = "read_index_failed";
+      return r;
+    }
+    for (int i = 0; i < 200; ++i) {
+      if (group->soft_state().last_applied >= read_ci) break;
+      if (i % 10 == 9) group->tick();
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+  }
+  auto* eng = node_.engines().get(shard_id);
+  if (!eng) return r;
+  bool locked = false;
+  LockInfo blk;
+  auto ttl = MvccStore(*eng).txn_ttl(key, start_ts, &locked, &blk);
+  r.locked = locked;
+  if (locked) {
+    r.blocking_lock = blk;
+    r.error = "locked";
+    return r;
+  }
+  if (ttl) r.ttl_ms = *ttl;
+  return r;
+}
+
 GetLockResult StoreFacade::get_lock(uint32_t shard_id, std::string_view key) {
   GetLockResult r;
   auto* group = node_.multi_raft().get(shard_id);

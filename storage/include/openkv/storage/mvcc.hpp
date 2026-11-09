@@ -83,10 +83,30 @@ class MvccStore {
  public:
   explicit MvccStore(KvEngine& eng) : eng_(eng) {}
 
+  struct ScanPair {
+    std::string key;
+    std::string value;
+    uint64_t revision{0};  ///< 可见 commit_ts
+  };
+  struct ScanResult {
+    std::vector<ScanPair> pairs;
+    bool truncated{false};
+    std::string next_key;  ///< truncated 时下一页 start_after（用户键）
+  };
+
   std::optional<LockInfo> get_lock(std::string_view user) const;
   std::optional<std::string> txn_get(std::string_view user, uint64_t start_ts,
                                      bool* locked, LockInfo* blocking_lock = nullptr,
                                      uint64_t* out_commit_ts = nullptr) const;
+  /// 可见版本剩余 TTL：-2 不存在/过期；-1 永久；>=0 剩余 ms。locked 时返回 nullopt 且 *locked=true。
+  std::optional<int64_t> txn_ttl(std::string_view user, uint64_t start_ts, bool* locked,
+                                 LockInfo* blocking_lock = nullptr) const;
+  /// MVCC 用户键范围扫：半开 [start_key, end_key)；start_after 非空则从其后开始（排他）。
+  /// 忽略锁，按已提交 Write 可见性（与 txn_get 写选择一致，含 TTL/delete）。
+  ScanResult txn_scan(std::string_view start_key, std::string_view end_key,
+                      std::string_view start_after, uint64_t start_ts, uint32_t limit,
+                      bool keys_only,
+                      const openkv::KeyRange& region_range = {}) const;
   /// 最新已提交 write 的 commit_ts；无则 nullopt（含仅删除后的「不存在」仍有 tombstone 时返回该 ts）。
   std::optional<uint64_t> latest_commit_ts(std::string_view user) const;
   bool has_write_conflict(std::string_view user, uint64_t start_ts) const;

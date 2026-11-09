@@ -38,6 +38,10 @@ const (
 	KVService_Delete_FullMethodName                 = "/kv.v1.KVService/Delete"
 	KVService_BatchGet_FullMethodName               = "/kv.v1.KVService/BatchGet"
 	KVService_BatchPut_FullMethodName               = "/kv.v1.KVService/BatchPut"
+	KVService_Scan_FullMethodName                   = "/kv.v1.KVService/Scan"
+	KVService_TTL_FullMethodName                    = "/kv.v1.KVService/TTL"
+	KVService_Expire_FullMethodName                 = "/kv.v1.KVService/Expire"
+	KVService_Persist_FullMethodName                = "/kv.v1.KVService/Persist"
 	KVService_Watch_FullMethodName                  = "/kv.v1.KVService/Watch"
 	KVService_TxnBegin_FullMethodName               = "/kv.v1.KVService/TxnBegin"
 	KVService_TxnGet_FullMethodName                 = "/kv.v1.KVService/TxnGet"
@@ -61,6 +65,12 @@ type KVServiceClient interface {
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
 	BatchGet(ctx context.Context, in *BatchGetRequest, opts ...grpc.CallOption) (*BatchGetResponse, error)
 	BatchPut(ctx context.Context, in *BatchPutRequest, opts ...grpc.CallOption) (*BatchPutResponse, error)
+	// MVCC 范围扫描（用户键语义）；ListPrefix = prefix + prefix_upper_bound
+	Scan(ctx context.Context, in *ScanRequest, opts ...grpc.CallOption) (*ScanResponse, error)
+	// 用户 KV TTL：查询剩余 / 改相对寿命 / 永久化（见 docs/flows/14-kv-ttl.md）
+	TTL(ctx context.Context, in *TTLRequest, opts ...grpc.CallOption) (*TTLResponse, error)
+	Expire(ctx context.Context, in *ExpireRequest, opts ...grpc.CallOption) (*ExpireResponse, error)
+	Persist(ctx context.Context, in *PersistRequest, opts ...grpc.CallOption) (*PersistResponse, error)
 	Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchEvent], error)
 	// Percolator 乐观事务（无 SQL）
 	TxnBegin(ctx context.Context, in *TxnBeginRequest, opts ...grpc.CallOption) (*TxnBeginResponse, error)
@@ -126,6 +136,46 @@ func (c *kVServiceClient) BatchPut(ctx context.Context, in *BatchPutRequest, opt
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BatchPutResponse)
 	err := c.cc.Invoke(ctx, KVService_BatchPut_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVServiceClient) Scan(ctx context.Context, in *ScanRequest, opts ...grpc.CallOption) (*ScanResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ScanResponse)
+	err := c.cc.Invoke(ctx, KVService_Scan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVServiceClient) TTL(ctx context.Context, in *TTLRequest, opts ...grpc.CallOption) (*TTLResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TTLResponse)
+	err := c.cc.Invoke(ctx, KVService_TTL_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVServiceClient) Expire(ctx context.Context, in *ExpireRequest, opts ...grpc.CallOption) (*ExpireResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExpireResponse)
+	err := c.cc.Invoke(ctx, KVService_Expire_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVServiceClient) Persist(ctx context.Context, in *PersistRequest, opts ...grpc.CallOption) (*PersistResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PersistResponse)
+	err := c.cc.Invoke(ctx, KVService_Persist_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,6 +302,12 @@ type KVServiceServer interface {
 	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
 	BatchGet(context.Context, *BatchGetRequest) (*BatchGetResponse, error)
 	BatchPut(context.Context, *BatchPutRequest) (*BatchPutResponse, error)
+	// MVCC 范围扫描（用户键语义）；ListPrefix = prefix + prefix_upper_bound
+	Scan(context.Context, *ScanRequest) (*ScanResponse, error)
+	// 用户 KV TTL：查询剩余 / 改相对寿命 / 永久化（见 docs/flows/14-kv-ttl.md）
+	TTL(context.Context, *TTLRequest) (*TTLResponse, error)
+	Expire(context.Context, *ExpireRequest) (*ExpireResponse, error)
+	Persist(context.Context, *PersistRequest) (*PersistResponse, error)
 	Watch(*WatchRequest, grpc.ServerStreamingServer[WatchEvent]) error
 	// Percolator 乐观事务（无 SQL）
 	TxnBegin(context.Context, *TxnBeginRequest) (*TxnBeginResponse, error)
@@ -287,6 +343,18 @@ func (UnimplementedKVServiceServer) BatchGet(context.Context, *BatchGetRequest) 
 }
 func (UnimplementedKVServiceServer) BatchPut(context.Context, *BatchPutRequest) (*BatchPutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchPut not implemented")
+}
+func (UnimplementedKVServiceServer) Scan(context.Context, *ScanRequest) (*ScanResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Scan not implemented")
+}
+func (UnimplementedKVServiceServer) TTL(context.Context, *TTLRequest) (*TTLResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TTL not implemented")
+}
+func (UnimplementedKVServiceServer) Expire(context.Context, *ExpireRequest) (*ExpireResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Expire not implemented")
+}
+func (UnimplementedKVServiceServer) Persist(context.Context, *PersistRequest) (*PersistResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Persist not implemented")
 }
 func (UnimplementedKVServiceServer) Watch(*WatchRequest, grpc.ServerStreamingServer[WatchEvent]) error {
 	return status.Error(codes.Unimplemented, "method Watch not implemented")
@@ -425,6 +493,78 @@ func _KVService_BatchPut_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KVServiceServer).BatchPut(ctx, req.(*BatchPutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KVService_Scan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServiceServer).Scan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVService_Scan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServiceServer).Scan(ctx, req.(*ScanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KVService_TTL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TTLRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServiceServer).TTL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVService_TTL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServiceServer).TTL(ctx, req.(*TTLRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KVService_Expire_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExpireRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServiceServer).Expire(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVService_Expire_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServiceServer).Expire(ctx, req.(*ExpireRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KVService_Persist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PersistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServiceServer).Persist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KVService_Persist_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServiceServer).Persist(ctx, req.(*PersistRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -628,6 +768,22 @@ var KVService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchPut",
 			Handler:    _KVService_BatchPut_Handler,
+		},
+		{
+			MethodName: "Scan",
+			Handler:    _KVService_Scan_Handler,
+		},
+		{
+			MethodName: "TTL",
+			Handler:    _KVService_TTL_Handler,
+		},
+		{
+			MethodName: "Expire",
+			Handler:    _KVService_Expire_Handler,
+		},
+		{
+			MethodName: "Persist",
+			Handler:    _KVService_Persist_Handler,
 		},
 		{
 			MethodName: "TxnBegin",

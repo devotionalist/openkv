@@ -26,6 +26,12 @@ service KVService {
   rpc Delete(DeleteRequest) returns (DeleteResponse);
   rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
   rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+  // MVCC 范围扫描（用户键语义）；ListPrefix = prefix + prefix_upper_bound
+  rpc Scan(ScanRequest) returns (ScanResponse);
+  // 用户 KV TTL：查询剩余 / 改相对寿命 / 永久化（见 docs/flows/14-kv-ttl.md）
+  rpc TTL(TTLRequest) returns (TTLResponse);
+  rpc Expire(ExpireRequest) returns (ExpireResponse);
+  rpc Persist(PersistRequest) returns (PersistResponse);
   rpc Watch(WatchRequest) returns (stream WatchEvent);
 
   // Percolator 乐观事务（无 SQL）
@@ -102,6 +108,59 @@ message BatchPutRequest {
 
 message BatchPutResponse {
   repeated PutResponse results = 1;
+}
+
+// Scan：半开区间 [start_key, end_key)；prefix 非空时等价 start=prefix、end=prefix_upper_bound。
+// start_after 非空时从该键之后续扫（分页游标，排他）。
+message ScanRequest {
+  bytes prefix = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;       // exclusive；空=不限（仍受 limit）
+  bytes start_after = 4;   // exclusive cursor
+  uint32 limit = 5;        // 0 → 默认 256；服务端硬顶
+  bool keys_only = 6;
+  bool linearizable = 7;   // true=Leader+TSO；false=任意副本本地快照
+}
+
+message ScanPair {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 revision = 3;  // 可见版本 commit_ts
+}
+
+message ScanResponse {
+  repeated ScanPair pairs = 1;
+  bool truncated = 2;
+  bytes next_key = 3;  // truncated 时下一页 start_after
+}
+
+// TTL：ttl_ms = -2 不存在/已过期；-1 永久；>=0 剩余毫秒
+message TTLRequest {
+  bytes key = 1;
+  bool linearizable = 2;
+}
+message TTLResponse {
+  int64 ttl_ms = 1;
+}
+
+// Expire：相对 ttl_ms；0 等价 Persist。key 不存在 → found=false
+message ExpireRequest {
+  bytes key = 1;
+  int64 ttl_ms = 2;
+}
+message ExpireResponse {
+  bool ok = 1;
+  bool found = 2;
+  uint64 revision = 3;
+}
+
+message PersistRequest {
+  bytes key = 1;
+}
+message PersistResponse {
+  bool ok = 1;
+  bool found = 2;
+  uint64 revision = 3;
 }
 
 message WatchRequest {

@@ -72,6 +72,20 @@ func (c *Client) ctx(parent context.Context) (context.Context, context.CancelFun
 	return context.WithTimeout(parent, c.timeout)
 }
 
+// ScanPair 是 Scan / ListPrefix 的一行结果。
+type ScanPair struct {
+	Key      []byte
+	Value    []byte
+	Revision uint64
+}
+
+// ScanResult 含分页游标；Truncated 时用 NextKey 作为下一页 StartAfter。
+type ScanResult struct {
+	Pairs     []ScanPair
+	Truncated bool
+	NextKey   []byte
+}
+
 func (c *Client) Get(ctx context.Context, key []byte) (value []byte, found bool, rev uint64, err error) {
 	return c.GetOpt(ctx, key, true)
 }
@@ -208,6 +222,98 @@ func (c *Client) BatchPut(ctx context.Context, kvs map[string][]byte) error {
 		}
 	}
 	return nil
+}
+
+// Scan 范围扫描（强制线性一致）。副本读用 ScanOpt(..., Linearizable: false)。
+func (c *Client) Scan(ctx context.Context, req *kvv1.ScanRequest) (*ScanResult, error) {
+	cp := kvv1.ScanRequest{}
+	if req != nil {
+		cp = *req
+	}
+	cp.Linearizable = true
+	return c.ScanOpt(ctx, &cp)
+}
+
+// ScanOpt 允许 linearizable=false 副本读。
+func (c *Client) ScanOpt(ctx context.Context, req *kvv1.ScanRequest) (*ScanResult, error) {
+	ctx, cancel := c.ctx(ctx)
+	defer cancel()
+	if req == nil {
+		req = &kvv1.ScanRequest{Linearizable: true}
+	}
+	resp, err := c.raw.Scan(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out := &ScanResult{Truncated: resp.Truncated, NextKey: resp.NextKey}
+	for _, p := range resp.Pairs {
+		out.Pairs = append(out.Pairs, ScanPair{Key: p.Key, Value: p.Value, Revision: p.Revision})
+	}
+	return out, nil
+}
+
+// ListPrefix 列出前缀下用户键（Gateway Scan，无旁路索引）；limit=0 服务端默认 256。
+func (c *Client) ListPrefix(ctx context.Context, prefix []byte, limit uint32) (*ScanResult, error) {
+	return c.ScanOpt(ctx, &kvv1.ScanRequest{
+		Prefix:       prefix,
+		Limit:        limit,
+		Linearizable: true,
+	})
+}
+
+// Redis/TiKV 风格 TTL 返回码。
+const (
+	TTLMissing  int64 = -2 // 不存在或已过期
+	TTLNoExpire int64 = -1 // 永久
+)
+
+// TTL 查询剩余毫秒（强一致）。
+func (c *Client) TTL(ctx context.Context, key []byte) (ttlMs int64, err error) {
+	return c.TTLOpt(ctx, key, true)
+}
+
+func (c *Client) TTLOpt(ctx context.Context, key []byte, linearizable bool) (ttlMs int64, err error) {
+	ctx, cancel := c.ctx(ctx)
+	defer cancel()
+	resp, err := c.raw.TTL(ctx, &kvv1.TTLRequest{Key: key, Linearizable: linearizable})
+	if err != nil {
+		return 0, err
+	}
+	return resp.TtlMs, nil
+}
+
+// Expire 设置相对 TTL；ttlMs<=0 永久化。key 不存在返回 found=false。
+func (c *Client) Expire(ctx context.Context, key []byte, ttlMs int64) (found bool, rev uint64, err error) {
+	ctx, cancel := c.ctx(ctx)
+	defer cancel()
+	resp, err := c.raw.Expire(ctx, &kvv1.ExpireRequest{Key: key, TtlMs: ttlMs})
+	if err != nil {
+		return false, 0, err
+	}
+	if !resp.Found {
+		return false, 0, nil
+	}
+	if !resp.Ok {
+		return true, 0, fmt.Errorf("expire rejected")
+	}
+	return true, resp.Revision, nil
+}
+
+// Persist 清除过期时间（永久保留）。
+func (c *Client) Persist(ctx context.Context, key []byte) (found bool, rev uint64, err error) {
+	ctx, cancel := c.ctx(ctx)
+	defer cancel()
+	resp, err := c.raw.Persist(ctx, &kvv1.PersistRequest{Key: key})
+	if err != nil {
+		return false, 0, err
+	}
+	if !resp.Found {
+		return false, 0, nil
+	}
+	if !resp.Ok {
+		return true, 0, fmt.Errorf("persist rejected")
+	}
+	return true, resp.Revision, nil
 }
 
 // Txn 是客户端侧 Percolator 乐观事务（协调在 Gateway）。

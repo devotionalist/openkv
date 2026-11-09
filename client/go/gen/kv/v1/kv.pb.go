@@ -78,7 +78,7 @@ func (x WatchEvent_Type) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use WatchEvent_Type.Descriptor instead.
 func (WatchEvent_Type) EnumDescriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{12, 0}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{21, 0}
 }
 
 type GetRequest struct {
@@ -704,6 +704,534 @@ func (x *BatchPutResponse) GetResults() []*PutResponse {
 	return nil
 }
 
+// Scan：半开区间 [start_key, end_key)；prefix 非空时等价 start=prefix、end=prefix_upper_bound。
+// start_after 非空时从该键之后续扫（分页游标，排他）。
+type ScanRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Prefix        []byte                 `protobuf:"bytes,1,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	StartKey      []byte                 `protobuf:"bytes,2,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey        []byte                 `protobuf:"bytes,3,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`             // exclusive；空=不限（仍受 limit）
+	StartAfter    []byte                 `protobuf:"bytes,4,opt,name=start_after,json=startAfter,proto3" json:"start_after,omitempty"` // exclusive cursor
+	Limit         uint32                 `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`                            // 0 → 默认 256；服务端硬顶
+	KeysOnly      bool                   `protobuf:"varint,6,opt,name=keys_only,json=keysOnly,proto3" json:"keys_only,omitempty"`
+	Linearizable  bool                   `protobuf:"varint,7,opt,name=linearizable,proto3" json:"linearizable,omitempty"` // true=Leader+TSO；false=任意副本本地快照
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScanRequest) Reset() {
+	*x = ScanRequest{}
+	mi := &file_kv_v1_kv_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScanRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScanRequest) ProtoMessage() {}
+
+func (x *ScanRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScanRequest.ProtoReflect.Descriptor instead.
+func (*ScanRequest) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ScanRequest) GetPrefix() []byte {
+	if x != nil {
+		return x.Prefix
+	}
+	return nil
+}
+
+func (x *ScanRequest) GetStartKey() []byte {
+	if x != nil {
+		return x.StartKey
+	}
+	return nil
+}
+
+func (x *ScanRequest) GetEndKey() []byte {
+	if x != nil {
+		return x.EndKey
+	}
+	return nil
+}
+
+func (x *ScanRequest) GetStartAfter() []byte {
+	if x != nil {
+		return x.StartAfter
+	}
+	return nil
+}
+
+func (x *ScanRequest) GetLimit() uint32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ScanRequest) GetKeysOnly() bool {
+	if x != nil {
+		return x.KeysOnly
+	}
+	return false
+}
+
+func (x *ScanRequest) GetLinearizable() bool {
+	if x != nil {
+		return x.Linearizable
+	}
+	return false
+}
+
+type ScanPair struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         []byte                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Revision      uint64                 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"` // 可见版本 commit_ts
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScanPair) Reset() {
+	*x = ScanPair{}
+	mi := &file_kv_v1_kv_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScanPair) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScanPair) ProtoMessage() {}
+
+func (x *ScanPair) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScanPair.ProtoReflect.Descriptor instead.
+func (*ScanPair) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ScanPair) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *ScanPair) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *ScanPair) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+type ScanResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pairs         []*ScanPair            `protobuf:"bytes,1,rep,name=pairs,proto3" json:"pairs,omitempty"`
+	Truncated     bool                   `protobuf:"varint,2,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	NextKey       []byte                 `protobuf:"bytes,3,opt,name=next_key,json=nextKey,proto3" json:"next_key,omitempty"` // truncated 时下一页 start_after
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScanResponse) Reset() {
+	*x = ScanResponse{}
+	mi := &file_kv_v1_kv_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScanResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScanResponse) ProtoMessage() {}
+
+func (x *ScanResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScanResponse.ProtoReflect.Descriptor instead.
+func (*ScanResponse) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ScanResponse) GetPairs() []*ScanPair {
+	if x != nil {
+		return x.Pairs
+	}
+	return nil
+}
+
+func (x *ScanResponse) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+func (x *ScanResponse) GetNextKey() []byte {
+	if x != nil {
+		return x.NextKey
+	}
+	return nil
+}
+
+// TTL：ttl_ms = -2 不存在/已过期；-1 永久；>=0 剩余毫秒
+type TTLRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Linearizable  bool                   `protobuf:"varint,2,opt,name=linearizable,proto3" json:"linearizable,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TTLRequest) Reset() {
+	*x = TTLRequest{}
+	mi := &file_kv_v1_kv_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TTLRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TTLRequest) ProtoMessage() {}
+
+func (x *TTLRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TTLRequest.ProtoReflect.Descriptor instead.
+func (*TTLRequest) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *TTLRequest) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *TTLRequest) GetLinearizable() bool {
+	if x != nil {
+		return x.Linearizable
+	}
+	return false
+}
+
+type TTLResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TtlMs         int64                  `protobuf:"varint,1,opt,name=ttl_ms,json=ttlMs,proto3" json:"ttl_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TTLResponse) Reset() {
+	*x = TTLResponse{}
+	mi := &file_kv_v1_kv_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TTLResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TTLResponse) ProtoMessage() {}
+
+func (x *TTLResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TTLResponse.ProtoReflect.Descriptor instead.
+func (*TTLResponse) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *TTLResponse) GetTtlMs() int64 {
+	if x != nil {
+		return x.TtlMs
+	}
+	return 0
+}
+
+// Expire：相对 ttl_ms；0 等价 Persist。key 不存在 → found=false
+type ExpireRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	TtlMs         int64                  `protobuf:"varint,2,opt,name=ttl_ms,json=ttlMs,proto3" json:"ttl_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExpireRequest) Reset() {
+	*x = ExpireRequest{}
+	mi := &file_kv_v1_kv_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExpireRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExpireRequest) ProtoMessage() {}
+
+func (x *ExpireRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExpireRequest.ProtoReflect.Descriptor instead.
+func (*ExpireRequest) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ExpireRequest) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *ExpireRequest) GetTtlMs() int64 {
+	if x != nil {
+		return x.TtlMs
+	}
+	return 0
+}
+
+type ExpireResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Found         bool                   `protobuf:"varint,2,opt,name=found,proto3" json:"found,omitempty"`
+	Revision      uint64                 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExpireResponse) Reset() {
+	*x = ExpireResponse{}
+	mi := &file_kv_v1_kv_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExpireResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExpireResponse) ProtoMessage() {}
+
+func (x *ExpireResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExpireResponse.ProtoReflect.Descriptor instead.
+func (*ExpireResponse) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ExpireResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *ExpireResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *ExpireResponse) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+type PersistRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PersistRequest) Reset() {
+	*x = PersistRequest{}
+	mi := &file_kv_v1_kv_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PersistRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PersistRequest) ProtoMessage() {}
+
+func (x *PersistRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PersistRequest.ProtoReflect.Descriptor instead.
+func (*PersistRequest) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *PersistRequest) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+type PersistResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Found         bool                   `protobuf:"varint,2,opt,name=found,proto3" json:"found,omitempty"`
+	Revision      uint64                 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PersistResponse) Reset() {
+	*x = PersistResponse{}
+	mi := &file_kv_v1_kv_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PersistResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PersistResponse) ProtoMessage() {}
+
+func (x *PersistResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_v1_kv_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PersistResponse.ProtoReflect.Descriptor instead.
+func (*PersistResponse) Descriptor() ([]byte, []int) {
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *PersistResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *PersistResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *PersistResponse) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
 type WatchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Key           []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
@@ -715,7 +1243,7 @@ type WatchRequest struct {
 
 func (x *WatchRequest) Reset() {
 	*x = WatchRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[11]
+	mi := &file_kv_v1_kv_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -727,7 +1255,7 @@ func (x *WatchRequest) String() string {
 func (*WatchRequest) ProtoMessage() {}
 
 func (x *WatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[11]
+	mi := &file_kv_v1_kv_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -740,7 +1268,7 @@ func (x *WatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
 func (*WatchRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{11}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *WatchRequest) GetKey() []byte {
@@ -776,7 +1304,7 @@ type WatchEvent struct {
 
 func (x *WatchEvent) Reset() {
 	*x = WatchEvent{}
-	mi := &file_kv_v1_kv_proto_msgTypes[12]
+	mi := &file_kv_v1_kv_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -788,7 +1316,7 @@ func (x *WatchEvent) String() string {
 func (*WatchEvent) ProtoMessage() {}
 
 func (x *WatchEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[12]
+	mi := &file_kv_v1_kv_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -801,7 +1329,7 @@ func (x *WatchEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchEvent.ProtoReflect.Descriptor instead.
 func (*WatchEvent) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{12}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *WatchEvent) GetType() WatchEvent_Type {
@@ -841,7 +1369,7 @@ type TxnBeginRequest struct {
 
 func (x *TxnBeginRequest) Reset() {
 	*x = TxnBeginRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[13]
+	mi := &file_kv_v1_kv_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -853,7 +1381,7 @@ func (x *TxnBeginRequest) String() string {
 func (*TxnBeginRequest) ProtoMessage() {}
 
 func (x *TxnBeginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[13]
+	mi := &file_kv_v1_kv_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -866,7 +1394,7 @@ func (x *TxnBeginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnBeginRequest.ProtoReflect.Descriptor instead.
 func (*TxnBeginRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{13}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *TxnBeginRequest) GetCount() uint32 {
@@ -885,7 +1413,7 @@ type TxnBeginResponse struct {
 
 func (x *TxnBeginResponse) Reset() {
 	*x = TxnBeginResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[14]
+	mi := &file_kv_v1_kv_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -897,7 +1425,7 @@ func (x *TxnBeginResponse) String() string {
 func (*TxnBeginResponse) ProtoMessage() {}
 
 func (x *TxnBeginResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[14]
+	mi := &file_kv_v1_kv_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -910,7 +1438,7 @@ func (x *TxnBeginResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnBeginResponse.ProtoReflect.Descriptor instead.
 func (*TxnBeginResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{14}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *TxnBeginResponse) GetStartTs() uint64 {
@@ -930,7 +1458,7 @@ type TxnGetRequest struct {
 
 func (x *TxnGetRequest) Reset() {
 	*x = TxnGetRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[15]
+	mi := &file_kv_v1_kv_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -942,7 +1470,7 @@ func (x *TxnGetRequest) String() string {
 func (*TxnGetRequest) ProtoMessage() {}
 
 func (x *TxnGetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[15]
+	mi := &file_kv_v1_kv_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -955,7 +1483,7 @@ func (x *TxnGetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnGetRequest.ProtoReflect.Descriptor instead.
 func (*TxnGetRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{15}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TxnGetRequest) GetKey() []byte {
@@ -985,7 +1513,7 @@ type TxnGetResponse struct {
 
 func (x *TxnGetResponse) Reset() {
 	*x = TxnGetResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[16]
+	mi := &file_kv_v1_kv_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -997,7 +1525,7 @@ func (x *TxnGetResponse) String() string {
 func (*TxnGetResponse) ProtoMessage() {}
 
 func (x *TxnGetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[16]
+	mi := &file_kv_v1_kv_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1010,7 +1538,7 @@ func (x *TxnGetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnGetResponse.ProtoReflect.Descriptor instead.
 func (*TxnGetResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{16}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TxnGetResponse) GetValue() []byte {
@@ -1052,7 +1580,7 @@ type TxnMutation struct {
 
 func (x *TxnMutation) Reset() {
 	*x = TxnMutation{}
-	mi := &file_kv_v1_kv_proto_msgTypes[17]
+	mi := &file_kv_v1_kv_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1064,7 +1592,7 @@ func (x *TxnMutation) String() string {
 func (*TxnMutation) ProtoMessage() {}
 
 func (x *TxnMutation) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[17]
+	mi := &file_kv_v1_kv_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1077,7 +1605,7 @@ func (x *TxnMutation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnMutation.ProtoReflect.Descriptor instead.
 func (*TxnMutation) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{17}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TxnMutation) GetKey() []byte {
@@ -1117,7 +1645,7 @@ type TxnPrewriteRequest struct {
 
 func (x *TxnPrewriteRequest) Reset() {
 	*x = TxnPrewriteRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[18]
+	mi := &file_kv_v1_kv_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1129,7 +1657,7 @@ func (x *TxnPrewriteRequest) String() string {
 func (*TxnPrewriteRequest) ProtoMessage() {}
 
 func (x *TxnPrewriteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[18]
+	mi := &file_kv_v1_kv_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1142,7 +1670,7 @@ func (x *TxnPrewriteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnPrewriteRequest.ProtoReflect.Descriptor instead.
 func (*TxnPrewriteRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{18}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TxnPrewriteRequest) GetStartTs() uint64 {
@@ -1199,7 +1727,7 @@ type TxnPrewriteResponse struct {
 
 func (x *TxnPrewriteResponse) Reset() {
 	*x = TxnPrewriteResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[19]
+	mi := &file_kv_v1_kv_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1211,7 +1739,7 @@ func (x *TxnPrewriteResponse) String() string {
 func (*TxnPrewriteResponse) ProtoMessage() {}
 
 func (x *TxnPrewriteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[19]
+	mi := &file_kv_v1_kv_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1224,7 +1752,7 @@ func (x *TxnPrewriteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnPrewriteResponse.ProtoReflect.Descriptor instead.
 func (*TxnPrewriteResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{19}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *TxnPrewriteResponse) GetOk() bool {
@@ -1266,7 +1794,7 @@ type TxnCommitRequest struct {
 
 func (x *TxnCommitRequest) Reset() {
 	*x = TxnCommitRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[20]
+	mi := &file_kv_v1_kv_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1278,7 +1806,7 @@ func (x *TxnCommitRequest) String() string {
 func (*TxnCommitRequest) ProtoMessage() {}
 
 func (x *TxnCommitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[20]
+	mi := &file_kv_v1_kv_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1291,7 +1819,7 @@ func (x *TxnCommitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnCommitRequest.ProtoReflect.Descriptor instead.
 func (*TxnCommitRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{20}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *TxnCommitRequest) GetStartTs() uint64 {
@@ -1326,7 +1854,7 @@ type TxnCommitResponse struct {
 
 func (x *TxnCommitResponse) Reset() {
 	*x = TxnCommitResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[21]
+	mi := &file_kv_v1_kv_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1338,7 +1866,7 @@ func (x *TxnCommitResponse) String() string {
 func (*TxnCommitResponse) ProtoMessage() {}
 
 func (x *TxnCommitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[21]
+	mi := &file_kv_v1_kv_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1351,7 +1879,7 @@ func (x *TxnCommitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnCommitResponse.ProtoReflect.Descriptor instead.
 func (*TxnCommitResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{21}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *TxnCommitResponse) GetOk() bool {
@@ -1385,7 +1913,7 @@ type TxnRollbackRequest struct {
 
 func (x *TxnRollbackRequest) Reset() {
 	*x = TxnRollbackRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[22]
+	mi := &file_kv_v1_kv_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1397,7 +1925,7 @@ func (x *TxnRollbackRequest) String() string {
 func (*TxnRollbackRequest) ProtoMessage() {}
 
 func (x *TxnRollbackRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[22]
+	mi := &file_kv_v1_kv_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1410,7 +1938,7 @@ func (x *TxnRollbackRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnRollbackRequest.ProtoReflect.Descriptor instead.
 func (*TxnRollbackRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{22}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *TxnRollbackRequest) GetStartTs() uint64 {
@@ -1437,7 +1965,7 @@ type TxnRollbackResponse struct {
 
 func (x *TxnRollbackResponse) Reset() {
 	*x = TxnRollbackResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[23]
+	mi := &file_kv_v1_kv_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1449,7 +1977,7 @@ func (x *TxnRollbackResponse) String() string {
 func (*TxnRollbackResponse) ProtoMessage() {}
 
 func (x *TxnRollbackResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[23]
+	mi := &file_kv_v1_kv_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1462,7 +1990,7 @@ func (x *TxnRollbackResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnRollbackResponse.ProtoReflect.Descriptor instead.
 func (*TxnRollbackResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{23}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TxnRollbackResponse) GetOk() bool {
@@ -1492,7 +2020,7 @@ type TxnPessimisticLockRequest struct {
 
 func (x *TxnPessimisticLockRequest) Reset() {
 	*x = TxnPessimisticLockRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[24]
+	mi := &file_kv_v1_kv_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1504,7 +2032,7 @@ func (x *TxnPessimisticLockRequest) String() string {
 func (*TxnPessimisticLockRequest) ProtoMessage() {}
 
 func (x *TxnPessimisticLockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[24]
+	mi := &file_kv_v1_kv_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1517,7 +2045,7 @@ func (x *TxnPessimisticLockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnPessimisticLockRequest.ProtoReflect.Descriptor instead.
 func (*TxnPessimisticLockRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{24}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *TxnPessimisticLockRequest) GetStartTs() uint64 {
@@ -1565,7 +2093,7 @@ type TxnPessimisticLockResponse struct {
 
 func (x *TxnPessimisticLockResponse) Reset() {
 	*x = TxnPessimisticLockResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[25]
+	mi := &file_kv_v1_kv_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1577,7 +2105,7 @@ func (x *TxnPessimisticLockResponse) String() string {
 func (*TxnPessimisticLockResponse) ProtoMessage() {}
 
 func (x *TxnPessimisticLockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[25]
+	mi := &file_kv_v1_kv_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1590,7 +2118,7 @@ func (x *TxnPessimisticLockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnPessimisticLockResponse.ProtoReflect.Descriptor instead.
 func (*TxnPessimisticLockResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{25}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *TxnPessimisticLockResponse) GetOk() bool {
@@ -1617,7 +2145,7 @@ type TxnPessimisticRollbackRequest struct {
 
 func (x *TxnPessimisticRollbackRequest) Reset() {
 	*x = TxnPessimisticRollbackRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[26]
+	mi := &file_kv_v1_kv_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1629,7 +2157,7 @@ func (x *TxnPessimisticRollbackRequest) String() string {
 func (*TxnPessimisticRollbackRequest) ProtoMessage() {}
 
 func (x *TxnPessimisticRollbackRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[26]
+	mi := &file_kv_v1_kv_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1642,7 +2170,7 @@ func (x *TxnPessimisticRollbackRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnPessimisticRollbackRequest.ProtoReflect.Descriptor instead.
 func (*TxnPessimisticRollbackRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{26}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *TxnPessimisticRollbackRequest) GetStartTs() uint64 {
@@ -1669,7 +2197,7 @@ type TxnPessimisticRollbackResponse struct {
 
 func (x *TxnPessimisticRollbackResponse) Reset() {
 	*x = TxnPessimisticRollbackResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[27]
+	mi := &file_kv_v1_kv_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1681,7 +2209,7 @@ func (x *TxnPessimisticRollbackResponse) String() string {
 func (*TxnPessimisticRollbackResponse) ProtoMessage() {}
 
 func (x *TxnPessimisticRollbackResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[27]
+	mi := &file_kv_v1_kv_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1694,7 +2222,7 @@ func (x *TxnPessimisticRollbackResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnPessimisticRollbackResponse.ProtoReflect.Descriptor instead.
 func (*TxnPessimisticRollbackResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{27}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *TxnPessimisticRollbackResponse) GetOk() bool {
@@ -1722,7 +2250,7 @@ type TxnResolveLockRequest struct {
 
 func (x *TxnResolveLockRequest) Reset() {
 	*x = TxnResolveLockRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[28]
+	mi := &file_kv_v1_kv_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1734,7 +2262,7 @@ func (x *TxnResolveLockRequest) String() string {
 func (*TxnResolveLockRequest) ProtoMessage() {}
 
 func (x *TxnResolveLockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[28]
+	mi := &file_kv_v1_kv_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1747,7 +2275,7 @@ func (x *TxnResolveLockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnResolveLockRequest.ProtoReflect.Descriptor instead.
 func (*TxnResolveLockRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{28}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *TxnResolveLockRequest) GetKey() []byte {
@@ -1781,7 +2309,7 @@ type TxnResolveLockResponse struct {
 
 func (x *TxnResolveLockResponse) Reset() {
 	*x = TxnResolveLockResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[29]
+	mi := &file_kv_v1_kv_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1793,7 +2321,7 @@ func (x *TxnResolveLockResponse) String() string {
 func (*TxnResolveLockResponse) ProtoMessage() {}
 
 func (x *TxnResolveLockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[29]
+	mi := &file_kv_v1_kv_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1806,7 +2334,7 @@ func (x *TxnResolveLockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnResolveLockResponse.ProtoReflect.Descriptor instead.
 func (*TxnResolveLockResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{29}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *TxnResolveLockResponse) GetOk() bool {
@@ -1833,7 +2361,7 @@ type TxnCheckStatusRequest struct {
 
 func (x *TxnCheckStatusRequest) Reset() {
 	*x = TxnCheckStatusRequest{}
-	mi := &file_kv_v1_kv_proto_msgTypes[30]
+	mi := &file_kv_v1_kv_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1845,7 +2373,7 @@ func (x *TxnCheckStatusRequest) String() string {
 func (*TxnCheckStatusRequest) ProtoMessage() {}
 
 func (x *TxnCheckStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[30]
+	mi := &file_kv_v1_kv_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1858,7 +2386,7 @@ func (x *TxnCheckStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnCheckStatusRequest.ProtoReflect.Descriptor instead.
 func (*TxnCheckStatusRequest) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{30}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *TxnCheckStatusRequest) GetPrimaryKey() []byte {
@@ -1885,7 +2413,7 @@ type TxnCheckStatusResponse struct {
 
 func (x *TxnCheckStatusResponse) Reset() {
 	*x = TxnCheckStatusResponse{}
-	mi := &file_kv_v1_kv_proto_msgTypes[31]
+	mi := &file_kv_v1_kv_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1897,7 +2425,7 @@ func (x *TxnCheckStatusResponse) String() string {
 func (*TxnCheckStatusResponse) ProtoMessage() {}
 
 func (x *TxnCheckStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_v1_kv_proto_msgTypes[31]
+	mi := &file_kv_v1_kv_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1910,7 +2438,7 @@ func (x *TxnCheckStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxnCheckStatusResponse.ProtoReflect.Descriptor instead.
 func (*TxnCheckStatusResponse) Descriptor() ([]byte, []int) {
-	return file_kv_v1_kv_proto_rawDescGZIP(), []int{31}
+	return file_kv_v1_kv_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *TxnCheckStatusResponse) GetStatus() string {
@@ -1974,7 +2502,43 @@ const file_kv_v1_kv_proto_rawDesc = "" +
 	"\x0fBatchPutRequest\x12%\n" +
 	"\x05items\x18\x01 \x03(\v2\x0f.kv.v1.KeyValueR\x05items\"@\n" +
 	"\x10BatchPutResponse\x12,\n" +
-	"\aresults\x18\x01 \x03(\v2\x12.kv.v1.PutResponseR\aresults\"f\n" +
+	"\aresults\x18\x01 \x03(\v2\x12.kv.v1.PutResponseR\aresults\"\xd3\x01\n" +
+	"\vScanRequest\x12\x16\n" +
+	"\x06prefix\x18\x01 \x01(\fR\x06prefix\x12\x1b\n" +
+	"\tstart_key\x18\x02 \x01(\fR\bstartKey\x12\x17\n" +
+	"\aend_key\x18\x03 \x01(\fR\x06endKey\x12\x1f\n" +
+	"\vstart_after\x18\x04 \x01(\fR\n" +
+	"startAfter\x12\x14\n" +
+	"\x05limit\x18\x05 \x01(\rR\x05limit\x12\x1b\n" +
+	"\tkeys_only\x18\x06 \x01(\bR\bkeysOnly\x12\"\n" +
+	"\flinearizable\x18\a \x01(\bR\flinearizable\"N\n" +
+	"\bScanPair\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\fR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"n\n" +
+	"\fScanResponse\x12%\n" +
+	"\x05pairs\x18\x01 \x03(\v2\x0f.kv.v1.ScanPairR\x05pairs\x12\x1c\n" +
+	"\ttruncated\x18\x02 \x01(\bR\ttruncated\x12\x19\n" +
+	"\bnext_key\x18\x03 \x01(\fR\anextKey\"B\n" +
+	"\n" +
+	"TTLRequest\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\fR\x03key\x12\"\n" +
+	"\flinearizable\x18\x02 \x01(\bR\flinearizable\"$\n" +
+	"\vTTLResponse\x12\x15\n" +
+	"\x06ttl_ms\x18\x01 \x01(\x03R\x05ttlMs\"8\n" +
+	"\rExpireRequest\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\fR\x03key\x12\x15\n" +
+	"\x06ttl_ms\x18\x02 \x01(\x03R\x05ttlMs\"R\n" +
+	"\x0eExpireResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x14\n" +
+	"\x05found\x18\x02 \x01(\bR\x05found\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\"\n" +
+	"\x0ePersistRequest\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\fR\x03key\"S\n" +
+	"\x0fPersistResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x14\n" +
+	"\x05found\x18\x02 \x01(\bR\x05found\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"f\n" +
 	"\fWatchRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\fR\x03key\x12\x1d\n" +
 	"\n" +
@@ -2065,13 +2629,17 @@ const file_kv_v1_kv_proto_rawDesc = "" +
 	"\alock_ts\x18\x02 \x01(\x04R\x06lockTs\"M\n" +
 	"\x16TxnCheckStatusResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1b\n" +
-	"\tcommit_ts\x18\x02 \x01(\x04R\bcommitTs2\xeb\a\n" +
+	"\tcommit_ts\x18\x02 \x01(\x04R\bcommitTs2\xbb\t\n" +
 	"\tKVService\x12,\n" +
 	"\x03Get\x12\x11.kv.v1.GetRequest\x1a\x12.kv.v1.GetResponse\x12,\n" +
 	"\x03Put\x12\x11.kv.v1.PutRequest\x1a\x12.kv.v1.PutResponse\x125\n" +
 	"\x06Delete\x12\x14.kv.v1.DeleteRequest\x1a\x15.kv.v1.DeleteResponse\x12;\n" +
 	"\bBatchGet\x12\x16.kv.v1.BatchGetRequest\x1a\x17.kv.v1.BatchGetResponse\x12;\n" +
-	"\bBatchPut\x12\x16.kv.v1.BatchPutRequest\x1a\x17.kv.v1.BatchPutResponse\x121\n" +
+	"\bBatchPut\x12\x16.kv.v1.BatchPutRequest\x1a\x17.kv.v1.BatchPutResponse\x12/\n" +
+	"\x04Scan\x12\x12.kv.v1.ScanRequest\x1a\x13.kv.v1.ScanResponse\x12,\n" +
+	"\x03TTL\x12\x11.kv.v1.TTLRequest\x1a\x12.kv.v1.TTLResponse\x125\n" +
+	"\x06Expire\x12\x14.kv.v1.ExpireRequest\x1a\x15.kv.v1.ExpireResponse\x128\n" +
+	"\aPersist\x12\x15.kv.v1.PersistRequest\x1a\x16.kv.v1.PersistResponse\x121\n" +
 	"\x05Watch\x12\x13.kv.v1.WatchRequest\x1a\x11.kv.v1.WatchEvent0\x01\x12;\n" +
 	"\bTxnBegin\x12\x16.kv.v1.TxnBeginRequest\x1a\x17.kv.v1.TxnBeginResponse\x125\n" +
 	"\x06TxnGet\x12\x14.kv.v1.TxnGetRequest\x1a\x15.kv.v1.TxnGetResponse\x12D\n" +
@@ -2096,7 +2664,7 @@ func file_kv_v1_kv_proto_rawDescGZIP() []byte {
 }
 
 var file_kv_v1_kv_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_kv_v1_kv_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_kv_v1_kv_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_kv_v1_kv_proto_goTypes = []any{
 	(WatchEvent_Type)(0),                   // 0: kv.v1.WatchEvent.Type
 	(*GetRequest)(nil),                     // 1: kv.v1.GetRequest
@@ -2110,69 +2678,87 @@ var file_kv_v1_kv_proto_goTypes = []any{
 	(*KeyValue)(nil),                       // 9: kv.v1.KeyValue
 	(*BatchPutRequest)(nil),                // 10: kv.v1.BatchPutRequest
 	(*BatchPutResponse)(nil),               // 11: kv.v1.BatchPutResponse
-	(*WatchRequest)(nil),                   // 12: kv.v1.WatchRequest
-	(*WatchEvent)(nil),                     // 13: kv.v1.WatchEvent
-	(*TxnBeginRequest)(nil),                // 14: kv.v1.TxnBeginRequest
-	(*TxnBeginResponse)(nil),               // 15: kv.v1.TxnBeginResponse
-	(*TxnGetRequest)(nil),                  // 16: kv.v1.TxnGetRequest
-	(*TxnGetResponse)(nil),                 // 17: kv.v1.TxnGetResponse
-	(*TxnMutation)(nil),                    // 18: kv.v1.TxnMutation
-	(*TxnPrewriteRequest)(nil),             // 19: kv.v1.TxnPrewriteRequest
-	(*TxnPrewriteResponse)(nil),            // 20: kv.v1.TxnPrewriteResponse
-	(*TxnCommitRequest)(nil),               // 21: kv.v1.TxnCommitRequest
-	(*TxnCommitResponse)(nil),              // 22: kv.v1.TxnCommitResponse
-	(*TxnRollbackRequest)(nil),             // 23: kv.v1.TxnRollbackRequest
-	(*TxnRollbackResponse)(nil),            // 24: kv.v1.TxnRollbackResponse
-	(*TxnPessimisticLockRequest)(nil),      // 25: kv.v1.TxnPessimisticLockRequest
-	(*TxnPessimisticLockResponse)(nil),     // 26: kv.v1.TxnPessimisticLockResponse
-	(*TxnPessimisticRollbackRequest)(nil),  // 27: kv.v1.TxnPessimisticRollbackRequest
-	(*TxnPessimisticRollbackResponse)(nil), // 28: kv.v1.TxnPessimisticRollbackResponse
-	(*TxnResolveLockRequest)(nil),          // 29: kv.v1.TxnResolveLockRequest
-	(*TxnResolveLockResponse)(nil),         // 30: kv.v1.TxnResolveLockResponse
-	(*TxnCheckStatusRequest)(nil),          // 31: kv.v1.TxnCheckStatusRequest
-	(*TxnCheckStatusResponse)(nil),         // 32: kv.v1.TxnCheckStatusResponse
+	(*ScanRequest)(nil),                    // 12: kv.v1.ScanRequest
+	(*ScanPair)(nil),                       // 13: kv.v1.ScanPair
+	(*ScanResponse)(nil),                   // 14: kv.v1.ScanResponse
+	(*TTLRequest)(nil),                     // 15: kv.v1.TTLRequest
+	(*TTLResponse)(nil),                    // 16: kv.v1.TTLResponse
+	(*ExpireRequest)(nil),                  // 17: kv.v1.ExpireRequest
+	(*ExpireResponse)(nil),                 // 18: kv.v1.ExpireResponse
+	(*PersistRequest)(nil),                 // 19: kv.v1.PersistRequest
+	(*PersistResponse)(nil),                // 20: kv.v1.PersistResponse
+	(*WatchRequest)(nil),                   // 21: kv.v1.WatchRequest
+	(*WatchEvent)(nil),                     // 22: kv.v1.WatchEvent
+	(*TxnBeginRequest)(nil),                // 23: kv.v1.TxnBeginRequest
+	(*TxnBeginResponse)(nil),               // 24: kv.v1.TxnBeginResponse
+	(*TxnGetRequest)(nil),                  // 25: kv.v1.TxnGetRequest
+	(*TxnGetResponse)(nil),                 // 26: kv.v1.TxnGetResponse
+	(*TxnMutation)(nil),                    // 27: kv.v1.TxnMutation
+	(*TxnPrewriteRequest)(nil),             // 28: kv.v1.TxnPrewriteRequest
+	(*TxnPrewriteResponse)(nil),            // 29: kv.v1.TxnPrewriteResponse
+	(*TxnCommitRequest)(nil),               // 30: kv.v1.TxnCommitRequest
+	(*TxnCommitResponse)(nil),              // 31: kv.v1.TxnCommitResponse
+	(*TxnRollbackRequest)(nil),             // 32: kv.v1.TxnRollbackRequest
+	(*TxnRollbackResponse)(nil),            // 33: kv.v1.TxnRollbackResponse
+	(*TxnPessimisticLockRequest)(nil),      // 34: kv.v1.TxnPessimisticLockRequest
+	(*TxnPessimisticLockResponse)(nil),     // 35: kv.v1.TxnPessimisticLockResponse
+	(*TxnPessimisticRollbackRequest)(nil),  // 36: kv.v1.TxnPessimisticRollbackRequest
+	(*TxnPessimisticRollbackResponse)(nil), // 37: kv.v1.TxnPessimisticRollbackResponse
+	(*TxnResolveLockRequest)(nil),          // 38: kv.v1.TxnResolveLockRequest
+	(*TxnResolveLockResponse)(nil),         // 39: kv.v1.TxnResolveLockResponse
+	(*TxnCheckStatusRequest)(nil),          // 40: kv.v1.TxnCheckStatusRequest
+	(*TxnCheckStatusResponse)(nil),         // 41: kv.v1.TxnCheckStatusResponse
 }
 var file_kv_v1_kv_proto_depIdxs = []int32{
 	2,  // 0: kv.v1.BatchGetResponse.results:type_name -> kv.v1.GetResponse
 	9,  // 1: kv.v1.BatchPutRequest.items:type_name -> kv.v1.KeyValue
 	4,  // 2: kv.v1.BatchPutResponse.results:type_name -> kv.v1.PutResponse
-	0,  // 3: kv.v1.WatchEvent.type:type_name -> kv.v1.WatchEvent.Type
-	18, // 4: kv.v1.TxnPrewriteRequest.mutations:type_name -> kv.v1.TxnMutation
-	1,  // 5: kv.v1.KVService.Get:input_type -> kv.v1.GetRequest
-	3,  // 6: kv.v1.KVService.Put:input_type -> kv.v1.PutRequest
-	5,  // 7: kv.v1.KVService.Delete:input_type -> kv.v1.DeleteRequest
-	7,  // 8: kv.v1.KVService.BatchGet:input_type -> kv.v1.BatchGetRequest
-	10, // 9: kv.v1.KVService.BatchPut:input_type -> kv.v1.BatchPutRequest
-	12, // 10: kv.v1.KVService.Watch:input_type -> kv.v1.WatchRequest
-	14, // 11: kv.v1.KVService.TxnBegin:input_type -> kv.v1.TxnBeginRequest
-	16, // 12: kv.v1.KVService.TxnGet:input_type -> kv.v1.TxnGetRequest
-	19, // 13: kv.v1.KVService.TxnPrewrite:input_type -> kv.v1.TxnPrewriteRequest
-	21, // 14: kv.v1.KVService.TxnCommit:input_type -> kv.v1.TxnCommitRequest
-	23, // 15: kv.v1.KVService.TxnRollback:input_type -> kv.v1.TxnRollbackRequest
-	25, // 16: kv.v1.KVService.TxnPessimisticLock:input_type -> kv.v1.TxnPessimisticLockRequest
-	27, // 17: kv.v1.KVService.TxnPessimisticRollback:input_type -> kv.v1.TxnPessimisticRollbackRequest
-	29, // 18: kv.v1.KVService.TxnResolveLock:input_type -> kv.v1.TxnResolveLockRequest
-	31, // 19: kv.v1.KVService.TxnCheckStatus:input_type -> kv.v1.TxnCheckStatusRequest
-	2,  // 20: kv.v1.KVService.Get:output_type -> kv.v1.GetResponse
-	4,  // 21: kv.v1.KVService.Put:output_type -> kv.v1.PutResponse
-	6,  // 22: kv.v1.KVService.Delete:output_type -> kv.v1.DeleteResponse
-	8,  // 23: kv.v1.KVService.BatchGet:output_type -> kv.v1.BatchGetResponse
-	11, // 24: kv.v1.KVService.BatchPut:output_type -> kv.v1.BatchPutResponse
-	13, // 25: kv.v1.KVService.Watch:output_type -> kv.v1.WatchEvent
-	15, // 26: kv.v1.KVService.TxnBegin:output_type -> kv.v1.TxnBeginResponse
-	17, // 27: kv.v1.KVService.TxnGet:output_type -> kv.v1.TxnGetResponse
-	20, // 28: kv.v1.KVService.TxnPrewrite:output_type -> kv.v1.TxnPrewriteResponse
-	22, // 29: kv.v1.KVService.TxnCommit:output_type -> kv.v1.TxnCommitResponse
-	24, // 30: kv.v1.KVService.TxnRollback:output_type -> kv.v1.TxnRollbackResponse
-	26, // 31: kv.v1.KVService.TxnPessimisticLock:output_type -> kv.v1.TxnPessimisticLockResponse
-	28, // 32: kv.v1.KVService.TxnPessimisticRollback:output_type -> kv.v1.TxnPessimisticRollbackResponse
-	30, // 33: kv.v1.KVService.TxnResolveLock:output_type -> kv.v1.TxnResolveLockResponse
-	32, // 34: kv.v1.KVService.TxnCheckStatus:output_type -> kv.v1.TxnCheckStatusResponse
-	20, // [20:35] is the sub-list for method output_type
-	5,  // [5:20] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	13, // 3: kv.v1.ScanResponse.pairs:type_name -> kv.v1.ScanPair
+	0,  // 4: kv.v1.WatchEvent.type:type_name -> kv.v1.WatchEvent.Type
+	27, // 5: kv.v1.TxnPrewriteRequest.mutations:type_name -> kv.v1.TxnMutation
+	1,  // 6: kv.v1.KVService.Get:input_type -> kv.v1.GetRequest
+	3,  // 7: kv.v1.KVService.Put:input_type -> kv.v1.PutRequest
+	5,  // 8: kv.v1.KVService.Delete:input_type -> kv.v1.DeleteRequest
+	7,  // 9: kv.v1.KVService.BatchGet:input_type -> kv.v1.BatchGetRequest
+	10, // 10: kv.v1.KVService.BatchPut:input_type -> kv.v1.BatchPutRequest
+	12, // 11: kv.v1.KVService.Scan:input_type -> kv.v1.ScanRequest
+	15, // 12: kv.v1.KVService.TTL:input_type -> kv.v1.TTLRequest
+	17, // 13: kv.v1.KVService.Expire:input_type -> kv.v1.ExpireRequest
+	19, // 14: kv.v1.KVService.Persist:input_type -> kv.v1.PersistRequest
+	21, // 15: kv.v1.KVService.Watch:input_type -> kv.v1.WatchRequest
+	23, // 16: kv.v1.KVService.TxnBegin:input_type -> kv.v1.TxnBeginRequest
+	25, // 17: kv.v1.KVService.TxnGet:input_type -> kv.v1.TxnGetRequest
+	28, // 18: kv.v1.KVService.TxnPrewrite:input_type -> kv.v1.TxnPrewriteRequest
+	30, // 19: kv.v1.KVService.TxnCommit:input_type -> kv.v1.TxnCommitRequest
+	32, // 20: kv.v1.KVService.TxnRollback:input_type -> kv.v1.TxnRollbackRequest
+	34, // 21: kv.v1.KVService.TxnPessimisticLock:input_type -> kv.v1.TxnPessimisticLockRequest
+	36, // 22: kv.v1.KVService.TxnPessimisticRollback:input_type -> kv.v1.TxnPessimisticRollbackRequest
+	38, // 23: kv.v1.KVService.TxnResolveLock:input_type -> kv.v1.TxnResolveLockRequest
+	40, // 24: kv.v1.KVService.TxnCheckStatus:input_type -> kv.v1.TxnCheckStatusRequest
+	2,  // 25: kv.v1.KVService.Get:output_type -> kv.v1.GetResponse
+	4,  // 26: kv.v1.KVService.Put:output_type -> kv.v1.PutResponse
+	6,  // 27: kv.v1.KVService.Delete:output_type -> kv.v1.DeleteResponse
+	8,  // 28: kv.v1.KVService.BatchGet:output_type -> kv.v1.BatchGetResponse
+	11, // 29: kv.v1.KVService.BatchPut:output_type -> kv.v1.BatchPutResponse
+	14, // 30: kv.v1.KVService.Scan:output_type -> kv.v1.ScanResponse
+	16, // 31: kv.v1.KVService.TTL:output_type -> kv.v1.TTLResponse
+	18, // 32: kv.v1.KVService.Expire:output_type -> kv.v1.ExpireResponse
+	20, // 33: kv.v1.KVService.Persist:output_type -> kv.v1.PersistResponse
+	22, // 34: kv.v1.KVService.Watch:output_type -> kv.v1.WatchEvent
+	24, // 35: kv.v1.KVService.TxnBegin:output_type -> kv.v1.TxnBeginResponse
+	26, // 36: kv.v1.KVService.TxnGet:output_type -> kv.v1.TxnGetResponse
+	29, // 37: kv.v1.KVService.TxnPrewrite:output_type -> kv.v1.TxnPrewriteResponse
+	31, // 38: kv.v1.KVService.TxnCommit:output_type -> kv.v1.TxnCommitResponse
+	33, // 39: kv.v1.KVService.TxnRollback:output_type -> kv.v1.TxnRollbackResponse
+	35, // 40: kv.v1.KVService.TxnPessimisticLock:output_type -> kv.v1.TxnPessimisticLockResponse
+	37, // 41: kv.v1.KVService.TxnPessimisticRollback:output_type -> kv.v1.TxnPessimisticRollbackResponse
+	39, // 42: kv.v1.KVService.TxnResolveLock:output_type -> kv.v1.TxnResolveLockResponse
+	41, // 43: kv.v1.KVService.TxnCheckStatus:output_type -> kv.v1.TxnCheckStatusResponse
+	25, // [25:44] is the sub-list for method output_type
+	6,  // [6:25] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_kv_v1_kv_proto_init() }
@@ -2186,7 +2772,7 @@ func file_kv_v1_kv_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kv_v1_kv_proto_rawDesc), len(file_kv_v1_kv_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   32,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

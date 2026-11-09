@@ -577,6 +577,64 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       if (!r.found) return "OK TXN_GET - " + std::to_string(r.revision);
       return "OK TXN_GET " + to_hex(r.value) + " " + std::to_string(r.revision);
     }
+    // TXN_TTL rid hex_key start_ts [linearizable=1]
+    if (op == proto::kOpTxnTtl && (parts.size() == 4 || parts.size() == 5)) {
+      uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
+      std::string key;
+      if (!from_hex(parts[2], &key)) return "ERR bad_hex";
+      const bool lin = parts.size() < 5 || parts[4] != "0";
+      auto r = facade_.txn_ttl(shard, key, std::stoull(parts[3]), lin);
+      if (r.redirect_to == "no_region") return "ERR no_region";
+      if (!r.is_leader && lin) {
+        return r.redirect_to.empty() ? "ERR not_leader"
+                                     : ("ERR not_leader redirect=" + r.redirect_to);
+      }
+      if (r.locked) {
+        return "ERR locked primary=" + to_hex(r.blocking_lock.primary) +
+               " lock_ts=" + std::to_string(r.blocking_lock.start_ts);
+      }
+      return "OK TXN_TTL " + std::to_string(r.ttl_ms);
+    }
+    // TXN_SCAN rid start_hex|- end_hex|- start_ts limit [after=hex] [keys_only] [lin=0|1]
+    if (op == proto::kOpTxnScan && parts.size() >= 6) {
+      const uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
+      std::string start_key, end_key, start_after;
+      if (parts[2] != "-" && !from_hex(parts[2], &start_key)) return "ERR bad_hex";
+      if (parts[3] != "-" && !from_hex(parts[3], &end_key)) return "ERR bad_hex";
+      const uint64_t start_ts = std::stoull(parts[4]);
+      uint32_t limit = static_cast<uint32_t>(std::stoul(parts[5]));
+      bool keys_only = false;
+      bool lin = true;
+      for (size_t i = 6; i < parts.size(); ++i) {
+        if (parts[i].rfind("after=", 0) == 0) {
+          if (!from_hex(parts[i].substr(6), &start_after)) return "ERR bad_hex";
+        } else if (parts[i] == "keys_only") {
+          keys_only = true;
+        } else if (parts[i] == "0") {
+          lin = false;
+        } else if (parts[i] == "1") {
+          lin = true;
+        }
+      }
+      auto r = facade_.txn_scan(shard, start_key, end_key, start_after, start_ts, limit, keys_only,
+                                lin);
+      if (r.redirect_to == "no_region") return "ERR no_region";
+      if (!r.is_leader && lin) {
+        return r.redirect_to.empty() ? "ERR not_leader"
+                                     : ("ERR not_leader redirect=" + r.redirect_to);
+      }
+      std::ostringstream oss;
+      oss << "OK TXN_SCAN " << r.pairs.size() << " " << (r.truncated ? 1 : 0) << " "
+          << r.pairs.size();
+      for (const auto& p : r.pairs) {
+        oss << ' ' << to_hex(p.key) << ':' << (keys_only ? "-" : to_hex(p.value)) << ':'
+            << p.revision;
+      }
+      if (r.truncated && !r.next_key.empty()) {
+        oss << " next=" << to_hex(r.next_key);
+      }
+      return oss.str();
+    }
     // WATCH_HEAD rid — 当前 Region last_applied（Watch 起点）
     if (op == proto::kOpWatchHead && parts.size() == 2) {
       const uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));

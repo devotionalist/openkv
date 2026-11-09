@@ -305,6 +305,108 @@ std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t st
   return data->value;
 }
 
+std::optional<int64_t> MvccStore::txn_ttl(std::string_view user, uint64_t start_ts, bool* locked,
+                                          LockInfo* blocking_lock) const {
+  if (locked) *locked = false;
+  if (auto lk = get_lock(user)) {
+    if (lk->start_ts != start_ts) {
+      if (locked) *locked = true;
+      if (blocking_lock) *blocking_lock = *lk;
+      return std::nullopt;
+    }
+  }
+  const std::string pref = write_key_prefix(user);
+  std::optional<WriteInfo> chosen;
+  eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
+    if (key.size() < pref.size() + 8) return true;
+    const uint64_t inv = read_u64_be(key.data() + pref.size());
+    const uint64_t commit_ts = ~inv;
+    if (commit_ts > start_ts) return true;
+    WriteInfo wi;
+    if (!decode_write(rec.value, &wi)) return true;
+    chosen = wi;
+    return false;
+  });
+  if (!chosen || chosen->op == MvccOp::kDelete) return int64_t{-2};
+  const int64_t now = wall_ms_now();
+  if (chosen->expire_at_ms > 0 && now >= chosen->expire_at_ms) return int64_t{-2};
+  auto data = eng_.get(data_key(user, chosen->start_ts), /*hide_expired=*/false);
+  if (!data || kv_record_expired(*data, now)) return int64_t{-2};
+  if (chosen->expire_at_ms <= 0) return int64_t{-1};
+  return chosen->expire_at_ms - now;
+}
+
+MvccStore::ScanResult MvccStore::txn_scan(std::string_view start_key, std::string_view end_key,
+                                          std::string_view start_after, uint64_t start_ts,
+                                          uint32_t limit, bool keys_only,
+                                          const openkv::KeyRange& region_range) const {
+  ScanResult out;
+  if (limit == 0) limit = 256;
+  const int64_t now = wall_ms_now();
+
+  // 按物理序扫 Write 键；同一 user 的 W 键按 ~commit_ts 升序 → 先遇到的是最新提交。
+  std::string cur_user;
+  bool decided = false;  // 已为 cur_user 选定可见 Write（或判定不可见）
+
+  auto emit_or_skip = [&](std::string_view user, const WriteInfo& wi, uint64_t commit_ts) -> bool {
+    if (wi.op == MvccOp::kDelete) return true;
+    if (wi.expire_at_ms > 0 && now >= wi.expire_at_ms) return true;
+    ScanPair p;
+    p.key = std::string(user);
+    p.revision = commit_ts;
+    if (!keys_only) {
+      auto data = eng_.get(data_key(user, wi.start_ts), /*hide_expired=*/false);
+      if (!data || kv_record_expired(*data, now)) return true;
+      p.value = std::move(data->value);
+    } else {
+      // keys_only：仍校验 data 是否过期（与 Get 一致）
+      auto data = eng_.get(data_key(user, wi.start_ts), /*hide_expired=*/false);
+      if (!data || kv_record_expired(*data, now)) return true;
+    }
+    out.pairs.push_back(std::move(p));
+    if (out.pairs.size() >= limit) {
+      out.truncated = true;
+      return false;
+    }
+    return true;
+  };
+
+  eng_.for_each([&](std::string_view phys, const KvRecord& rec) {
+    auto pos = phys.find('\0');
+    if (pos == std::string_view::npos || pos + 1 >= phys.size()) return true;
+    if (phys[pos + 1] != 'W') return true;
+    if (phys.size() < pos + 2 + 8) return true;
+
+    std::string_view user = phys.substr(0, pos);
+    if (!region_range.contains(user)) return true;
+    if (!start_key.empty() && user < start_key) return true;
+    if (!end_key.empty() && user >= end_key) return false;  // 有序，可停
+    if (!start_after.empty() && user <= start_after) return true;
+
+    if (user != cur_user) {
+      cur_user = std::string(user);
+      decided = false;
+    }
+    if (decided) return true;
+
+    const uint64_t inv = read_u64_be(phys.data() + pos + 2);
+    const uint64_t commit_ts = ~inv;
+    if (commit_ts > start_ts) return true;  // 更新版本对当前快照不可见，继续找更老
+
+    WriteInfo wi;
+    if (!decode_write(rec.value, &wi)) return true;
+    decided = true;
+    if (!emit_or_skip(user, wi, commit_ts)) {
+      // 已满：next_key = 当前 user（续扫 start_after=当前）
+      out.next_key = std::string(user);
+      return false;
+    }
+    return true;
+  });
+
+  return out;
+}
+
 void MvccStore::put_lock(std::string_view user, const LockInfo& li, uint64_t rev) {
   eng_.put(lock_key(user), encode_lock(li), rev);
 }

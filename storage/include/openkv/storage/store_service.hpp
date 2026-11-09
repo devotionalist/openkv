@@ -115,6 +115,24 @@ struct TxnGetResult {
   std::string error;
 };
 
+struct TxnScanResult {
+  std::vector<MvccStore::ScanPair> pairs;
+  bool truncated{false};
+  std::string next_key;
+  bool is_leader{false};
+  std::string redirect_to;
+  std::string error;
+};
+
+struct TxnTtlResult {
+  int64_t ttl_ms{-2};  ///< -2 不存在/过期；-1 永久；>=0 剩余
+  bool locked{false};
+  LockInfo blocking_lock;
+  bool is_leader{false};
+  std::string redirect_to;
+  std::string error;
+};
+
 struct GetLockResult {
   bool found{false};
   LockInfo lock;
@@ -159,6 +177,12 @@ class StoreFacade {
 
   /// linearizable=true 仅 Leader；false 可读任意副本本地 MVCC（可能落后）。
   TxnGetResult txn_get(uint32_t shard_id, std::string_view key, uint64_t start_ts,
+                       bool linearizable = true);
+  /// MVCC 用户键范围扫；limit==0 → 256；硬顶 4096。
+  TxnScanResult txn_scan(uint32_t shard_id, std::string_view start_key, std::string_view end_key,
+                         std::string_view start_after, uint64_t start_ts, uint32_t limit,
+                         bool keys_only = false, bool linearizable = true);
+  TxnTtlResult txn_ttl(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        bool linearizable = true);
   GetLockResult get_lock(uint32_t shard_id, std::string_view key);
   CheckTxnResult check_txn_status(uint32_t shard_id, std::string_view primary, uint64_t lock_ts);

@@ -41,7 +41,8 @@ MetaKey(ukey) = ukey + "\x00\x01ds\x00"
 | List | 有序元素数组 |
 | ZSet | member → score；rank 序由 score+member 排序得到 |
 
-> **v2（规划）**：元素子键 `MetaKey + "\x00" + sub` + MVCC 感知 `SCAN_PREFIX`，大对象拆分；split 禁止切开对象前缀。
+> **v2（规划）**：元素子键 `MetaKey + "\x00" + sub` + 大对象拆分；split 禁止切开对象前缀。  
+> 用户 KV 前缀扫描已落地：Gateway `Scan` / `ListPrefix`（MVCC `TXN_SCAN`，见 [16-scan-list-prefix.md](../flows/16-scan-list-prefix.md)）；DS 子键扫描仍待 v2。
 
 ### 2.3 路由与 Split
 

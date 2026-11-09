@@ -58,6 +58,8 @@ inline constexpr std::string_view kOpResolveLock = "RESOLVE_LOCK";
 inline constexpr std::string_view kOpGetLock = "GET_LOCK";
 inline constexpr std::string_view kOpCheckTxnStatus = "CHECK_TXN_STATUS";
 inline constexpr std::string_view kOpTxnGet = "TXN_GET";
+inline constexpr std::string_view kOpTxnScan = "TXN_SCAN";
+inline constexpr std::string_view kOpTxnTtl = "TXN_TTL";
 
 inline constexpr std::string_view kOpWatchHead = "WATCH_HEAD";
 inline constexpr std::string_view kOpWatchPoll = "WATCH_POLL";

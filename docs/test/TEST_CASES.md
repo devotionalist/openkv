@@ -20,6 +20,7 @@
 | Region 副本 | split / 加副本 / 下线 | `bash scripts/it-region-replica.sh` |
 | 副本 churn | 快速加/下线 + 并发排队 | `bash scripts/it-replica-churn.sh` |
 | 数据结构 | Hash/Set/List/ZSet | `bash scripts/it-ds-{hash,set,list,zset}.sh` |
+| Scan / ListPrefix | Gateway MVCC 前缀扫 | `bash scripts/it-scan.sh` |
 | Web 全链路 | I50–I54 + `/api/ds` | `make it-web` / `bash scripts/it-web.sh` |
 | Region scatter | I30–I36 硬断言 | `make it-region` |
 | Txn 硬门禁 | I20–I22 | `make it-txn` |
@@ -74,10 +75,10 @@
 |------|--------|--------|--------|
 | common | 4 | 14 | 哈希、Range、配置、Admin ACL |
 | raft | 11 | 34 | 日志、选主、Joint、快照流、RawNode、raftstore |
-| storage | 12 | 45 | KvEngine/快照区间、MVCC、StoreFacade、Admin Raft、Watch |
+| storage | 12 | 47 | KvEngine/快照区间、MVCC（TxnScan/TxnTtl）、StoreFacade、Admin Raft、Watch |
 | meta | 4 | 27 | ClusterState、Scaler（含排队/取消）、Scheduler、Meta HA FSM |
 | compute | 2 | 8 | Router Locate、Proxy 重试 |
-| **合计** | **33** | **128** | |
+| **合计** | **33** | **130** | |
 
 ### 3.2 套件 → 用例名
 
@@ -117,7 +118,7 @@
 | Suite | 要点 |
 |-------|------|
 | KvEngineTest | Put/Get/Delete、Snapshot、**SnapshotRangePreservesSibling**（兄弟区间不被空 range 抹掉）、Checkpoint、CF、SyncMode |
-| MvccTest | Lock、可见性、WriteConflict、悲观锁、GC |
+| MvccTest | Lock、可见性、WriteConflict、悲观锁、GC、TxnScan、TxnTtl |
 | StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite**、Epoch、Split seed、幂等 Propose |
 | WatchHubTest / WatchLogTest | Watch 过滤与持久化 |
 | InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、Latch、前缀扫描 |
@@ -195,6 +196,8 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 
 | 日期 | 场景 | 结果 | 根因 / 处置 |
 |------|------|------|-------------|
+| 2026-11-09 | TTL / Expire / Persist RPC | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'`；设计 [14-kv-ttl.md](../flows/14-kv-ttl.md)；SDK `TTL`/`Expire`/`Persist` |
+| 2026-11-09 | Gateway Scan / ListPrefix（无旁路索引） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='MvccTest.TxnScan*'` → 1/1；`bash scripts/it-scan.sh` → `scan smoke PASS`；设计 [16-scan-list-prefix.md](../flows/16-scan-list-prefix.md) |
 | 2026-11-09 | 独立客户端仓 openkv-client-{go,rust,java,typescript} | **PASS** | 同级四仓 `go test` / `cargo test` / `mvn test` / `npm test`；设计 [15-multi-client-sdk.md](../flows/15-multi-client-sdk.md) |
 | 2026-11-09 | KV TTL（TiKV：懒过期 + TTL Checker） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'`；设计 [14-kv-ttl.md](../flows/14-kv-ttl.md)；SDK `PutTTL` |
 | 2026-11-09 | Version CAS（plain + MVCC） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Cas*'` → 3/3；设计 [13-version-cas.md](../flows/13-version-cas.md)；SDK `PutCAS`/`DeleteCAS` |
