@@ -29,7 +29,9 @@
 
 ## 一期 API
 
-`Dial/connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS`
+`Dial/connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist`
+
+（Txn / Watch / DS 仍以本仓 Gateway + `client/go` 为准；独立 SDK 可后续跟进。）
 
 ## 验收
 

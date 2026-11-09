@@ -196,6 +196,7 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 
 | 日期 | 场景 | 结果 | 根因 / 处置 |
 |------|------|------|-------------|
+| 2026-11-09 | 四语言 SDK 对齐 Scan/TTL API | **PASS** | `openkv-client-{go,rust,java,typescript}`：`go test` / `cargo test` / `mvn test` / `npm test`；[15-multi-client-sdk.md](../flows/15-multi-client-sdk.md) |
 | 2026-11-09 | TTL / Expire / Persist RPC | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'`；设计 [14-kv-ttl.md](../flows/14-kv-ttl.md)；SDK `TTL`/`Expire`/`Persist` |
 | 2026-11-09 | Gateway Scan / ListPrefix（无旁路索引） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='MvccTest.TxnScan*'` → 1/1；`bash scripts/it-scan.sh` → `scan smoke PASS`；设计 [16-scan-list-prefix.md](../flows/16-scan-list-prefix.md) |
 | 2026-11-09 | 独立客户端仓 openkv-client-{go,rust,java,typescript} | **PASS** | 同级四仓 `go test` / `cargo test` / `mvn test` / `npm test`；设计 [15-multi-client-sdk.md](../flows/15-multi-client-sdk.md) |
