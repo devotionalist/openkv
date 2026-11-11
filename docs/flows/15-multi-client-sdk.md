@@ -31,7 +31,9 @@ cd ../openkv-client-go
 
 ## 一期 API
 
-`Dial/connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist` · `Watch` · Txn · **DS**（Hash/Set/List/ZSet）
+`Dial/connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · **`RawGet`/`RawPut`/`RawDelete`（及 CAS/TTL 变体）** · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist` · `Watch` · Txn · **DS**（Hash/Set/List/ZSet）
+
+Raw* 与事务平面约定见 [27-raw-vs-txn.md](27-raw-vs-txn.md)；各独立仓 README 已列对应方法名。
 
 ## 验收
 

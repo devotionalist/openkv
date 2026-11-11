@@ -57,6 +57,9 @@ Store::Store(Options opts, LegacyFactory factory)
   batch_->set_apply_handler([this](uint32_t rid, std::vector<ApplyControl> msgs) {
     on_apply_batch(rid, std::move(msgs));
   });
+  // mailbox 投递 → schedule 唤醒对应 worker（不再每轮扫全表）。
+  router_->set_raft_notify([this](uint32_t rid) { batch_->schedule_raft(rid); });
+  router_->set_apply_notify([this](uint32_t rid) { batch_->schedule_apply(rid); });
 
   SnapWorker::Provider prov = [this](uint32_t rid, raft::SnapshotMeta* meta) -> std::string {
     if (!snap_provider_ || !meta) return {};
@@ -88,11 +91,101 @@ Store::~Store() { stop(); }
 void Store::start() {
   batch_->start();
   snap_->start();
+  const bool need_coalesce = opts_.ready_coalesce_n > 1 || opts_.ready_coalesce_ms > 0;
+  if (need_coalesce && !coalesce_running_.exchange(true)) {
+    coalesce_thr_ = std::thread([this] { coalesce_loop(); });
+  }
 }
 
 void Store::stop() {
+  if (coalesce_running_.exchange(false)) {
+    coalesce_cv_.notify_all();
+    if (coalesce_thr_.joinable()) coalesce_thr_.join();
+  }
+  // 冲刷残留攒批，避免 stop 后悬空 propose。
+  std::vector<uint32_t> flush_ids;
+  {
+    std::lock_guard<std::mutex> lk(coalesce_mu_);
+    for (auto& [rid, st] : coalesce_) {
+      if (st.pending > 0 || st.armed) flush_ids.push_back(rid);
+      st.pending = 0;
+      st.armed = false;
+    }
+  }
+  for (auto rid : flush_ids) drive_ready(rid);
   if (snap_) snap_->stop();
   if (batch_) batch_->stop();
+}
+
+void Store::request_ready(uint32_t region_id) {
+  // 关闭攒批：立即 drive。
+  if (opts_.ready_coalesce_n <= 1 && opts_.ready_coalesce_ms == 0) {
+    drive_ready(region_id);
+    return;
+  }
+  bool should_flush = false;
+  {
+    std::lock_guard<std::mutex> lk(coalesce_mu_);
+    auto& st = coalesce_[region_id];
+    st.pending++;
+    const bool count_hit =
+        opts_.ready_coalesce_n > 1 && st.pending >= opts_.ready_coalesce_n;
+    if (count_hit) {
+      st.pending = 0;
+      st.armed = false;
+      should_flush = true;
+    } else if (opts_.ready_coalesce_ms > 0) {
+      const auto dl = std::chrono::steady_clock::now() +
+                      std::chrono::milliseconds(opts_.ready_coalesce_ms);
+      if (!st.armed) {
+        st.armed = true;
+        st.deadline = dl;
+        coalesce_cv_.notify_one();
+      } else if (dl < st.deadline) {
+        st.deadline = dl;
+      }
+    }
+    // 仅计数模式且未满：继续攒。
+  }
+  if (should_flush) drive_ready(region_id);
+}
+
+void Store::coalesce_loop() {
+  using clock = std::chrono::steady_clock;
+  while (coalesce_running_.load(std::memory_order_acquire)) {
+    std::vector<uint32_t> due;
+    {
+      std::unique_lock<std::mutex> lk(coalesce_mu_);
+      clock::time_point next = clock::time_point::max();
+      for (auto& [rid, st] : coalesce_) {
+        if (st.armed && st.deadline < next) next = st.deadline;
+      }
+      if (next == clock::time_point::max()) {
+        coalesce_cv_.wait(lk, [this] {
+          if (!coalesce_running_.load(std::memory_order_acquire)) return true;
+          for (auto& [rid, st] : coalesce_) {
+            (void)rid;
+            if (st.armed) return true;
+          }
+          return false;
+        });
+      } else {
+        coalesce_cv_.wait_until(lk, next, [this] {
+          return !coalesce_running_.load(std::memory_order_acquire);
+        });
+      }
+      if (!coalesce_running_.load(std::memory_order_acquire)) break;
+      const auto now = clock::now();
+      for (auto& [rid, st] : coalesce_) {
+        if (st.armed && st.deadline <= now) {
+          st.pending = 0;
+          st.armed = false;
+          due.push_back(rid);
+        }
+      }
+    }
+    for (auto rid : due) drive_ready(rid);
+  }
 }
 
 void Store::schedule_tick() {

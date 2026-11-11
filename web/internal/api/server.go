@@ -336,12 +336,20 @@ func (s *Server) buildTopology() map[string]any {
 		accum[k] += n
 	}
 
+	storeNames := make([]string, 0, len(stores))
+	for _, s := range stores {
+		storeNames = append(storeNames, s.Name)
+	}
+	metaNames := make([]string, 0, len(metas))
+	for _, m := range metas {
+		metaNames = append(metaNames, m.Name)
+	}
 	for _, n := range gws {
 		addLink("client", n.Name, "gateway", n.Counts.Gw, false)
-		for peer, c := range n.Counts.ToStorePeers {
+		for peer, c := range cluster.AttributePeerCounts(n.Counts.ToStorePeers, n.Counts.ToStore, storeNames) {
 			addLink(n.Name, peer, "gateway", c, false)
 		}
-		for peer, c := range n.Counts.ToMetaPeers {
+		for peer, c := range cluster.AttributePeerCounts(n.Counts.ToMetaPeers, n.Counts.ToMeta, metaNames) {
 			addLink(n.Name, peer, "meta", c, false)
 		}
 	}

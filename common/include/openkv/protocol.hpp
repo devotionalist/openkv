@@ -141,6 +141,10 @@ inline constexpr const char* kStoreHbSec = "SKV_STORE_HB_SEC";
 inline constexpr const char* kMetaStoreTtlMs = "SKV_META_STORE_TTL_MS";
 inline constexpr const char* kRaftWorkers = "SKV_RAFT_WORKERS";
 inline constexpr const char* kApplyWorkers = "SKV_APPLY_WORKERS";
+/// Ready group commit：攒满 N 条 propose 再 drive_ready（1=关闭计数触发）。
+inline constexpr const char* kReadyCoalesceN = "SKV_READY_COALESCE_N";
+/// Ready group commit：最长等待毫秒（0=仅按条数）。
+inline constexpr const char* kReadyCoalesceMs = "SKV_READY_COALESCE_MS";
 }  // namespace env
 
 // ---------------------------------------------------------------------------

@@ -24,7 +24,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <limits>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -67,6 +70,31 @@ TEST(TsoTest, AllocMonotonicLocal) {
   o.inject_cache_for_test(1000, 1100);
   EXPECT_EQ(o.alloc(1), 1000u);
   EXPECT_EQ(o.alloc(2), 1001u);
+}
+
+TEST(TsoTest, AllocAsyncLocalHit) {
+  TSOracle o({}, 100);
+  o.inject_cache_for_test(2000, 2100);
+  std::mutex mu;
+  std::condition_variable cv;
+  bool done = false;
+  grpc::Status st;
+  uint64_t start = 0;
+  o.alloc_async(2, [&](grpc::Status s, uint64_t ts) {
+    std::lock_guard<std::mutex> lock(mu);
+    st = s;
+    start = ts;
+    done = true;
+    cv.notify_one();
+  });
+  {
+    std::unique_lock<std::mutex> lock(mu);
+    cv.wait_for(lock, std::chrono::seconds(1), [&] { return done; });
+  }
+  ASSERT_TRUE(done);
+  ASSERT_TRUE(st.ok()) << st.error_message();
+  EXPECT_EQ(start, 2000u);
+  EXPECT_EQ(o.alloc(1), 2002u);
 }
 
 TEST(TsoTest, ConcurrentUnique) {

@@ -29,6 +29,19 @@ SKV_ADMIN=1 make cluster-up
 | Tab | 内容 |
 |-----|------|
 | 总览 | **拓扑图**（Meta / Gateway / Storage）+ 节点上线/下线/重启 + TSO/GC |
+
+### 总览连线（links）
+
+画板连线来自 `/api/topology` 的 `links`（节点对），不是角色级 `flows` 汇总边。
+
+| 边 | 计数来源 |
+|----|----------|
+| `client → gateway` | Gateway `/stats` 的 `gw`/`client` |
+| `gateway → storage-*` | `to_store_peers`（按 Store addr）；若明细为空则用 `to_store` 均摊到已知 Store 名 |
+| `gateway → meta-*` | `to_meta_peers`；缺省时用 `to_meta` 均摊 |
+| Store/Meta 内部 | 各节点 STATS 的 `peer_raft*` / `peer_sync*` |
+
+Gateway 热路径须对每次出站调用 `note_to_store(addr)` / `note_to_meta(addr)`，否则 `to_*_peers` 为空，总览只剩 `client→gateway`。
 | 运维 | Region 主表（行内 Split/Merge/Place，展开看副本）+ 待加入 Store + Balance |
 | Console | Gateway Put/Get、Meta Locate，以及 Hash / Set / List / ZSet（`POST /api/ds`） |
 

@@ -364,7 +364,7 @@ std::optional<KvRecord> KvEngine::get(std::string_view key, bool hide_expired) c
 void KvEngine::compact_for_ttl() {
   if (!rocks_ || !rocks_->db) return;
   // RocksDB 本仓库以 -fno-rtti 构建，无法挂 CompactionFilter 子类；
-  // 对齐 TiKV TTL Checker：扫描删除过期项，再 CompactRange 回收空间。
+  // TTL 回收：扫描删除过期项，再 CompactRange 回收空间。
   std::vector<std::string> doomed;
   for_each([&](std::string_view key, const KvRecord& rec) {
     if (kv_record_expired(rec)) doomed.emplace_back(key);

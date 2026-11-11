@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file proposal_queue_test.cpp
-// W1：ProposalQueue 即时唤醒 / 超时（TiKV-style apply callback）。
+// W1：ProposalQueue 即时唤醒 / 超时（apply callback）。
 
 #include "openkv/storage/proposal_queue.hpp"
 

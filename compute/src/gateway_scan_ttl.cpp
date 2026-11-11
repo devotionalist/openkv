@@ -69,7 +69,7 @@ TxnScanResult GatewayServer::scan_one_region(uint32_t region_id, std::string_vie
   std::exception_ptr last;
   for (auto* st : try_order(region_id)) {
     try {
-      note_to_store();
+      note_to_store(st->addr());
       return st->txn_scan_opt(region_id, start, end, after, start_ts, limit, keys_only, false);
     } catch (...) {
       last = std::current_exception();
@@ -179,7 +179,7 @@ grpc::Status GatewayServer::ttl_stale(const std::string& key, kv::v1::TTLRespons
   std::exception_ptr last;
   for (auto* st : try_order(region)) {
     try {
-      note_to_store();
+      note_to_store(st->addr());
       const int64_t ttl = st->txn_ttl_opt(region, key, std::numeric_limits<uint64_t>::max(), false);
       resp->set_ttl_ms(ttl);
       return grpc::Status::OK;

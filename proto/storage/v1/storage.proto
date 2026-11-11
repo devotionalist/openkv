@@ -68,6 +68,8 @@ message StoreGetRequest {
   uint32 shard_id = 1;
   bytes key = 2;
   bool linearizable = 3;
+  // 0 = plain KvRecord（RawGet）；>0 = MVCC txn_get(start_ts)
+  uint64 start_ts = 4;
 }
 
 message StoreGetResponse {
@@ -76,6 +78,8 @@ message StoreGetResponse {
   uint64 revision = 3;
   bool is_leader = 4;
   string redirect_to = 5;
+  bool locked = 6;
+  string error = 7;
 }
 
 message ProposeRequest {
@@ -83,16 +87,23 @@ message ProposeRequest {
   enum Op {
     PUT = 0;
     DELETE = 1;
+    ONEPC = 2;  // 二进制热路径：免 ExecLine hex
   }
   Op op = 2;
   bytes key = 3;
   bytes value = 4;
-  int64 ttl_ms = 5;
+  int64 ttl_ms = 5;  // plain Put TTL；ONEPC 时表示 expire_at_ms（绝对）
   string client_id = 6;
   uint64 request_id = 7;
   // plain KV revision CAS（Raft apply 内校验 KvRecord.revision）
   bool cas = 8;
   uint64 expected_revision = 9;
+  // ONEPC 字段（op=ONEPC）
+  uint64 start_ts = 10;
+  uint64 commit_ts = 11;
+  bytes primary = 12;
+  uint64 epoch = 13;
+  uint32 mvcc_op = 14;  // 0=Put 1=Delete
 }
 
 message ProposeResponse {

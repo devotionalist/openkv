@@ -17,9 +17,10 @@
 | 路径 | revision 含义 | 谁用 |
 |------|---------------|------|
 | **Gateway Put/Get（MVCC）** | 可见版本的 **commit_ts** | `kv.Client.PutCAS` / `DeleteCAS`；`Get.revision` |
-| **plain Propose Put/Del** | `KvRecord.revision`（Raft apply index） | 行协议 `PUT/DEL … cas expected`、Storage `Propose.cas` |
+| **Gateway RawPut/RawGet（plain）** | `KvRecord.revision`（Raft apply index） | `RawPut(cas=…)` / `RawGet.revision` |
+| **plain Propose Put/Del** | 同上 | Storage `Propose.cas`；与 Raw* 同平面 |
 
-Gateway 日常读写走 MVCC Prewrite/Commit；CAS 挂在 **Prewrite apply** 上校验最新可见版本。plain 路径 CAS 校验 RocksDB value 头 8 字节 revision。
+Gateway 事务读写走 MVCC ONEPC / Prewrite/Commit；CAS 在 apply 内校验最新可见版本。Raw/plain CAS 校验 RocksDB value 头 revision。两平面 **勿混用同 key**（见 [27](27-raw-vs-txn.md)）。
 
 ### 语义
 

@@ -80,25 +80,44 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
   ServerUnaryReactor* Get(CallbackServerContext* ctx, const pb::StoreGetRequest* req,
                           pb::StoreGetResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
-    auto r = facade_.get(req->shard_id(), req->key(), req->linearizable());
-    resp->set_found(r.found);
-    resp->set_value(r.value);
-    resp->set_revision(r.revision);
-    resp->set_is_leader(r.is_leader);
-    resp->set_redirect_to(r.redirect_to);
+    if (req->start_ts() == 0) {
+      auto r = facade_.get(req->shard_id(), req->key(), req->linearizable());
+      resp->set_found(r.found);
+      resp->set_value(r.value);
+      resp->set_revision(r.revision);
+      resp->set_is_leader(r.is_leader);
+      resp->set_redirect_to(r.redirect_to);
+    } else {
+      auto r = facade_.txn_get(req->shard_id(), req->key(), req->start_ts(), req->linearizable());
+      resp->set_found(r.found);
+      resp->set_value(r.value);
+      resp->set_revision(r.revision);
+      resp->set_is_leader(r.is_leader);
+      resp->set_redirect_to(r.redirect_to);
+      resp->set_locked(r.locked);
+      if (!r.error.empty()) resp->set_error(r.error);
+    }
     reactor->Finish(Status::OK);
     return reactor;
   }
 
-  // Finish-on-apply：callback 线程只发起 propose_async，apply/超时后再 Finish。
+  // Finish-on-apply：callback 线程只发起 async，apply/超时后再 Finish。
   ServerUnaryReactor* Propose(CallbackServerContext* ctx, const pb::ProposeRequest* req,
                               pb::ProposeResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
-    facade_.propose_async(req->shard_id(), command_from_propose_req(*req),
-                          [reactor, resp](ProposeResult r) {
-                            fill_propose_response(resp, r);
-                            reactor->Finish(Status::OK);
-                          });
+    auto finish = [reactor, resp](ProposeResult r) {
+      fill_propose_response(resp, r);
+      reactor->Finish(Status::OK);
+    };
+    if (req->op() == pb::ProposeRequest::ONEPC) {
+      // 二进制热路径：Gateway Put/Delete 免 ExecLine hex。
+      const std::string& primary = req->primary().empty() ? req->key() : req->primary();
+      facade_.one_pc_async(req->shard_id(), req->key(), req->start_ts(), req->commit_ts(), primary,
+                           static_cast<uint8_t>(req->mvcc_op()), req->value(), req->epoch(),
+                           req->cas(), req->expected_revision(), req->ttl_ms(), std::move(finish));
+    } else {
+      facade_.propose_async(req->shard_id(), command_from_propose_req(*req), std::move(finish));
+    }
     return reactor;
   }
 
@@ -421,6 +440,11 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
       resp->set_body(std::move(body));
       reactor->Finish(Status::OK);
     };
+    // PING：回调线程直接回，不进 WorkPool（池堵时仍可探活）。
+    if (line == "PING" || line == "PING\r" || line.starts_with("PING ")) {
+      finish("OK PONG");
+      return reactor;
+    }
     // PUT/DEL/ONEPC：接收线程直接 propose_async，不进池、不 future.get。
     if (line_->try_process_line_async(line, &sess, finish)) return reactor;
     // 其它行可能 sync wait；丢到 WorkPool，立刻归还 callback 线程。

@@ -27,8 +27,10 @@ MultiRaft::MultiRaft(GroupFactory factory, Options opts) : opts_(opts) {
   raftstore::Store::Options so;
   so.hibernate_after_ms = opts_.hibernate_after_ms;
   so.unload_after_ms = opts_.unload_after_ms;
-  so.batch.raft_workers = opts_.raft_workers == 0 ? 2 : opts_.raft_workers;
-  so.batch.apply_workers = opts_.apply_workers == 0 ? 2 : opts_.apply_workers;
+  so.batch.raft_workers = opts_.raft_workers == 0 ? 8 : opts_.raft_workers;
+  so.batch.apply_workers = opts_.apply_workers == 0 ? 8 : opts_.apply_workers;
+  so.ready_coalesce_n = opts_.ready_coalesce_n;
+  so.ready_coalesce_ms = opts_.ready_coalesce_ms;
   store_ = std::make_unique<raftstore::Store>(so, std::move(factory));
 }
 

@@ -89,7 +89,7 @@ k3s 使用 containerd，需把 Docker 镜像导入后再装：
 ```bash
 docker build -f deploy/Dockerfile -t openkv:dev .
 docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
-docker build -f deploy/Dockerfile.web -t openkv-web:dev .
+docker build -f deploy/Dockerfile.web --build-context sdk=../openkv-client-go -t openkv-web:dev .
 
 docker save openkv:dev         | colima ssh -- sudo k3s ctr images import -
 docker save openkv-gateway:dev | colima ssh -- sudo k3s ctr images import -

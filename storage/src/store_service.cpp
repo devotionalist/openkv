@@ -367,7 +367,7 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     return;
   }
 
-  // TiKV-style：用户 key latch 持到 apply；propose + 一次 flush_ready；纯 CV 等 invoke。
+  // 用户 key latch 持到 apply；propose + 一次 flush_ready；纯 CV 等 invoke。
   auto* sched = node_.scheduler();
   const std::string latch_key =
       cmd_has_user_key(cmd) ? cmd.key : (std::string("op:") + std::to_string(static_cast<int>(cmd.op)));

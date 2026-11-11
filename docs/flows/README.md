@@ -51,7 +51,7 @@ StorageNode × N（Scheduler latch → RaftKV → raftstore Ready → RocksDB）
 Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 ```
 
-短 Put/Delete：**本地 `alloc_ts(2)` → Storage `ONEPC`（1 次 Propose）**。  
+短 Put/Delete：**本地 `alloc_ts(2)` → `StoreService.Propose(ONEPC)`（1 次 Propose）**。  
 多 key Txn：**Prewrite → Commit**。线性读：**TSO + Leader `TXN_GET`**。
 
 组件对照：[COMPONENT_MAP.md](../architecture/COMPONENT_MAP.md)。
@@ -63,6 +63,8 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 | 流程 | 文件 | 要点 |
 |------|------|------|
 | 写入 Put / Delete | [01-write-put.md](01-write-put.md) | Locate → ONEPC → 多数派 → apply → ProposalQueue |
+| Raw vs Txn | [27-raw-vs-txn.md](27-raw-vs-txn.md) | RawPut/Get/Delete 无 TSO；与 Put 同 key 勿混用 |
+| Compute 网络优化 | [28-compute-net-opt.md](28-compute-net-opt.md) | 二进制 Get、stub 缓存、TSO async、Batch fan-in |
 | 读取 Get | [02-read-get.md](02-read-get.md) | 线性一致 vs 副本读；无 ReadIndex |
 | not_leader 重定向 | [08-not-leader-redirect.md](08-not-leader-redirect.md) | `rememberLeader` / `tryOrder` |
 | Watch | [11-watch.md](11-watch.md) | Gateway 轮询 `WATCH_POLL`；revision=apply index |
@@ -117,6 +119,8 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | 架构硬化 | [19-architecture-hardening.md](19-architecture-hardening.md) | CV 等 apply、latch 持到 apply、approx split、Meta CV |
 | 写路径批处理 | [23-write-path-batching.md](23-write-path-batching.md) | Ready group commit、apply WriteBatch、多 Region |
 | 耐久：Raft vs KV | [24-persist-raft-vs-kv.md](24-persist-raft-vs-kv.md) | 默认 data=Raft sync / KV 异步 |
+| 写路径三刀 | [25-write-path-knives.md](25-write-path-knives.md) | Ready 攒批、二进制 ONEPC、workers 8/8 |
+| Raftstore schedule | [26-raftstore-schedule-pipeline.md](26-raftstore-schedule-pipeline.md) | schedule 唤醒 + drain-until-empty |
 | 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、ONEPC WriteBatch、BatchSystem CV |
 | 全接口压测 | [17-gateway-api-bench.md](17-gateway-api-bench.md) | `examples/bench`；基线记 TEST_CASES |
 

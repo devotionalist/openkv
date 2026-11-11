@@ -86,6 +86,32 @@ TEST_F(StoreFacadeTest, PutGet) {
   EXPECT_TRUE(gr.is_leader);
 }
 
+// Raw 平面（无 TSO/MVCC）：plain Propose PUT/DEL + Store Get；与 Gateway Raw* 同路径。
+TEST_F(StoreFacadeTest, RawPlanePutGetDeleteAndCas) {
+  auto put = facade_->propose(0, {CmdOp::kPut, "raw/k1", "v1", 0});
+  ASSERT_TRUE(put.ok) << put.error;
+  auto gr = facade_->get(0, "raw/k1", true);
+  ASSERT_TRUE(gr.found);
+  EXPECT_EQ(gr.value, "v1");
+  EXPECT_EQ(gr.revision, put.revision);
+
+  Command cas_create{CmdOp::kPut, "raw/only", "x", 0};
+  cas_create.cas = true;
+  cas_create.expected_revision = 0;
+  ASSERT_TRUE(facade_->propose(0, cas_create).ok);
+  auto again = facade_->propose(0, cas_create);
+  EXPECT_FALSE(again.ok);
+  EXPECT_TRUE(again.cas_failed);
+
+  ASSERT_TRUE(facade_->propose(0, {CmdOp::kDelete, "raw/k1", "", 0}).ok);
+  EXPECT_FALSE(facade_->get(0, "raw/k1", true).found);
+
+  // 同 Region 上 ONEPC（事务平面）用不同 key，互不干扰。
+  auto one = facade_->one_pc(0, "txn/k1", 10, 11, "txn/k1", /*put*/ 0, "tv");
+  ASSERT_TRUE(one.ok) << one.error;
+  EXPECT_EQ(one.revision, 11u);
+}
+
 TEST_F(StoreFacadeTest, Delete) {
   facade_->propose(0, {CmdOp::kPut, "d", "1", 0});
   auto pr = facade_->propose(0, {CmdOp::kDelete, "d", "", 0});
@@ -193,10 +219,14 @@ TEST_F(StoreFacadeTest, OnePcPutGetAndCas) {
   auto r = facade_->one_pc(0, "1pc-k", 10, 11, "1pc-k", 0, "v1", 0, false, 0);
   ASSERT_TRUE(r.ok) << r.error;
   EXPECT_EQ(r.revision, 11u);
-  auto tg = facade_->txn_get(0, "1pc-k", ~uint64_t{0}, true);
+  // StoreService.Get(start_ts>0) 走同一 txn_get 路径（二进制读）。
+  auto tg = facade_->txn_get(0, "1pc-k", /*start_ts=*/100, true);
   ASSERT_TRUE(tg.found);
   EXPECT_EQ(tg.value, "v1");
   EXPECT_EQ(tg.revision, 11u);
+  auto tg_max = facade_->txn_get(0, "1pc-k", ~uint64_t{0}, true);
+  ASSERT_TRUE(tg_max.found);
+  EXPECT_EQ(tg_max.value, "v1");
   // 无残留 lock
   auto lk = facade_->get_lock(0, "1pc-k");
   EXPECT_FALSE(lk.found);

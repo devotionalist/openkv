@@ -72,18 +72,23 @@ std::string default_stats_listen(const std::string& grpc_listen) {
 void wait_storage(const std::vector<std::string>& addrs, std::chrono::seconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   for (const auto& a : addrs) {
+    std::string last_err = "unknown";
     for (;;) {
       try {
         openkv::compute::StoreClient c(a);
+        c.set_timeout_ms(3000);
         c.ping();
         SKV_INFO << "storage ready: " << a;
         break;
+      } catch (const std::exception& e) {
+        last_err = e.what();
       } catch (...) {
-        if (std::chrono::steady_clock::now() > deadline) {
-          throw std::runtime_error("storage " + a + " not ready");
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        last_err = "non-std exception";
       }
+      if (std::chrono::steady_clock::now() > deadline) {
+        throw std::runtime_error("storage " + a + " not ready: " + last_err);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
   }
 }

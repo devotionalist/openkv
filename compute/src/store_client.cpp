@@ -75,10 +75,8 @@ void StoreClient::throw_txn_err(const std::string& resp, const char* op) {
 }
 
 void StoreClient::ping() {
-  auto resp = call("PING");
-  if (resp.rfind("OK", 0) != 0) {
-    throw std::runtime_error("ping: " + resp);
-  }
+  // AdminService.Ping：不经 ExecLine/WorkPool，避免池堵时就绪探测假死。
+  store_admin_ping(addr_, timeout_ms_);
 }
 
 std::string StoreClient::call_raw(const std::string& line) { return call(line); }

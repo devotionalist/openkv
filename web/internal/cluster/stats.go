@@ -152,6 +152,34 @@ func parseStatsLine(resp string) (NodeStats, error) {
 	return out, nil
 }
 
+// AttributePeerCounts 优先用对端明细；若明细为空而总量 >0，则把总量均摊到 fallback 节点名，
+// 保证总览图在 gateway 未上报 to_*_peers 时仍能画出网关连线。
+func AttributePeerCounts(peers map[string]uint64, total uint64, fallback []string) map[string]uint64 {
+	if len(peers) > 0 {
+		return peers
+	}
+	if total == 0 || len(fallback) == 0 {
+		return peers
+	}
+	out := make(map[string]uint64, len(fallback))
+	n := uint64(len(fallback))
+	each := total / n
+	rem := total % n
+	for i, name := range fallback {
+		if name == "" {
+			continue
+		}
+		c := each
+		if uint64(i) < rem {
+			c++
+		}
+		if c > 0 {
+			out[name] = c
+		}
+	}
+	return out
+}
+
 // FetchGatewayStats HTTP GET /stats（gateway -stats-listen）。
 func FetchGatewayStats(httpAddr string) (NodeStats, error) {
 	var out NodeStats

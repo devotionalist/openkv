@@ -13,8 +13,10 @@
 |----|------|------|
 | N1 | Meta compact 前写 `fsm_<gid>.snap`；`load_from_disk` 后 `snap_applier` 恢复 ClusterState | 已做 / 回归 `MetaFsm`·`FsmSnap` |
 | N3 | ONEPC apply 经 `KvEngine::write_batch` 一次写 data+write（含 expire） | 与 23 apply 批一并推进 |
-| N4 | BatchSystem：mailbox `recv_batch`+CV；`SKV_RAFT_WORKERS` / `SKV_APPLY_WORKERS` | 部分；空转 sleep 已收敛 |
-| N5 | Gateway BatchPut 并行度；Storage 级 batch propose | Gateway 并行已抬；Storage batch propose **待做** |
+| N4 | BatchSystem：mailbox `recv_batch`+CV；`SKV_RAFT_WORKERS` / `SKV_APPLY_WORKERS` | 已做：默认 8/8 + Helm；见 [25](25-write-path-knives.md) |
+| N4b | BatchSystem schedule 通道 + drain-until-empty（禁扫全表） | 已做；见 [26](26-raftstore-schedule-pipeline.md) |
+| N5 | Gateway BatchPut 并行度；Storage 级 batch propose | Gateway 并行 + Batch CQ fan-in 见 [28](28-compute-net-opt.md)；跨请求 batch propose **待做** |
+| N8 | 二进制 Get / TSO async / stub 缓存 | 已做；见 [28](28-compute-net-opt.md) |
 | N7 | `propose` 对 `kOnePc` 检查 `region_splitting` | 已做 |
 
 ---

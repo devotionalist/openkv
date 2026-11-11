@@ -79,6 +79,75 @@ TEST(RaftstoreTest, HibernateSkipsTickUntilWake) {
   store.schedule_tick();
 }
 
+TEST(RaftstoreTest, RequestReadyCoalescesByCount) {
+  // request_ready 按 ready_coalesce_n 攒批后再 drive_ready。
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() /
+                   ("okv_req_ready_" +
+                    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(dir);
+  auto engine = std::make_shared<FileRaftEngine>(dir.string(), SyncMode::kNone);
+
+  std::atomic<int> persists{0};
+  std::atomic<size_t> max_entries{0};
+
+  Store::Options opts;
+  opts.hibernate_after_ms = 0;
+  opts.batch.raft_workers = 1;
+  opts.batch.apply_workers = 1;
+  opts.batch.poll_timeout_ms = 20;
+  opts.batch.batch_size = 64;
+  opts.ready_coalesce_n = 4;
+  opts.ready_coalesce_ms = 200;  // 主要靠条数触发，ms 作兜底
+
+  Store store(opts, [engine](uint32_t shard) {
+    RaftNode::Options o;
+    o.shard_id = shard;
+    o.self_id = "n0";
+    o.peers = {{"n0", "a", false}};
+    o.election_timeout_ms = 80;
+    o.heartbeat_ms = 30;
+    o.external_io = true;
+    o.raft_engine = engine;
+    o.raft_group_id = shard;
+    o.persist_sync = SyncMode::kNone;
+    o.check_quorum = false;
+    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {}, [](auto&&...) {});
+  });
+  store.set_persist_fn([&](uint32_t rid, const Ready& rd) {
+    ++persists;
+    const auto nent = rd.entries.size();
+    if (nent > max_entries.load()) max_entries.store(nent);
+    if (auto* n = store.get(rid)) n->persist_ready(rd);
+  });
+  store.set_apply_fn([](uint32_t, uint64_t, const std::string&) {});
+  store.start();
+  auto& n = store.get_or_create(1);
+  for (int i = 0; i < 80 && !n.is_leader(); ++i) {
+    store.schedule_tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(n.is_leader());
+  persists.store(0);
+  max_entries.store(0);
+
+  constexpr int kN = 8;
+  for (int i = 0; i < kN; ++i) {
+    ASSERT_TRUE(n.propose("r" + std::to_string(i)));
+    store.request_ready(1);
+  }
+  for (int i = 0; i < 100; ++i) {
+    if (persists.load() >= 2 && max_entries.load() >= 4) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  store.stop();
+  fs::remove_all(dir);
+
+  EXPECT_GE(persists.load(), 1);
+  EXPECT_LE(persists.load(), (kN / 4) + 2) << "count coalesce should flush about every 4 proposes";
+  EXPECT_GE(max_entries.load(), 4u) << "one Ready should carry coalesce_n entries";
+}
+
 TEST(RaftstoreTest, DriveReadyCoalescesPersist) {
   // 同批多个 drive_ready 应合并为更少 persist；persist 睡眠期间 propose 可继续入队。
   namespace fs = std::filesystem;

@@ -41,6 +41,7 @@ set(OPENKV_TEST_SOURCES
   raft/raft_read_index_test.cpp
   raft/raw_node_test.cpp
   raft/raftstore_test.cpp
+  raft/batch_system_test.cpp
   # storage：引擎、命令编解码、StoreFacade 端到端
   storage/kv_engine_test.cpp
   storage/store_codec_test.cpp

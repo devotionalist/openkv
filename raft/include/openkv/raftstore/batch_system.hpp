@@ -13,11 +13,12 @@
 // limitations under the License.
 
 // @file batch_system.hpp
-// Raft / Apply 双 worker 池；批量 poll mailbox（BatchSystem）。
+// Raft / Apply 双 worker 池；schedule 唤醒 + mailbox drain。
 
 #pragma once
 
 #include "openkv/raftstore/router.hpp"
+#include "openkv/raftstore/schedule_queue.hpp"
 
 #include <atomic>
 #include <functional>
@@ -29,10 +30,10 @@ namespace openkv::raftstore {
 class BatchSystem {
  public:
   struct Options {
-    size_t raft_workers{2};
-    size_t apply_workers{2};
-    size_t batch_size{64};
-    int poll_timeout_ms{10};
+    size_t raft_workers{8};
+    size_t apply_workers{8};
+    size_t batch_size{256};
+    int poll_timeout_ms{5};
     /// Apply / Snap 队列深度限流（Phase 3 QoS）；0=不限。
     size_t max_apply_queue_depth{8192};
     size_t max_snap_queue_depth{64};
@@ -50,6 +51,10 @@ class BatchSystem {
   void start();
   void stop();
   bool running() const { return running_.load(std::memory_order_relaxed); }
+
+  /// Router 投递成功后调用：把 region 交给对应 worker（去重）。
+  void schedule_raft(uint32_t region_id);
+  void schedule_apply(uint32_t region_id);
 
   bool apply_overloaded(uint32_t region_id) const;
   bool snap_overloaded() const;
@@ -69,6 +74,8 @@ class BatchSystem {
   std::atomic<bool> running_{false};
   std::vector<std::thread> raft_threads_;
   std::vector<std::thread> apply_threads_;
+  std::vector<ScheduleQueue> raft_sched_;
+  std::vector<ScheduleQueue> apply_sched_;
   std::atomic<uint64_t> snap_inflight_{0};
 };
 

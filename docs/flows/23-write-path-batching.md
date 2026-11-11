@@ -25,8 +25,10 @@
 | 改动 | 行为 |
 |------|------|
 | `Store::drive_ready` | 只对本 Region 投 `kWake`；BatchSystem 未起时同步 `process_ready` |
+| `Store::request_ready` | propose 热路径攒批（`SKV_READY_COALESCE_*`）后再 `drive_ready`；见 [25](25-write-path-knives.md) |
 | `Store::on_raft_batch` | 同批 Tick/Wake/Msg **只 `process_ready` 一次** |
-| `RaftKV::flush_ready` | 调 `drive_ready`，不再 `broadcast_tick` |
+| `BatchSystem` schedule | Router 投递唤醒 worker + drain-until-empty；见 [26](26-raftstore-schedule-pipeline.md) |
+| `RaftKV::async_write` | propose 后 `request_ready`；`flush_ready` 仍强制 `drive_ready` |
 | `RaftNode::persist_ready` | 持锁组 batch；`persist_io_mu_` 下 consume/sync；再推进 `stable_*`（只前进） |
 
 `data` 下 Raft Ready 仍 sync；KV 不 sync。目标是 **多数派 + Raft sync 摊销**，崩溃用日志重放，而不是每笔 apply 再 fsync。  

@@ -42,7 +42,7 @@ enum class CmdOp : uint8_t {
   kAdminSplit = 9,         // key=split_key, value=right_region u32
   kAdminMerge = 10,        // value=right_region u32
   kAdminSetEpoch = 11,     // value=epoch u64
-  /// 单 key 1PC：一次 propose 写 data+write（无残留 lock），对齐 TiKV 1PC。
+  /// 单 key 1PC：一次 propose 写 data+write（无残留 lock）。
   kOnePc = 12,
 };
 

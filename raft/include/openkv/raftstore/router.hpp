@@ -19,9 +19,11 @@
 
 #include "openkv/raftstore/mailbox.hpp"
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace openkv::raftstore {
 
@@ -29,10 +31,15 @@ class Router {
  public:
   using PeerMailbox = Mailbox<PeerMsg>;
   using ApplyMailbox = Mailbox<ApplyControl>;
+  /// 投递成功后通知 BatchSystem schedule（有活 peer 入队）。
+  using NotifyFn = std::function<void(uint32_t region_id)>;
 
   std::shared_ptr<PeerMailbox> register_peer(uint32_t region_id, size_t cap = 4096);
   std::shared_ptr<ApplyMailbox> register_apply(uint32_t region_id, size_t cap = 4096);
   void deregister(uint32_t region_id);
+
+  void set_raft_notify(NotifyFn fn) { raft_notify_ = std::move(fn); }
+  void set_apply_notify(NotifyFn fn) { apply_notify_ = std::move(fn); }
 
   bool send_raft(uint32_t region_id, PeerMsg msg);
   bool send_apply(uint32_t region_id, ApplyControl msg);
@@ -49,6 +56,8 @@ class Router {
   mutable std::mutex mu_;
   std::unordered_map<uint32_t, std::shared_ptr<PeerMailbox>> peers_;
   std::unordered_map<uint32_t, std::shared_ptr<ApplyMailbox>> applies_;
+  NotifyFn raft_notify_;
+  NotifyFn apply_notify_;
 };
 
 }  // namespace openkv::raftstore

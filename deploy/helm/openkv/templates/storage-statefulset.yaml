@@ -59,6 +59,14 @@ spec:
               value: {{ .Values.split.bytes | default "100663296" | quote }}
             - name: SKV_PERSIST_SYNC
               value: {{ .Values.persistSync | default "data" | quote }}
+            - name: SKV_RAFT_WORKERS
+              value: {{ .Values.raftWorkers | default "8" | quote }}
+            - name: SKV_APPLY_WORKERS
+              value: {{ .Values.applyWorkers | default "8" | quote }}
+            - name: SKV_READY_COALESCE_N
+              value: {{ .Values.readyCoalesceN | default "32" | quote }}
+            - name: SKV_READY_COALESCE_MS
+              value: {{ .Values.readyCoalesceMs | default "1" | quote }}
             {{- if .Values.adminToken }}
             - name: SKV_ADMIN_TOKEN
               valueFrom:

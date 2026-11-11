@@ -24,6 +24,10 @@ service KVService {
   rpc Get(GetRequest) returns (GetResponse);
   rpc Put(PutRequest) returns (PutResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  // 无事务平面：无 TSO/无 MVCC；与 Put/Get 同 key 空间，勿混用同 key。
+  rpc RawGet(RawGetRequest) returns (RawGetResponse);
+  rpc RawPut(RawPutRequest) returns (RawPutResponse);
+  rpc RawDelete(RawDeleteRequest) returns (RawDeleteResponse);
   rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
   rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
   // MVCC 范围扫描（用户键语义）；ListPrefix = prefix + prefix_upper_bound
@@ -82,6 +86,46 @@ message DeleteRequest {
 }
 
 message DeleteResponse {
+  bool deleted = 1;
+  uint64 revision = 2;
+  bool cas_failed = 3;
+  uint64 current_revision = 4;
+}
+
+// Raw*：plain KvRecord；revision = Raft apply index（非 commit_ts）。
+message RawGetRequest {
+  bytes key = 1;
+  bool linearizable = 2;
+}
+
+message RawGetResponse {
+  bytes value = 1;
+  bool found = 2;
+  uint64 revision = 3;
+}
+
+message RawPutRequest {
+  bytes key = 1;
+  bytes value = 2;
+  int64 ttl_ms = 3;
+  bool cas = 4;
+  uint64 expected_revision = 5;
+}
+
+message RawPutResponse {
+  uint64 revision = 1;
+  bool ok = 2;
+  bool cas_failed = 3;
+  uint64 current_revision = 4;
+}
+
+message RawDeleteRequest {
+  bytes key = 1;
+  bool cas = 2;
+  uint64 expected_revision = 3;
+}
+
+message RawDeleteResponse {
   bool deleted = 1;
   uint64 revision = 2;
   bool cas_failed = 3;

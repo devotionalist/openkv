@@ -64,6 +64,15 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
   grpc::ServerUnaryReactor* Delete(grpc::CallbackServerContext* ctx,
                                    const kv::v1::DeleteRequest* req,
                                    kv::v1::DeleteResponse* resp) override;
+  grpc::ServerUnaryReactor* RawGet(grpc::CallbackServerContext* ctx,
+                                   const kv::v1::RawGetRequest* req,
+                                   kv::v1::RawGetResponse* resp) override;
+  grpc::ServerUnaryReactor* RawPut(grpc::CallbackServerContext* ctx,
+                                   const kv::v1::RawPutRequest* req,
+                                   kv::v1::RawPutResponse* resp) override;
+  grpc::ServerUnaryReactor* RawDelete(grpc::CallbackServerContext* ctx,
+                                      const kv::v1::RawDeleteRequest* req,
+                                      kv::v1::RawDeleteResponse* resp) override;
   grpc::ServerUnaryReactor* BatchGet(grpc::CallbackServerContext* ctx,
                                      const kv::v1::BatchGetRequest* req,
                                      kv::v1::BatchGetResponse* resp) override;
@@ -179,7 +188,9 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
 
   void note_client_rpc();
   void note_to_store();
+  void note_to_store(const std::string& peer_addr);
   void note_to_meta();
+  void note_to_meta(const std::string& peer_addr);
 
   uint64_t alloc_ts(uint32_t n);
   uint32_t region_of(std::string_view key) const;
@@ -202,16 +213,32 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
   void async_resolve_secondaries(uint64_t start_ts, uint64_t commit_ts,
                                  std::vector<std::string> keys);
 
-  // 热路径：本地 TSO 批缓存 alloc_ts → store_exec_line_async
+  // 热路径：本地 TSO 批缓存 alloc_async → store_propose_onepc_async
   void put_async(const kv::v1::PutRequest* req, kv::v1::PutResponse* resp,
                  grpc::ServerUnaryReactor* reactor, int attempt);
+  /// Batch 等：完成时调 done（不持有 reactor）。
+  void put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutResponse* resp, int attempt,
+                    std::function<void(grpc::Status)> done);
   void delete_async(const kv::v1::DeleteRequest* req, kv::v1::DeleteResponse* resp,
                     grpc::ServerUnaryReactor* reactor, int attempt);
   void get_async(const kv::v1::GetRequest* req, kv::v1::GetResponse* resp,
                  grpc::ServerUnaryReactor* reactor, int attempt);
-  /// 本地 alloc_ts(2) 一次拿 start+commit；失败则 Finish(reactor)。
-  void with_start_commit_ts(grpc::ServerUnaryReactor* reactor,
+  void get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetResponse* resp, int attempt,
+                    std::function<void(grpc::Status)> done);
+  // 无事务：Propose PUT/DELETE + Store Get（无 TSO）
+  void raw_put_async(const kv::v1::RawPutRequest* req, kv::v1::RawPutResponse* resp,
+                     grpc::ServerUnaryReactor* reactor, int attempt);
+  void raw_delete_async(const kv::v1::RawDeleteRequest* req, kv::v1::RawDeleteResponse* resp,
+                        grpc::ServerUnaryReactor* reactor, int attempt);
+  void raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawGetResponse* resp,
+                     grpc::ServerUnaryReactor* reactor, int attempt);
+  /// 本地 alloc_async(2)；失败走 on_err。
+  void with_start_commit_ts(std::function<void(grpc::Status)> on_err,
                             std::function<void(uint64_t start, uint64_t commit_ts)> cont);
+  void batch_put_async(const kv::v1::BatchPutRequest* req, kv::v1::BatchPutResponse* resp,
+                       grpc::ServerUnaryReactor* reactor);
+  void batch_get_async(const kv::v1::BatchGetRequest* req, kv::v1::BatchGetResponse* resp,
+                       grpc::ServerUnaryReactor* reactor);
   /// not_leader / locked / splitting / epoch… → 刷路由或记 leader 后重试。
   bool retry_async_write(std::string_view body, const std::string& key, uint32_t region,
                          bool retry_write_conflict, const std::function<void()>& retry);
@@ -307,6 +334,9 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
   mutable std::atomic<uint64_t> client_in_{0};
   mutable std::atomic<uint64_t> to_store_{0};
   mutable std::atomic<uint64_t> to_meta_{0};
+  mutable std::mutex peer_mu_;
+  mutable std::unordered_map<std::string, uint64_t> to_store_peers_;
+  mutable std::unordered_map<std::string, uint64_t> to_meta_peers_;
 };
 
 bool store_skip_err(const std::string& msg);

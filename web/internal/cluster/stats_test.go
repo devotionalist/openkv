@@ -54,7 +54,7 @@ func TestFetchGatewayStats(t *testing.T) {
 	defer ln.Close()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"requests":99,"client":40,"gw":40,"to_store":50,"to_meta":9}`))
+		w.Write([]byte(`{"requests":99,"client":40,"gw":40,"to_store":50,"to_meta":9,"to_store_peers":{"storage-0:9100":40,"storage-1:9100":10},"to_meta_peers":{"meta-0:8500":9}}`))
 	})
 	go http.Serve(ln, mux)
 
@@ -64,5 +64,23 @@ func TestFetchGatewayStats(t *testing.T) {
 	}
 	if s.Requests != 99 || s.ToStore != 50 || s.ToMeta != 9 {
 		t.Fatalf("%+v", s)
+	}
+	if s.ToStorePeers["storage-0:9100"] != 40 || s.ToMetaPeers["meta-0:8500"] != 9 {
+		t.Fatalf("peers %+v meta %+v", s.ToStorePeers, s.ToMetaPeers)
+	}
+}
+
+func TestAttributePeerCounts(t *testing.T) {
+	peers := map[string]uint64{"storage-0": 7}
+	got := AttributePeerCounts(peers, 100, []string{"storage-0", "storage-1"})
+	if len(got) != 1 || got["storage-0"] != 7 {
+		t.Fatalf("prefer peers: %+v", got)
+	}
+	got = AttributePeerCounts(nil, 5, []string{"storage-0", "storage-1"})
+	if got["storage-0"] != 3 || got["storage-1"] != 2 {
+		t.Fatalf("fallback split: %+v", got)
+	}
+	if AttributePeerCounts(nil, 0, []string{"storage-0"}) != nil {
+		t.Fatal("empty total should stay nil")
 	}
 }

@@ -46,36 +46,48 @@ void Router::deregister(uint32_t region_id) {
 
 bool Router::send_raft(uint32_t region_id, PeerMsg msg) {
   std::shared_ptr<PeerMailbox> mb;
+  NotifyFn notify;
   {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = peers_.find(region_id);
     if (it == peers_.end()) return false;
     mb = it->second;
+    notify = raft_notify_;
   }
-  return mb->try_send(std::move(msg));
+  if (!mb->try_send(std::move(msg))) return false;
+  if (notify) notify(region_id);
+  return true;
 }
 
 bool Router::send_apply(uint32_t region_id, ApplyControl msg) {
   std::shared_ptr<ApplyMailbox> mb;
+  NotifyFn notify;
   {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = applies_.find(region_id);
     if (it == applies_.end()) return false;
     mb = it->second;
+    notify = apply_notify_;
   }
-  return mb->try_send(std::move(msg));
+  if (!mb->try_send(std::move(msg))) return false;
+  if (notify) notify(region_id);
+  return true;
 }
 
 bool Router::broadcast_tick() {
-  std::vector<std::shared_ptr<PeerMailbox>> mbs;
+  std::vector<std::pair<uint32_t, std::shared_ptr<PeerMailbox>>> mbs;
+  NotifyFn notify;
   {
     std::lock_guard<std::mutex> lk(mu_);
     mbs.reserve(peers_.size());
-    for (auto& [_, mb] : peers_) mbs.push_back(mb);
+    for (auto& [id, mb] : peers_) mbs.emplace_back(id, mb);
+    notify = raft_notify_;
   }
   bool any = false;
-  for (auto& mb : mbs) {
-    if (mb->try_send(TickMsg{})) any = true;
+  for (auto& [id, mb] : mbs) {
+    if (!mb->try_send(TickMsg{})) continue;
+    any = true;
+    if (notify) notify(id);
   }
   return any;
 }

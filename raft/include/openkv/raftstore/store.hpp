@@ -23,10 +23,15 @@
 #include "openkv/raftstore/snap_worker.hpp"
 #include "openkv/raftstore/store_meta.hpp"
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace openkv::raftstore {
 
@@ -40,6 +45,10 @@ class Store {
     /// 冷卸载：Hibernate 后再空闲该毫秒可卸协议状态（0=禁用）。
     uint32_t unload_after_ms{0};
     size_t mailbox_capacity{4096};
+    /// Ready group-commit：攒满 N 条 request_ready 再 flush（≤1 关闭计数）。
+    uint32_t ready_coalesce_n{32};
+    /// Ready group-commit：最长等待 ms（0=仅按条数；与 n≤1 且 ms=0 时立即 flush）。
+    uint32_t ready_coalesce_ms{1};
   };
 
   using LegacyFactory = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
@@ -72,6 +81,8 @@ class Store {
   void schedule_tick();
   /// 仅驱动指定 Region 的 Ready（propose 后调用；批内多个请求合并为一次 persist/sync）。
   void drive_ready(uint32_t region_id);
+  /// propose 热路径：按 ready_coalesce_n/ms 攒批后再 drive_ready（group commit）。
+  void request_ready(uint32_t region_id);
 
   raft::RaftNode* get(uint32_t region_id);
   std::shared_ptr<raft::RaftNode> get_shared(uint32_t region_id);
@@ -126,6 +137,18 @@ class Store {
 
   mutable std::mutex mu_;
   std::unordered_map<uint32_t, std::shared_ptr<Peer>> peers_;
+
+  struct CoalesceState {
+    uint32_t pending{0};
+    bool armed{false};
+    std::chrono::steady_clock::time_point deadline{};
+  };
+  void coalesce_loop();
+  std::mutex coalesce_mu_;
+  std::condition_variable coalesce_cv_;
+  std::unordered_map<uint32_t, CoalesceState> coalesce_;
+  std::atomic<bool> coalesce_running_{false};
+  std::thread coalesce_thr_;
 };
 
 }  // namespace openkv::raftstore

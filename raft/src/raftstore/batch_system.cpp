@@ -16,17 +16,15 @@
 
 #include "openkv/raftstore/batch_system.hpp"
 
-#include <algorithm>
-#include <chrono>
-#include <thread>
-
 namespace openkv::raftstore {
 
 BatchSystem::BatchSystem(std::shared_ptr<Router> router, Options opts)
     : router_(std::move(router)), opts_(opts) {
   if (opts_.raft_workers == 0) opts_.raft_workers = 1;
   if (opts_.apply_workers == 0) opts_.apply_workers = 1;
-  if (opts_.batch_size == 0) opts_.batch_size = 64;
+  if (opts_.batch_size == 0) opts_.batch_size = 256;
+  raft_sched_ = std::vector<ScheduleQueue>(opts_.raft_workers);
+  apply_sched_ = std::vector<ScheduleQueue>(opts_.apply_workers);
 }
 
 BatchSystem::~BatchSystem() { stop(); }
@@ -45,6 +43,8 @@ void BatchSystem::start() {
 
 void BatchSystem::stop() {
   if (!running_.exchange(false)) return;
+  for (auto& s : raft_sched_) s.wake();
+  for (auto& s : apply_sched_) s.wake();
   for (auto& t : raft_threads_) {
     if (t.joinable()) t.join();
   }
@@ -53,6 +53,16 @@ void BatchSystem::stop() {
   }
   raft_threads_.clear();
   apply_threads_.clear();
+}
+
+void BatchSystem::schedule_raft(uint32_t region_id) {
+  if (raft_sched_.empty()) return;
+  raft_sched_[region_id % raft_sched_.size()].push(region_id);
+}
+
+void BatchSystem::schedule_apply(uint32_t region_id) {
+  if (apply_sched_.empty()) return;
+  apply_sched_[region_id % apply_sched_.size()].push(region_id);
 }
 
 bool BatchSystem::apply_overloaded(uint32_t region_id) const {
@@ -66,76 +76,34 @@ bool BatchSystem::snap_overloaded() const {
 }
 
 void BatchSystem::raft_worker_loop(size_t worker_id) {
-  while (running_) {
-    auto regions = router_->peer_regions();
-    if (regions.empty()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(opts_.poll_timeout_ms));
-      continue;
-    }
-    // 分片：worker_id 处理 region_id % N == worker_id
-    bool did = false;
-    std::shared_ptr<Router::PeerMailbox> wait_mb;
-    uint32_t wait_rid = 0;
-    for (uint32_t rid : regions) {
-      if ((rid % opts_.raft_workers) != worker_id) continue;
-      auto mb = router_->peer_mailbox(rid);
-      if (!mb) continue;
+  auto& sched = raft_sched_[worker_id];
+  while (running_.load(std::memory_order_acquire)) {
+    auto rid_opt = sched.pop(opts_.poll_timeout_ms, running_);
+    if (!rid_opt) continue;
+    const uint32_t rid = *rid_opt;
+    auto mb = router_->peer_mailbox(rid);
+    if (!mb || !raft_handler_) continue;
+    // drain-until-empty：同 Region 连续多批再让出。
+    for (;;) {
       auto batch = mb->recv_batch(opts_.batch_size, 0);
-      if (batch.empty()) {
-        if (!wait_mb) {
-          wait_mb = mb;
-          wait_rid = rid;
-        }
-        continue;
-      }
-      did = true;
-      if (raft_handler_) raft_handler_(rid, std::move(batch));
-    }
-    // 空闲：在某个 mailbox 上 CV 等待（替盲 sleep），有 Tick/Msg 立即醒。
-    if (!did && wait_mb) {
-      auto batch = wait_mb->recv_batch(opts_.batch_size, opts_.poll_timeout_ms);
-      if (!batch.empty() && raft_handler_) raft_handler_(wait_rid, std::move(batch));
-    } else if (!did) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(opts_.poll_timeout_ms));
+      if (batch.empty()) break;
+      raft_handler_(rid, std::move(batch));
     }
   }
 }
 
 void BatchSystem::apply_worker_loop(size_t worker_id) {
-  while (running_) {
-    auto regions = router_->peer_regions();
-    if (regions.empty()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(opts_.poll_timeout_ms));
-      continue;
-    }
-    bool did = false;
-    std::shared_ptr<Router::ApplyMailbox> wait_mb;
-    uint32_t wait_rid = 0;
-    // 跨 Region 合并：同一 worker 一轮内收集多 region 的 ApplyMsg（WriteBatch 合并点）
-    std::vector<std::pair<uint32_t, std::vector<ApplyControl>>> merged;
-    for (uint32_t rid : regions) {
-      if ((rid % opts_.apply_workers) != worker_id) continue;
-      auto mb = router_->apply_mailbox(rid);
-      if (!mb) continue;
+  auto& sched = apply_sched_[worker_id];
+  while (running_.load(std::memory_order_acquire)) {
+    auto rid_opt = sched.pop(opts_.poll_timeout_ms, running_);
+    if (!rid_opt) continue;
+    const uint32_t rid = *rid_opt;
+    auto mb = router_->apply_mailbox(rid);
+    if (!mb || !apply_handler_) continue;
+    for (;;) {
       auto batch = mb->recv_batch(opts_.batch_size, 0);
-      if (batch.empty()) {
-        if (!wait_mb) {
-          wait_mb = mb;
-          wait_rid = rid;
-        }
-        continue;
-      }
-      did = true;
-      merged.emplace_back(rid, std::move(batch));
-    }
-    if (apply_handler_) {
-      for (auto& [rid, batch] : merged) apply_handler_(rid, std::move(batch));
-    }
-    if (!did && wait_mb) {
-      auto batch = wait_mb->recv_batch(opts_.batch_size, opts_.poll_timeout_ms);
-      if (!batch.empty() && apply_handler_) apply_handler_(wait_rid, std::move(batch));
-    } else if (!did) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(opts_.poll_timeout_ms));
+      if (batch.empty()) break;
+      apply_handler_(rid, std::move(batch));
     }
   }
 }

@@ -44,8 +44,12 @@ class MultiRaft {
     /// Follower 空闲进入 Hibernate；仍会低频 cold tick 保选举。
     uint32_t hibernate_after_ms{5000};
     uint32_t unload_after_ms{0};
-    size_t raft_workers{2};
-    size_t apply_workers{2};
+    size_t raft_workers{8};
+    size_t apply_workers{8};
+    /// propose 后 Ready 攒批：条数阈值（默认 32；≤1 关闭）。
+    uint32_t ready_coalesce_n{32};
+    /// propose 后 Ready 攒批：最长等待 ms（默认 1；0=仅条数）。
+    uint32_t ready_coalesce_ms{1};
   };
 
   explicit MultiRaft(GroupFactory factory);

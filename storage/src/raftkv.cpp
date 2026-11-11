@@ -64,7 +64,8 @@ bool RaftKV::async_write(uint32_t region_id, std::string data, uint64_t* assigne
     if (error) *error = "propose_failed";
     return false;
   }
-  flush_ready(region_id);
+  // group commit：按 Store ready_coalesce_* 攒批后再 drive_ready。
+  store_->request_ready(region_id);
   return true;
 }
 

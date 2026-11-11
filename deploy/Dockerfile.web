@@ -1,11 +1,15 @@
 # OpenKV Web 管控台（嵌入 static/；构建前可 make admin-frontend 更新前端）
-# docker build -f deploy/Dockerfile.web -t openkv-web:dev .
+# 需 BuildKit 额外 context 拉独立 SDK：
+#   docker build -f deploy/Dockerfile.web --build-context sdk=../openkv-client-go -t openkv-web:dev .
 
+# syntax=docker/dockerfile:1.4
 FROM golang:1.22-bookworm AS build
 WORKDIR /src
-COPY client/go/ ./client/go/
-COPY web/ ./web/
-WORKDIR /src/web
+# go.mod replace：../client/go、../../openkv-client-go → 目录布局须对齐
+COPY client/go/ ./openkv/client/go/
+COPY web/ ./openkv/web/
+COPY --from=sdk . ./openkv-client-go/
+WORKDIR /src/openkv/web
 RUN CGO_ENABLED=0 go build -o /out/skv-web .
 
 FROM gcr.io/distroless/static-debian12:nonroot

@@ -117,6 +117,7 @@ func main() {
 func allModes() []string {
 	return []string{
 		"get", "get_stale", "put", "put_ttl", "put_cas",
+		"rawget", "rawput", "rawdelete",
 		"delete", "delete_cas",
 		"batch_put", "batch_get",
 		"scan", "list_prefix",
@@ -265,6 +266,21 @@ func makeOp(
 	case "put":
 		return func(ctx context.Context, i int) error {
 			_, err := cli.Put(ctx, keyOf(prefix, i%keys), val)
+			return err
+		}, ""
+	case "rawget":
+		return func(ctx context.Context, i int) error {
+			_, _, _, err := cli.RawGet(ctx, keyOf(prefix+"-raw", i%keys), true)
+			return err
+		}, "plain KvRecord"
+	case "rawput":
+		return func(ctx context.Context, i int) error {
+			_, err := cli.RawPut(ctx, keyOf(prefix+"-raw", i%keys), val)
+			return err
+		}, "no TSO/MVCC"
+	case "rawdelete":
+		return func(ctx context.Context, i int) error {
+			_, _, err := cli.RawDelete(ctx, keyOf(prefix+"-raw", i%keys))
 			return err
 		}, ""
 	case "put_ttl":

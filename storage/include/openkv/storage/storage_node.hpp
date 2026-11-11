@@ -61,7 +61,7 @@ class StorageNode {
   /// S2：propose 等待 apply 后读取结果；空串=成功。无条目视为成功。
   std::optional<std::string> take_apply_result(uint64_t index);
 
-  /// TiKV-style：阻塞至 apply invoke 或超时。tick 用于等待期间推进 Ready。
+  /// 阻塞至 apply invoke 或超时。tick 用于等待期间推进 Ready。
   ProposalQueue::WaitOutcome wait_apply(uint64_t index, std::chrono::milliseconds timeout,
                                         const std::function<void()>& tick = {});
 
@@ -167,7 +167,7 @@ class StorageNode {
   void tick_loop();
   void split_worker_loop();
   void register_and_heartbeat();
-  /// TiKV-style：REGISTER 后按 Meta 路由 ENSURE 本机应托管的全部 Region（含 split 产物）。
+  /// REGISTER 后按 Meta 路由 ENSURE 本机应托管的全部 Region（含 split 产物）。
   void recover_local_regions_from_meta();
   void ensure_region(uint32_t region_id);
   bool meta_split(uint32_t left, const std::string& split_key, uint32_t* right_out);
@@ -194,7 +194,7 @@ class StorageNode {
   std::thread split_thread_;
   std::thread hb_thread_;
   std::vector<raft::Peer> bootstrap_peers_;
-  size_t auto_split_keys_{256000};              // TiKV-style 默认；SKV_SPLIT_KEYS=0 关
+  size_t auto_split_keys_{256000};              // 默认约 256k keys；SKV_SPLIT_KEYS=0 关
   size_t auto_split_bytes_{96ull << 20};        // 96MiB；SKV_SPLIT_BYTES=0 关
   size_t auto_merge_keys_{0};                   // 0=关；SKV_MERGE_KEYS
   std::mutex split_mu_;

@@ -130,7 +130,7 @@ StorageNode::StorageNode(NodeConfig cfg) : cfg_(std::move(cfg)) {
     const auto raft_path = (std::filesystem::path(cfg_.data_dir) / "raft").string();
     raft_engine_ = std::make_shared<RocksRaftEngine>(raft_path, sync);
   }
-  // TiKV-style：默认开启自动分裂（region-split-keys / region-split-size≈96MiB）；
+  // 默认开启自动分裂（region-split-keys / region-split-size≈96MiB）；
   // 环境变量设 0 可关。
   auto_split_keys_ = 256000;
   auto_split_bytes_ = static_cast<size_t>(96ull << 20);
@@ -148,7 +148,7 @@ StorageNode::StorageNode(NodeConfig cfg) : cfg_(std::move(cfg)) {
 StorageNode::~StorageNode() { stop(); }
 
 void StorageNode::publish_apply_result(uint64_t index, std::string error) {
-  proposals_.invoke(index, std::move(error));  // TiKV apply → Callback::invoke
+  proposals_.invoke(index, std::move(error));  // apply 完成 → ProposalQueue::invoke
 }
 
 std::optional<std::string> StorageNode::take_apply_result(uint64_t index) {
@@ -1295,7 +1295,7 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
   }
   multi_raft_->mark_hot(shard_id);
   uint64_t idx = 0;
-  // Scheduler：按 payload 前缀 latch，持到 apply（TiKV-style）。
+  // Scheduler：按 payload 前缀 latch，持到 apply。
   const std::string latch =
       encoded.size() > 16 ? encoded.substr(0, 16) : encoded;
   auto write = [&](uint32_t rid, std::string data, uint64_t* out_idx, std::string* err) {
@@ -2333,8 +2333,20 @@ void StorageNode::start() {
     }
     return def;
   };
-  mr_opts.raft_workers = parse_workers(proto::env::kRaftWorkers, 2);
-  mr_opts.apply_workers = parse_workers(proto::env::kApplyWorkers, 2);
+  mr_opts.raft_workers = parse_workers(proto::env::kRaftWorkers, 8);
+  mr_opts.apply_workers = parse_workers(proto::env::kApplyWorkers, 8);
+  auto parse_u32 = [](const char* env_key, uint32_t def) -> uint32_t {
+    if (const char* e = std::getenv(env_key)) {
+      try {
+        const long v = std::stol(e);
+        if (v >= 0 && v <= 1024) return static_cast<uint32_t>(v);
+      } catch (...) {
+      }
+    }
+    return def;
+  };
+  mr_opts.ready_coalesce_n = parse_u32(proto::env::kReadyCoalesceN, 32);
+  mr_opts.ready_coalesce_ms = parse_u32(proto::env::kReadyCoalesceMs, 1);
   multi_raft_ = std::make_unique<raft::MultiRaft>([this](uint32_t shard_id) {
     engines_->get_or_create(shard_id);
     raft::RaftNode::Options opts;
@@ -2496,7 +2508,9 @@ void StorageNode::start() {
            << " persist_sync=" << raft::sync_mode_name(raft::parse_sync_mode(cfg_.persist_sync))
            << " raftstore=BatchSystem+Ready single_store_kv=1 scheduler=1 split_worker=1"
            << " raft_workers=" << mr_opts.raft_workers
-           << " apply_workers=" << mr_opts.apply_workers;
+           << " apply_workers=" << mr_opts.apply_workers
+           << " ready_coalesce_n=" << mr_opts.ready_coalesce_n
+           << " ready_coalesce_ms=" << mr_opts.ready_coalesce_ms;
 }
 
 void StorageNode::stop() {
@@ -2522,7 +2536,7 @@ void StorageNode::tick_loop() {
     if (const char* e = std::getenv("SKV_KV_TTL_COMPACT")) {
       return std::string(e) != "0" && std::string(e) != "false";
     }
-    return true;  // TiKV 风格：催促 CompactionFilter 回收过期 KV
+    return true;  // 催促 CompactionFilter 回收过期 KV
   }();
   int ttl_ticks = 0;
   while (running_) {
@@ -2536,7 +2550,7 @@ void StorageNode::tick_loop() {
         maybe_auto_merge(rid);
       }
     }
-    // TTL Checker（简化）：约 30s 本地扫删过期 KV（各副本独立，与 TiKV filter 一样不经 Raft）
+    // TTL Checker（简化）：约 30s 本地扫删过期 KV（各副本独立，不经 Raft）
     if (ttl_compact && ++ttl_ticks >= 600) {
       ttl_ticks = 0;
       // 单 Store 共享引擎：对任意 region 调一次即可

@@ -37,7 +37,7 @@
 
 namespace openkv::storage {
 
-/// revision 最高位标记：payload 含 expire_at_ms（TiKV 风格 value 头扩展；兼容旧无 TTL 记录）。
+/// revision 最高位标记：payload 含 expire_at_ms（value 头扩展；兼容旧无 TTL 记录）。
 inline constexpr uint64_t kKvRevExpireFlag = 1ULL << 63;
 
 /// 单 key 的值与 Raft log index 作为 revision（便于 MVCC/调试）。
@@ -74,9 +74,9 @@ class KvEngine {
   bool write_batch(
       const std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>>& puts,
       const std::vector<std::string>& dels);
-  /// hide_expired=true（默认）：过期 key 视为不存在（TiKV 读过滤）。
+  /// hide_expired=true（默认）：过期 key 视为不存在。
   std::optional<KvRecord> get(std::string_view key, bool hide_expired = true) const;
-  /// 催促 TTL CompactionFilter 回收（简化版 TiKV TTL Checker）。
+  /// 催促 TTL CompactionFilter 回收。
   void compact_for_ttl();
 
   /// 按字典序扫描 prefix 下的 key；fn 返回 false 则停止。

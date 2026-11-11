@@ -160,21 +160,56 @@ void GatewayServer::stop_background() {
 
 void GatewayServer::note_client_rpc() { client_in_.fetch_add(1, std::memory_order_relaxed); }
 void GatewayServer::note_to_store() { to_store_.fetch_add(1, std::memory_order_relaxed); }
+void GatewayServer::note_to_store(const std::string& peer_addr) {
+  note_to_store();
+  if (peer_addr.empty()) return;
+  std::lock_guard<std::mutex> lock(peer_mu_);
+  to_store_peers_[peer_addr] += 1;
+}
 void GatewayServer::note_to_meta() { to_meta_.fetch_add(1, std::memory_order_relaxed); }
+void GatewayServer::note_to_meta(const std::string& peer_addr) {
+  note_to_meta();
+  if (peer_addr.empty()) return;
+  std::lock_guard<std::mutex> lock(peer_mu_);
+  to_meta_peers_[peer_addr] += 1;
+}
+
+namespace {
+std::string encode_peer_json(const std::unordered_map<std::string, uint64_t>& m) {
+  std::ostringstream oss;
+  oss << '{';
+  bool first = true;
+  for (const auto& [k, v] : m) {
+    if (!first) oss << ',';
+    first = false;
+    oss << '"' << k << "\":" << v;
+  }
+  oss << '}';
+  return oss.str();
+}
+}  // namespace
 
 std::string GatewayServer::stats_json() const {
   const uint64_t client = client_in_.load(std::memory_order_relaxed);
   const uint64_t to_store = to_store_.load(std::memory_order_relaxed);
   const uint64_t to_meta = to_meta_.load(std::memory_order_relaxed);
+  std::unordered_map<std::string, uint64_t> store_peers;
+  std::unordered_map<std::string, uint64_t> meta_peers;
+  {
+    std::lock_guard<std::mutex> lock(peer_mu_);
+    store_peers = to_store_peers_;
+    meta_peers = to_meta_peers_;
+  }
   std::ostringstream oss;
   oss << "{\"requests\":" << (client + to_store + to_meta) << ",\"client\":" << client
       << ",\"gw\":" << client << ",\"to_store\":" << to_store << ",\"to_meta\":" << to_meta
-      << ",\"to_store_peers\":{},\"to_meta_peers\":{}}";
+      << ",\"to_store_peers\":" << encode_peer_json(store_peers)
+      << ",\"to_meta_peers\":" << encode_peer_json(meta_peers) << '}';
   return oss.str();
 }
 
 uint64_t GatewayServer::alloc_ts(uint32_t n) {
-  note_to_meta();
+  note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
   return ts_.alloc(n);
 }
 
@@ -221,7 +256,7 @@ void GatewayServer::clear_leader_hint(uint32_t region) {
 
 void GatewayServer::refresh_routes() {
   try {
-    note_to_meta();
+    note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
     auto t = fetch_route(meta_addrs_);
     routes_.update(t);
     sync_epochs_async(t);
@@ -252,7 +287,7 @@ void GatewayServer::sync_epochs_async(const RoutingTable& t) {
     for (const auto& j : jobs) {
       if (auto* c = client(j.addr)) {
         try {
-          note_to_store();
+          note_to_store(j.addr);
           (void)c->call_raw(j.line);
         } catch (...) {
         }
@@ -266,13 +301,14 @@ void GatewayServer::route_watch_loop() {
   while (!bg_stop_.load(std::memory_order_relaxed)) {
     RoutingTable t;
     bool ok = false;
+    const std::string meta_peer = meta_addrs_.empty() ? std::string{} : meta_addrs_.front();
     try {
-      note_to_meta();
+      note_to_meta(meta_peer);
       t = watch_route(meta_addrs_, since, 4000);
       ok = true;
     } catch (...) {
       try {
-        note_to_meta();
+        note_to_meta(meta_peer);
         t = fetch_route(meta_addrs_);
         ok = true;
       } catch (const std::exception& e) {
@@ -288,7 +324,7 @@ void GatewayServer::route_watch_loop() {
       since = t.version;
     }
     try {
-      note_to_meta();
+      note_to_meta(meta_peer);
       report_min_start_ts(meta_addrs_, active_ts_.min());
     } catch (const std::exception& e) {
       SKV_WARN << "report min start_ts: " << e.what();
@@ -310,7 +346,7 @@ void GatewayServer::with_leader(uint32_t region, const LeaderFn& fn) {
       const std::string addr = st->addr();
       if (!tried.insert(addr).second) continue;
       try {
-        note_to_store();
+        note_to_store(addr);
         fn(*st);
         remember_leader(region, addr);
         return;
@@ -321,7 +357,7 @@ void GatewayServer::with_leader(uint32_t region, const LeaderFn& fn) {
           remember_leader(region, nl.redirect());
           if (auto* c = client(nl.redirect()); c && tried.insert(c->addr()).second) {
             try {
-              note_to_store();
+              note_to_store(c->addr());
               fn(*c);
               return;
             } catch (const NotLeaderError&) {
@@ -383,7 +419,7 @@ grpc::Status GatewayServer::get_stale(const std::string& key, kv::v1::GetRespons
   std::exception_ptr last;
   for (auto* st : try_order(region)) {
     try {
-      note_to_store();
+      note_to_store(st->addr());
       auto r = st->txn_get_opt(region, key, ~uint64_t{0}, false);
       resp->set_value(r.value);
       resp->set_found(r.found);
@@ -459,7 +495,7 @@ grpc::Status GatewayServer::PutBody(const kv::v1::PutRequest* req,
                       .count() +
                   req->ttl_ms();
     }
-    // TiKV 1PC：单 key 一次 Propose（data+write，无残留 lock）
+    // 1PC：单 key 一次 Propose（data+write，无残留 lock）
     try {
       uint64_t rev = 0;
       with_leader_epoch(region_of(req->key()), [&](StoreClient& c, uint64_t epoch) {
@@ -620,76 +656,17 @@ grpc::ServerUnaryReactor* GatewayServer::defer_unary(grpc::CallbackServerContext
   return reactor;
 }
 
-namespace {
-
-std::string build_onepc_line(uint32_t shard, std::string_view key, uint64_t start_ts,
-                             uint64_t commit_ts, std::string_view primary, uint8_t op,
-                             std::string_view value, uint64_t epoch, bool cas,
-                             uint64_t expected_rev, int64_t expire_at_ms) {
-  std::string val_hex = openkv::to_hex(value);
-  if (val_hex.empty()) val_hex = "-";
-  std::ostringstream oss;
-  oss << "ONEPC " << shard << ' ' << openkv::to_hex(key) << ' ' << start_ts << ' ' << commit_ts
-      << ' ' << openkv::to_hex(primary) << ' ' << static_cast<unsigned>(op) << ' ' << val_hex;
-  if (cas) {
-    oss << ' ' << epoch << " 1 " << expected_rev;
-    if (expire_at_ms != 0) oss << ' ' << expire_at_ms;
-  } else if (expire_at_ms != 0) {
-    oss << ' ' << epoch << ' ' << expire_at_ms;
-  } else if (epoch != 0) {
-    oss << ' ' << epoch;
-  }
-  return oss.str();
-}
-
-std::string build_txn_get_line(uint32_t shard, std::string_view key, uint64_t start_ts) {
-  std::ostringstream oss;
-  oss << "TXN_GET " << shard << ' ' << openkv::to_hex(key) << ' ' << start_ts << " 1";
-  return oss.str();
-}
-
-bool parse_ok_onepc(std::string_view body, uint64_t* rev) {
-  std::istringstream iss{std::string(body)};
-  std::string a, b;
-  uint64_t r = 0;
-  if (!(iss >> a >> b >> r)) return false;
-  if (a != "OK" || b != "ONEPC") return false;
-  if (rev) *rev = r;
-  return true;
-}
-
-bool parse_ok_txn_get(std::string_view body, kv::v1::GetResponse* resp) {
-  std::istringstream iss{std::string(body)};
-  std::string a, b, hex;
-  uint64_t rev = 0;
-  if (!(iss >> a >> b >> hex)) return false;
-  if (a != "OK" || b != "TXN_GET") return false;
-  iss >> rev;
-  resp->set_revision(rev);
-  if (hex == "-") {
-    resp->set_found(false);
-    return true;
-  }
-  std::string val;
-  if (!openkv::from_hex(hex, &val)) return false;
-  resp->set_value(std::move(val));
-  resp->set_found(true);
-  return true;
-}
-
-}  // namespace
-
-void GatewayServer::with_start_commit_ts(grpc::ServerUnaryReactor* reactor,
+void GatewayServer::with_start_commit_ts(std::function<void(grpc::Status)> on_err,
                                          std::function<void(uint64_t, uint64_t)> cont) {
-  // 与 PutBody 一致：一次 alloc_ts(2) 走本地 TSO 批缓存，禁止串行两次 Meta GetTs。
-  uint64_t start = 0;
-  try {
-    start = alloc_ts(2);
-  } catch (const std::exception& e) {
-    reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, e.what()));
-    return;
-  }
-  cont(start, start + 1);
+  note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
+  ts_.alloc_async(2, [on_err = std::move(on_err), cont = std::move(cont)](grpc::Status st,
+                                                                             uint64_t start) {
+    if (!st.ok()) {
+      if (on_err) on_err(st);
+      return;
+    }
+    cont(start, start + 1);
+  });
 }
 
 bool GatewayServer::retry_async_write(std::string_view body, const std::string& key,
@@ -719,66 +696,85 @@ bool GatewayServer::retry_async_write(std::string_view body, const std::string& 
 
 void GatewayServer::put_async(const kv::v1::PutRequest* req, kv::v1::PutResponse* resp,
                               grpc::ServerUnaryReactor* reactor, int attempt) {
+  put_async_cb(req, resp, attempt, [reactor](grpc::Status st) { reactor->Finish(st); });
+}
+
+void GatewayServer::put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutResponse* resp,
+                                 int attempt, std::function<void(grpc::Status)> done) {
   if (attempt >= 4) {
-    reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "put: retries_exhausted"));
+    done(grpc::Status(grpc::StatusCode::ABORTED, "put: retries_exhausted"));
     return;
   }
-  with_start_commit_ts(reactor, [this, req, resp, reactor, attempt](uint64_t start,
-                                                                    uint64_t commit_ts) {
-    active_ts_.add(start);
-    int64_t expire_at = 0;
-    if (req->ttl_ms() > 0) {
-      expire_at = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::system_clock::now().time_since_epoch())
-                      .count() +
-                  req->ttl_ms();
-    }
-    const uint32_t region = region_of(req->key());
-    const uint64_t epoch = epoch_of(region);
-    auto order = try_order(region);
-    if (order.empty()) {
-      active_ts_.remove(start);
-      reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
-      return;
-    }
-    const std::string addr = order.front()->addr();
-    const std::string line =
-        build_onepc_line(region, req->key(), start, commit_ts, req->key(), /*op put*/ 0,
-                         req->value(), epoch, req->cas(), req->expected_revision(), expire_at);
-    note_to_store();
-    store_exec_line_async(
-        addr, line, 15000,
-        [this, req, resp, reactor, attempt, start, region, addr](grpc::Status sst,
-                                                                std::string body) {
+  with_start_commit_ts(
+      done, [this, req, resp, attempt, done](uint64_t start, uint64_t commit_ts) {
+        active_ts_.add(start);
+        int64_t expire_at = 0;
+        if (req->ttl_ms() > 0) {
+          expire_at = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count() +
+                      req->ttl_ms();
+        }
+        const uint32_t region = region_of(req->key());
+        const uint64_t epoch = epoch_of(region);
+        auto order = try_order(region);
+        if (order.empty()) {
           active_ts_.remove(start);
-          if (!sst.ok()) {
-            reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
-            return;
-          }
-          if (contains(body, "cas_failed")) {
-            resp->set_ok(false);
-            resp->set_cas_failed(true);
-            resp->set_current_revision(parse_cas_current_rev(body));
-            reactor->Finish(grpc::Status::OK);
-            return;
-          }
-          uint64_t rev = 0;
-          if (parse_ok_onepc(body, &rev)) {
-            remember_leader(region, addr);
-            resp->set_ok(true);
-            resp->set_revision(rev);
-            reactor->Finish(grpc::Status::OK);
-            return;
-          }
-          if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/true,
-                                [this, req, resp, reactor, attempt] {
-                                  put_async(req, resp, reactor, attempt + 1);
-                                })) {
-            return;
-          }
-          reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "put: " + body));
-        });
-  });
+          done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
+          return;
+        }
+        const std::string addr = order.front()->addr();
+        ProposeOnePcArgs args;
+        args.shard_id = region;
+        args.key = req->key();
+        args.value = req->value();
+        args.start_ts = start;
+        args.commit_ts = commit_ts;
+        args.primary = req->key();
+        args.mvcc_op = 0;
+        args.epoch = epoch;
+        args.cas = req->cas();
+        args.expected_revision = req->expected_revision();
+        args.expire_at_ms = expire_at;
+        note_to_store(addr);
+        store_propose_onepc_async(
+            addr, std::move(args), 15000,
+            [this, req, resp, attempt, start, region, addr, done](grpc::Status sst,
+                                                                  ProposeOnePcResult out) {
+              active_ts_.remove(start);
+              if (!sst.ok()) {
+                done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+                return;
+              }
+              if (out.cas_failed || contains(out.error, "cas_failed")) {
+                resp->set_ok(false);
+                resp->set_cas_failed(true);
+                resp->set_current_revision(out.current_revision != 0
+                                               ? out.current_revision
+                                               : parse_cas_current_rev(out.error));
+                done(grpc::Status::OK);
+                return;
+              }
+              if (out.ok) {
+                remember_leader(region, addr);
+                resp->set_ok(true);
+                resp->set_revision(out.revision);
+                done(grpc::Status::OK);
+                return;
+              }
+              std::string body = out.error;
+              if (!out.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
+                body += " redirect=" + out.redirect_to;
+              }
+              if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/true,
+                                    [this, req, resp, attempt, done] {
+                                      put_async_cb(req, resp, attempt + 1, done);
+                                    })) {
+                return;
+              }
+              done(grpc::Status(grpc::StatusCode::ABORTED, "put: " + body));
+            });
+      });
 }
 
 void GatewayServer::delete_async(const kv::v1::DeleteRequest* req, kv::v1::DeleteResponse* resp,
@@ -787,106 +783,131 @@ void GatewayServer::delete_async(const kv::v1::DeleteRequest* req, kv::v1::Delet
     reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "delete: retries_exhausted"));
     return;
   }
-  with_start_commit_ts(reactor, [this, req, resp, reactor, attempt](uint64_t start,
-                                                                    uint64_t commit_ts) {
-    active_ts_.add(start);
-    const uint32_t region = region_of(req->key());
-    const uint64_t epoch = epoch_of(region);
-    auto order = try_order(region);
-    if (order.empty()) {
-      active_ts_.remove(start);
-      reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
-      return;
-    }
-    const std::string addr = order.front()->addr();
-    const std::string line =
-        build_onepc_line(region, req->key(), start, commit_ts, req->key(), /*op delete*/ 1, {},
-                         epoch, req->cas(), req->expected_revision(), 0);
-    note_to_store();
-    store_exec_line_async(
-        addr, line, 15000,
-        [this, req, resp, reactor, attempt, start, region, addr](grpc::Status sst,
-                                                                std::string body) {
+  with_start_commit_ts(
+      [reactor](grpc::Status st) { reactor->Finish(st); },
+      [this, req, resp, reactor, attempt](uint64_t start, uint64_t commit_ts) {
+        active_ts_.add(start);
+        const uint32_t region = region_of(req->key());
+        const uint64_t epoch = epoch_of(region);
+        auto order = try_order(region);
+        if (order.empty()) {
           active_ts_.remove(start);
-          if (!sst.ok()) {
-            reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
-            return;
-          }
-          if (contains(body, "cas_failed")) {
-            resp->set_deleted(false);
-            resp->set_cas_failed(true);
-            resp->set_current_revision(parse_cas_current_rev(body));
-            reactor->Finish(grpc::Status::OK);
-            return;
-          }
-          uint64_t rev = 0;
-          if (parse_ok_onepc(body, &rev)) {
-            remember_leader(region, addr);
-            resp->set_deleted(true);
-            resp->set_revision(rev);
-            reactor->Finish(grpc::Status::OK);
-            return;
-          }
-          if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/false,
-                                [this, req, resp, reactor, attempt] {
-                                  delete_async(req, resp, reactor, attempt + 1);
-                                })) {
-            return;
-          }
-          reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "delete: " + body));
-        });
-  });
+          reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
+          return;
+        }
+        const std::string addr = order.front()->addr();
+        ProposeOnePcArgs args;
+        args.shard_id = region;
+        args.key = req->key();
+        args.start_ts = start;
+        args.commit_ts = commit_ts;
+        args.primary = req->key();
+        args.mvcc_op = 1;
+        args.epoch = epoch;
+        args.cas = req->cas();
+        args.expected_revision = req->expected_revision();
+        note_to_store(addr);
+        store_propose_onepc_async(
+            addr, std::move(args), 15000,
+            [this, req, resp, reactor, attempt, start, region, addr](grpc::Status sst,
+                                                                    ProposeOnePcResult out) {
+              active_ts_.remove(start);
+              if (!sst.ok()) {
+                reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+                return;
+              }
+              if (out.cas_failed || contains(out.error, "cas_failed")) {
+                resp->set_deleted(false);
+                resp->set_cas_failed(true);
+                resp->set_current_revision(out.current_revision != 0
+                                               ? out.current_revision
+                                               : parse_cas_current_rev(out.error));
+                reactor->Finish(grpc::Status::OK);
+                return;
+              }
+              if (out.ok) {
+                remember_leader(region, addr);
+                resp->set_deleted(true);
+                resp->set_revision(out.revision);
+                reactor->Finish(grpc::Status::OK);
+                return;
+              }
+              std::string body = out.error;
+              if (!out.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
+                body += " redirect=" + out.redirect_to;
+              }
+              if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/false,
+                                    [this, req, resp, reactor, attempt] {
+                                      delete_async(req, resp, reactor, attempt + 1);
+                                    })) {
+                return;
+              }
+              reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "delete: " + body));
+            });
+      });
 }
 
 void GatewayServer::get_async(const kv::v1::GetRequest* req, kv::v1::GetResponse* resp,
                               grpc::ServerUnaryReactor* reactor, int attempt) {
+  get_async_cb(req, resp, attempt, [reactor](grpc::Status st) { reactor->Finish(st); });
+}
+
+void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetResponse* resp,
+                                 int attempt, std::function<void(grpc::Status)> done) {
   if (!req->linearizable()) {
-    pool_->post([this, req, resp, reactor] { reactor->Finish(get_stale(req->key(), resp)); });
+    pool_->post([this, req, resp, done] { done(get_stale(req->key(), resp)); });
     return;
   }
   if (attempt >= 4) {
-    reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "get: splitting or locked"));
+    done(grpc::Status(grpc::StatusCode::ABORTED, "get: splitting or locked"));
     return;
   }
-  uint64_t ts = 0;
-  try {
-    ts = alloc_ts(1);
-  } catch (const std::exception& e) {
-    reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, e.what()));
-    return;
-  }
-  const uint32_t region = region_of(req->key());
-  auto order = try_order(region);
-  if (order.empty()) {
-    reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
-    return;
-  }
-  const std::string addr = order.front()->addr();
-  note_to_store();
-  store_exec_line_async(
-      addr, build_txn_get_line(region, req->key(), ts), 15000,
-      [this, req, resp, reactor, attempt, region, addr](grpc::Status sst, std::string body) {
-        if (!sst.ok()) {
-          reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
-          return;
-        }
-        if (contains(body, "locked") || contains(body, "splitting") ||
-            contains(body, "not_leader")) {
-          if (contains(body, "not_leader")) {
-            const auto redir = parse_redirect(body);
-            if (!redir.empty()) remember_leader(region, redir);
+  note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
+  ts_.alloc_async(1, [this, req, resp, attempt, done](grpc::Status tst, uint64_t ts) {
+    if (!tst.ok()) {
+      done(tst);
+      return;
+    }
+    const uint32_t region = region_of(req->key());
+    auto order = try_order(region);
+    if (order.empty()) {
+      done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
+      return;
+    }
+    const std::string addr = order.front()->addr();
+    note_to_store(addr);
+    store_get_async(
+        addr, region, req->key(), /*linearizable=*/true, ts, 15000,
+        [this, req, resp, attempt, region, addr, done](grpc::Status sst, StoreGetResult out) {
+          if (!sst.ok()) {
+            done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+            return;
           }
-          if (contains(body, "splitting")) refresh_routes();
-          get_async(req, resp, reactor, attempt + 1);
-          return;
-        }
-        if (parse_ok_txn_get(body, resp)) {
+          if (out.locked || !out.redirect_to.empty() || contains(out.error, "splitting") ||
+              contains(out.error, "locked")) {
+            if (!out.redirect_to.empty()) {
+              if (out.redirect_to == "key_not_in_region" || out.redirect_to == "no_region") {
+                refresh_routes();
+              } else {
+                remember_leader(region, out.redirect_to);
+                clear_leader_hint(region);
+              }
+            }
+            if (contains(out.error, "splitting")) refresh_routes();
+            get_async_cb(req, resp, attempt + 1, done);
+            return;
+          }
+          if (!out.error.empty() && !out.found) {
+            done(grpc::Status(grpc::StatusCode::ABORTED, "get: " + out.error));
+            return;
+          }
           remember_leader(region, addr);
-          reactor->Finish(grpc::Status::OK);
-          return;
-        }
-        reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "get: " + body));
-      });
+          resp->set_found(out.found);
+          if (out.found) resp->set_value(std::move(out.value));
+          resp->set_revision(out.revision);
+          done(grpc::Status::OK);
+        });
+  });
 }
 
 grpc::ServerUnaryReactor* GatewayServer::Get(grpc::CallbackServerContext* ctx,
@@ -916,16 +937,376 @@ grpc::ServerUnaryReactor* GatewayServer::Delete(grpc::CallbackServerContext* ctx
   return reactor;
 }
 
+namespace {
+
+std::string propose_err_body(const ProposePlainResult& out) {
+  std::string body = out.error;
+  if (!out.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
+    body += " redirect=" + out.redirect_to;
+  }
+  return body;
+}
+
+bool propose_cas_failed(const ProposePlainResult& out) {
+  return out.cas_failed || contains(out.error, "cas_failed");
+}
+
+uint64_t propose_cas_current_rev(const ProposePlainResult& out) {
+  return out.current_revision != 0 ? out.current_revision : parse_cas_current_rev(out.error);
+}
+
+}  // namespace
+
+void GatewayServer::raw_put_async(const kv::v1::RawPutRequest* req, kv::v1::RawPutResponse* resp,
+                                  grpc::ServerUnaryReactor* reactor, int attempt) {
+  if (attempt >= 4) {
+    reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "raw_put: retries_exhausted"));
+    return;
+  }
+  const uint32_t region = region_of(req->key());
+  auto order = try_order(region);
+  if (order.empty()) {
+    reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
+    return;
+  }
+  const std::string addr = order.front()->addr();
+  ProposePlainArgs args;
+  args.shard_id = region;
+  args.is_delete = false;
+  args.key = req->key();
+  args.value = req->value();
+  args.ttl_ms = req->ttl_ms();
+  args.cas = req->cas();
+  args.expected_revision = req->expected_revision();
+  note_to_store(addr);
+  store_propose_plain_async(
+      addr, std::move(args), 15000,
+      [this, req, resp, reactor, attempt, region, addr](grpc::Status sst, ProposePlainResult out) {
+        if (!sst.ok()) {
+          reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+          return;
+        }
+        if (propose_cas_failed(out)) {
+          resp->set_ok(false);
+          resp->set_cas_failed(true);
+          resp->set_current_revision(propose_cas_current_rev(out));
+          reactor->Finish(grpc::Status::OK);
+          return;
+        }
+        if (out.ok) {
+          remember_leader(region, addr);
+          resp->set_ok(true);
+          resp->set_revision(out.revision);
+          reactor->Finish(grpc::Status::OK);
+          return;
+        }
+        const std::string body = propose_err_body(out);
+        if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/false,
+                              [this, req, resp, reactor, attempt] {
+                                raw_put_async(req, resp, reactor, attempt + 1);
+                              })) {
+          return;
+        }
+        reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "raw_put: " + body));
+      });
+}
+
+void GatewayServer::raw_delete_async(const kv::v1::RawDeleteRequest* req,
+                                     kv::v1::RawDeleteResponse* resp,
+                                     grpc::ServerUnaryReactor* reactor, int attempt) {
+  if (attempt >= 4) {
+    reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "raw_delete: retries_exhausted"));
+    return;
+  }
+  const uint32_t region = region_of(req->key());
+  auto order = try_order(region);
+  if (order.empty()) {
+    reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
+    return;
+  }
+  const std::string addr = order.front()->addr();
+  ProposePlainArgs args;
+  args.shard_id = region;
+  args.is_delete = true;
+  args.key = req->key();
+  args.cas = req->cas();
+  args.expected_revision = req->expected_revision();
+  note_to_store(addr);
+  store_propose_plain_async(
+      addr, std::move(args), 15000,
+      [this, req, resp, reactor, attempt, region, addr](grpc::Status sst, ProposePlainResult out) {
+        if (!sst.ok()) {
+          reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+          return;
+        }
+        if (propose_cas_failed(out)) {
+          resp->set_deleted(false);
+          resp->set_cas_failed(true);
+          resp->set_current_revision(propose_cas_current_rev(out));
+          reactor->Finish(grpc::Status::OK);
+          return;
+        }
+        if (out.ok) {
+          remember_leader(region, addr);
+          resp->set_deleted(true);
+          resp->set_revision(out.revision);
+          reactor->Finish(grpc::Status::OK);
+          return;
+        }
+        const std::string body = propose_err_body(out);
+        if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/false,
+                              [this, req, resp, reactor, attempt] {
+                                raw_delete_async(req, resp, reactor, attempt + 1);
+                              })) {
+          return;
+        }
+        reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "raw_delete: " + body));
+      });
+}
+
+void GatewayServer::raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawGetResponse* resp,
+                                  grpc::ServerUnaryReactor* reactor, int attempt) {
+  if (attempt >= 4) {
+    reactor->Finish(grpc::Status(grpc::StatusCode::ABORTED, "raw_get: retries_exhausted"));
+    return;
+  }
+  const uint32_t region = region_of(req->key());
+  auto order = try_order(region);
+  if (order.empty()) {
+    reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
+    return;
+  }
+  // 非线性：可打任意副本；线性：leader 优先（try_order 已排）。
+  const std::string addr = order.front()->addr();
+  note_to_store(addr);
+  store_get_async(
+      addr, region, req->key(), req->linearizable(), /*start_ts=*/0, 15000,
+      [this, req, resp, reactor, attempt, region, addr](grpc::Status sst, StoreGetResult out) {
+        if (!sst.ok()) {
+          reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+          return;
+        }
+        if (!out.redirect_to.empty()) {
+          if (out.redirect_to == "key_not_in_region" || out.redirect_to == "no_region") {
+            refresh_routes();
+          } else {
+            remember_leader(region, out.redirect_to);
+            clear_leader_hint(region);
+          }
+          raw_get_async(req, resp, reactor, attempt + 1);
+          return;
+        }
+        remember_leader(region, addr);
+        resp->set_found(out.found);
+        if (out.found) resp->set_value(std::move(out.value));
+        resp->set_revision(out.revision);
+        reactor->Finish(grpc::Status::OK);
+      });
+}
+
+grpc::ServerUnaryReactor* GatewayServer::RawGet(grpc::CallbackServerContext* ctx,
+                                                const kv::v1::RawGetRequest* req,
+                                                kv::v1::RawGetResponse* resp) {
+  auto* reactor = ctx->DefaultReactor();
+  note_client_rpc();
+  raw_get_async(req, resp, reactor, 0);
+  return reactor;
+}
+
+grpc::ServerUnaryReactor* GatewayServer::RawPut(grpc::CallbackServerContext* ctx,
+                                                const kv::v1::RawPutRequest* req,
+                                                kv::v1::RawPutResponse* resp) {
+  auto* reactor = ctx->DefaultReactor();
+  note_client_rpc();
+  raw_put_async(req, resp, reactor, 0);
+  return reactor;
+}
+
+grpc::ServerUnaryReactor* GatewayServer::RawDelete(grpc::CallbackServerContext* ctx,
+                                                   const kv::v1::RawDeleteRequest* req,
+                                                   kv::v1::RawDeleteResponse* resp) {
+  auto* reactor = ctx->DefaultReactor();
+  note_client_rpc();
+  raw_delete_async(req, resp, reactor, 0);
+  return reactor;
+}
+
+void GatewayServer::batch_put_async(const kv::v1::BatchPutRequest* req,
+                                    kv::v1::BatchPutResponse* resp,
+                                    grpc::ServerUnaryReactor* reactor) {
+  const int n = req->items_size();
+  if (n == 0) {
+    reactor->Finish(grpc::Status::OK);
+    return;
+  }
+  constexpr int kMaxParallel = 16;
+  struct State {
+    std::mutex mu;
+    int inflight{0};
+    int next{0};
+    int done{0};
+    bool finished{false};
+    std::vector<std::unique_ptr<kv::v1::PutRequest>> reqs;
+    std::vector<kv::v1::PutResponse> outs;
+    std::vector<grpc::Status> statuses;
+    grpc::ServerUnaryReactor* reactor{nullptr};
+    kv::v1::BatchPutResponse* resp{nullptr};
+    const kv::v1::BatchPutRequest* batch{nullptr};
+    GatewayServer* self{nullptr};
+  };
+  auto st = std::make_shared<State>();
+  st->reactor = reactor;
+  st->resp = resp;
+  st->batch = req;
+  st->self = this;
+  st->outs.resize(static_cast<size_t>(n));
+  st->statuses.assign(static_cast<size_t>(n), grpc::Status::OK);
+  st->reqs.resize(static_cast<size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    st->reqs[static_cast<size_t>(i)] = std::make_unique<kv::v1::PutRequest>();
+    st->reqs[static_cast<size_t>(i)]->set_key(req->items(i).key());
+    st->reqs[static_cast<size_t>(i)]->set_value(req->items(i).value());
+  }
+
+  auto finish_if_done = [st]() {
+    if (st->finished) return;
+    if (st->done < static_cast<int>(st->outs.size())) return;
+    st->finished = true;
+    for (size_t i = 0; i < st->statuses.size(); ++i) {
+      if (!st->statuses[i].ok()) {
+        st->reactor->Finish(st->statuses[i]);
+        return;
+      }
+      *st->resp->add_results() = st->outs[i];
+    }
+    st->reactor->Finish(grpc::Status::OK);
+  };
+
+  auto pump = std::make_shared<std::function<void()>>();
+  *pump = [st, finish_if_done, pump]() {
+    for (;;) {
+      int i = -1;
+      {
+        std::lock_guard<std::mutex> lock(st->mu);
+        if (st->finished) return;
+        if (st->next >= static_cast<int>(st->outs.size()) || st->inflight >= kMaxParallel) {
+          return;
+        }
+        i = st->next++;
+        ++st->inflight;
+      }
+      auto* pr = st->reqs[static_cast<size_t>(i)].get();
+      auto* out = &st->outs[static_cast<size_t>(i)];
+      st->self->put_async_cb(pr, out, 0, [st, i, finish_if_done, pump](grpc::Status s) {
+        {
+          std::lock_guard<std::mutex> lock(st->mu);
+          st->statuses[static_cast<size_t>(i)] = s;
+          --st->inflight;
+          ++st->done;
+        }
+        finish_if_done();
+        (*pump)();
+      });
+    }
+  };
+  (*pump)();
+}
+
+void GatewayServer::batch_get_async(const kv::v1::BatchGetRequest* req,
+                                    kv::v1::BatchGetResponse* resp,
+                                    grpc::ServerUnaryReactor* reactor) {
+  const int n = req->keys_size();
+  if (n == 0) {
+    reactor->Finish(grpc::Status::OK);
+    return;
+  }
+  constexpr int kMaxParallel = 16;
+  struct State {
+    std::mutex mu;
+    int inflight{0};
+    int next{0};
+    int done{0};
+    bool finished{false};
+    std::vector<std::unique_ptr<kv::v1::GetRequest>> reqs;
+    std::vector<kv::v1::GetResponse> outs;
+    std::vector<grpc::Status> statuses;
+    grpc::ServerUnaryReactor* reactor{nullptr};
+    kv::v1::BatchGetResponse* resp{nullptr};
+    GatewayServer* self{nullptr};
+  };
+  auto st = std::make_shared<State>();
+  st->reactor = reactor;
+  st->resp = resp;
+  st->self = this;
+  st->outs.resize(static_cast<size_t>(n));
+  st->statuses.assign(static_cast<size_t>(n), grpc::Status::OK);
+  st->reqs.resize(static_cast<size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    st->reqs[static_cast<size_t>(i)] = std::make_unique<kv::v1::GetRequest>();
+    st->reqs[static_cast<size_t>(i)]->set_key(req->keys(i));
+    st->reqs[static_cast<size_t>(i)]->set_linearizable(req->linearizable());
+  }
+
+  auto finish_if_done = [st]() {
+    if (st->finished) return;
+    if (st->done < static_cast<int>(st->outs.size())) return;
+    st->finished = true;
+    for (size_t i = 0; i < st->statuses.size(); ++i) {
+      if (!st->statuses[i].ok()) {
+        st->reactor->Finish(st->statuses[i]);
+        return;
+      }
+      *st->resp->add_results() = st->outs[i];
+    }
+    st->reactor->Finish(grpc::Status::OK);
+  };
+
+  auto pump = std::make_shared<std::function<void()>>();
+  *pump = [st, finish_if_done, pump]() {
+    for (;;) {
+      int i = -1;
+      {
+        std::lock_guard<std::mutex> lock(st->mu);
+        if (st->finished) return;
+        if (st->next >= static_cast<int>(st->outs.size()) || st->inflight >= kMaxParallel) {
+          return;
+        }
+        i = st->next++;
+        ++st->inflight;
+      }
+      auto* gr = st->reqs[static_cast<size_t>(i)].get();
+      auto* out = &st->outs[static_cast<size_t>(i)];
+      st->self->get_async_cb(gr, out, 0, [st, i, finish_if_done, pump](grpc::Status s) {
+        {
+          std::lock_guard<std::mutex> lock(st->mu);
+          st->statuses[static_cast<size_t>(i)] = s;
+          --st->inflight;
+          ++st->done;
+        }
+        finish_if_done();
+        (*pump)();
+      });
+    }
+  };
+  (*pump)();
+}
+
 grpc::ServerUnaryReactor* GatewayServer::BatchGet(grpc::CallbackServerContext* ctx,
                                                   const kv::v1::BatchGetRequest* req,
                                                   kv::v1::BatchGetResponse* resp) {
-  return defer_unary(ctx, [this, req, resp] { return BatchGetBody(req, resp); });
+  auto* reactor = ctx->DefaultReactor();
+  note_client_rpc();
+  batch_get_async(req, resp, reactor);
+  return reactor;
 }
 
 grpc::ServerUnaryReactor* GatewayServer::BatchPut(grpc::CallbackServerContext* ctx,
                                                   const kv::v1::BatchPutRequest* req,
                                                   kv::v1::BatchPutResponse* resp) {
-  return defer_unary(ctx, [this, req, resp] { return BatchPutBody(req, resp); });
+  auto* reactor = ctx->DefaultReactor();
+  note_client_rpc();
+  batch_put_async(req, resp, reactor);
+  return reactor;
 }
 
 grpc::ServerUnaryReactor* GatewayServer::Scan(grpc::CallbackServerContext* ctx,

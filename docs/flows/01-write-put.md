@@ -1,17 +1,19 @@
 # 流程：写入 Put / Delete
 
-**路径：** SDK → gRPC Gateway → Locate Region → Storage ExecLine/ONEPC → Region Raft Leader → 多数派提交 → apply → RocksDB → 唤醒 waiter
+**路径：** SDK → gRPC Gateway → Locate Region → `StoreService.Propose(ONEPC)` → Region Raft Leader → 多数派提交 → apply → RocksDB → 唤醒 waiter
 
 **关键代码：**
 
 | 层 | 符号 / 路径 |
 |----|-------------|
 | SDK | `openkv-client-go`（及 rust/java/ts）`Put` / `Delete` |
-| Gateway | `GatewayServer::PutBody` · `alloc_ts` · `StoreClient::one_pc` |
-| Storage | `StoreFacade` / `propose_async` · `CmdOp::kOnePc` · `MvccStore` · `ProposalQueue` |
-| Raft | `RaftKV::async_write` · `Store::drive_ready` · `RaftNode::persist_ready` |
+| Gateway | `GatewayServer::put_async` · `alloc_ts` · `store_propose_onepc_async` |
+| Storage | `StoreFacade::one_pc_async` · `CmdOp::kOnePc` · `MvccStore` · `ProposalQueue` |
+| Raft | `RaftKV::async_write` · `Store::request_ready` · `RaftNode::persist_ready` |
 
 短 Put/Delete 走 **ONEPC**（1 次 Raft Propose，一次写入 MVCC data+write）。多 key / 显式 Txn 仍 **Prewrite → Commit**（见 Gateway `Txn*`）。
+
+无事务写入见 **`RawPut` / `RawDelete`**（plain Propose，无 TSO）：[27-raw-vs-txn.md](27-raw-vs-txn.md)。与 Put **同 key 空间，勿混用**。
 
 **多数派：** RF=3 → 需 ≥2 副本 `match_index` 推进 `commit_index`。
 
@@ -20,13 +22,13 @@ flowchart TD
   A[SDK Put/Delete] -->|gRPC kv.v1| B[gateway_node<br/>GatewayServer]
   B --> T[alloc_ts 2<br/>本地 TSO 批缓存]
   T --> C[Router Locate key<br/>leader 优先 replicas]
-  C --> D[StoreClient.one_pc<br/>ExecLine ONEPC]
-  D --> E[Storage Callback<br/>propose_async]
+  C --> D[StoreService.Propose<br/>op=ONEPC 二进制]
+  D --> E[StoreFacade.one_pc_async]
   E --> F{本机是<br/>该 Region Leader?}
   F -->|否| H[ERR not_leader<br/>redirect=leader_addr]
   H --> R[Gateway rememberLeader<br/>重试 · 见 08]
-  F -->|是| I[encode kOnePc<br/>RaftKV async_write]
-  I --> J[log.append + persist_ready<br/>raft_shard_N /]
+  F -->|是| I[encode kOnePc<br/>RaftKV async_write<br/>request_ready 攒批]
+  I --> J[drive_ready → persist_ready<br/>raft_shard_N /]
   J --> K[RAFT_AE → Followers]
   K --> L[Follower 写日志 + OK AE]
   L --> M[Leader 更新 match_index]

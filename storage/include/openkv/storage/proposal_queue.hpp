@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file proposal_queue.hpp
-// TiKV-style propose → apply 等待：按 log index 挂 waiter，apply 完成后 invoke 唤醒（零轮询）。
+// propose → apply 等待：按 log index 挂 waiter，apply 完成后 invoke 唤醒（零轮询）。
 // wait_async：不占调用线程；invoke / 超时线程回调。
 
 #pragma once
@@ -34,7 +34,7 @@
 
 namespace openkv::storage {
 
-/// TiKV-style：按 log index 挂 waiter，apply 后 invoke 唤醒（无 last_applied 轮询）。
+/// 按 log index 挂 waiter，apply 后 invoke 唤醒（无 last_applied 轮询）。
 class ProposalQueue {
  public:
   struct WaitOutcome {

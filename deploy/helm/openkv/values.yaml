@@ -43,6 +43,12 @@ split:
 # 耐久：data=Raft log sync + KV apply 异步（默认）；all=双 sync；none=都不 sync
 persistSync: "data"
 
+# Raft BatchSystem workers / Ready group-commit（写路径吞吐）
+raftWorkers: "8"
+applyWorkers: "8"
+readyCoalesceN: "32"   # ≤1 关闭计数触发
+readyCoalesceMs: "1"   # 0=仅按条数
+
 persistence:
   enabled: true
   size: 10Gi

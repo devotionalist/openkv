@@ -31,7 +31,7 @@ go get github.com/devotionalist/openkv-client-go@latest
 npm install openkv-client-typescript
 ```
 
-API surface (v0.1): `Dial`/`connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist` · DS (Hash/Set/List/ZSet).  
+API surface (v0.1): `Dial`/`connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `RawGet`/`RawPut`/`RawDelete` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist` · DS (Hash/Set/List/ZSet).  
 Design notes: [docs/flows/15-multi-client-sdk.md](docs/flows/15-multi-client-sdk.md).
 
 > This repo’s `client/go` is **in-tree tools only** (examples / e2e / Meta·Storage stubs). Applications must use the SDK repos above.

@@ -14,7 +14,7 @@
 | ProposalQueue | `wait_async(index, timeout, cb)`：apply `invoke` 或超时回调，不占调用方线程 |
 | Storage | `propose_async` / `one_pc_async`；`Store`/`Admin` → `CallbackService`；ONEPC 热路径 Finish@apply；其它行 `SKV_STORAGE_GRPC_WORKERS` |
 | Meta | `alloc_ts_async`；`MetaService` → `CallbackService` + `SKV_META_GRPC_WORKERS` |
-| Gateway | `KV`/`DS` → `CallbackService` + `SKV_GATEWAY_WORKERS`；Put/Get：本地 `alloc_ts` → `store_exec_line_async` |
+| Gateway | `KV`/`DS` → `CallbackService` + `SKV_GATEWAY_WORKERS`；Put：`alloc_async` → `Propose(ONEPC)`；Get：`alloc_async` → `StoreService.Get(start_ts)`；BatchPut/Get CQ fan-in（见 [28](28-compute-net-opt.md)） |
 | Raft | 出站 worker 队列；入站 AE/Vote 短路径同步 Finish |
 
 ```mermaid
@@ -25,11 +25,11 @@ sequenceDiagram
   participant A as Apply
 
   C->>G: Put (reactor)
-  Note over G: alloc_ts(2) 本地批缓存<br/>（耗尽才打 Meta）
-  G->>S: ExecLine ONEPC async
+  Note over G: alloc_async(2) 本地批缓存<br/>（miss 异步补货）
+  G->>S: Propose ONEPC async
   S->>A: propose_async
   A-->>S: invoke → Finish
-  S-->>G: OK ONEPC
+  S-->>G: OK
   G-->>C: Finish Put
 ```
 

@@ -30,6 +30,9 @@
 | Sanitizer | ASan/UBSan | `make memcheck` |
 | Gateway 全接口压测 | KV/Txn/Watch/DS 吞吐与分位 | `client/go/examples/bench`（`-mode all`）；见 [17-gateway-api-bench.md](../flows/17-gateway-api-bench.md) |
 | 写路径批处理 | Ready/apply/多 Region 验收 W1–W4 | gtest + bench；见 [23-write-path-batching.md](../flows/23-write-path-batching.md) |
+| 写路径三刀 | Ready 攒批 / 二进制 ONEPC / workers | gtest + Helm env + bench；见 [25-write-path-knives.md](../flows/25-write-path-knives.md) |
+| Raftstore schedule | schedule 唤醒 + drain | gtest + bench；见 [26-raftstore-schedule-pipeline.md](../flows/26-raftstore-schedule-pipeline.md) |
+| Raw vs Txn | RawPut/Get/Delete 无 TSO | gtest + bench rawput；见 [27-raw-vs-txn.md](../flows/27-raw-vs-txn.md) |
 | C++ Gateway 切流 | `gateway_node` 替换 Go | 构建/镜像/SDK 冒烟；见 [18-cpp-gateway.md](../flows/18-cpp-gateway.md) |
 
 产物建议：`./.run/release-gate.log`、各 `scripts/*.sh` 终端输出。
@@ -111,7 +114,8 @@
 | RaftReadIndexTest / RaftFrameTest | LeaseReadOnSingleNode, SoftStateMetrics, EncodeDecodeRoundTrip | `raft_read_index_test.cpp` |
 | RawNodeTest | SingleNodeElectAndPropose, BootstrapThenPropose, ThreeNodeVoteAndProposeReady | `raw_node_test.cpp` |
 | MultiRaftTest | GetOrCreateAndLeaders | `multi_raft_test.cpp` |
-| RaftstoreTest | StoreTickElectsLeader, HibernateSkipsTickUntilWake, ApplyQosFlag | `raftstore_test.cpp` |
+| RaftstoreTest | StoreTickElectsLeader, HibernateSkipsTickUntilWake, DriveReadyCoalescesPersist, RequestReadyCoalescesByCount, ApplyQosFlag | `raftstore_test.cpp` |
+| BatchSystemTest / ScheduleQueueTest | ScheduleDrainsWithoutScan, DedupAndPop | `batch_system_test.cpp` |
 
 </details>
 
@@ -231,6 +235,9 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 | 2026-10-26 | Helm / k8s HA 部署 | **PASS** | template 门禁绿；Colima k3s：3 meta + 3 storage + gateway Ready；`kv-example` PASS。见 [flows/K8S_HELM.md](../flows/K8S_HELM.md) |
 | 2026-10-26 | Web 拓扑在 K8s 显示 127.0.0.1「离线」 | **PASS** | 无 `-run-dir` 时拓扑改用 `-metas/-storages/-gateway` TCP 探测；`go test ./internal/lifecycle`；Colima 下 7 节点 `up=true` + DNS 地址 |
 | 2026-10-26 | K8s 拓扑缺网关线 | **PASS** | Gateway 默认 stats 绑 `127.0.0.1`；Helm 加 `-stats-listen=0.0.0.0:19001` + Service `stats`；`/stats` 可达后出现 `client→gateway` / `gateway→storage-*` links |
+| 2026-11-11 | 总览缺 gateway→store 连线 | **PASS** | 根因：热路径 `note_to_store()` 未带 peer，`to_store_peers` 空；已改 addr 记账 + Web `AttributePeerCounts` 均摊兜底；`(cd web && go test ./internal/cluster)`；见 [ADMIN_CONSOLE](../ops/ADMIN_CONSOLE.md) |
+| 2026-11-12 | 总览连线修复后 K8s 重部署 | **PASS** | 重建并导入 `openkv-gateway:dev` / `openkv-web:dev`（web 需 `--build-context sdk=../openkv-client-go`），rollout gateway+web；`/api/topology` 出现 `gateway→storage-0` 且 `/stats` 含 `to_store_peers` |
+| 2026-11-12 | 四语言 SDK 对齐 Raw* | **PASS** | 同步 `kv.proto` + Go/Rust/Java/TS Raw API；`go test` / `cargo test` / `mvn -q test` / `npm test`；`client/go` examples build；见 [15](../flows/15-multi-client-sdk.md)·[27](../flows/27-raw-vs-txn.md) |
 | 2026-10-26 | K8s 加 Storage 节点 conf | **PASS** | 入口：`ordinal≥RF` → 空 `bootstrap_regions` + 仅自己 peers（仅加节点=Joining）；`scripts/it-entrypoint-storage-conf.sh`；加入/Balance 须运维页人工，见 [K8S_SCALE.md](../flows/K8S_SCALE.md) |
 | 2026-10-26 | Helm 加节点后 JOIN not_pending | **PASS** | Offline 再 REGISTER 误 touch→Active；Joining 被 sweep 成 Offline。修：Offline REGISTER 走 Raft→Joining；sweep 跳过 Joining；DNS meta 不回落 127.0.0.1 |
 | 2026-10-25 | 快速加副本→立刻下线 / 并发扩容 | FAIL→PASS | 并发 SCALE_OUT 假成功(`scale_busy`/`ok:true`)；下线时 Learner 未进路由。Scaler FIFO 排队+`CANCEL_SCALE`；Web 等路由/强制 REMOVE；`ok=false` on Failed |
@@ -428,6 +435,82 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
   data →  49.6 ops/s  p50=128.3ms p95=374ms   ok=397  fail=0（同会话复跑；磁盘/重启后偏慢）
 结论: PASS — none/data ≈9.9×；假设成立（主因是持久化 sync）。
 收尾: storage 已恢复 SKV_PERSIST_SYNC=data
+```
+
+### 2026-11-11（Compute 网络优化一期+二期）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  StoreGet.start_ts → MVCC 二进制读；get_async 去 ExecLine hex
+  stub 按 addr 缓存；TSOracle::alloc_async；BatchPut/Get CQ fan-in ≤16
+  文档 flows/28-compute-net-opt
+环境: Colima k3s；openkv:dev + openkv-gateway:dev
+验收:
+  C1 StoreFacadeTest.OnePc*/RawPlane* + Tso* → 5/5 PASS
+  C2 kv-bench -mode get,put,batch_put -workers 8 -duration 8s keys=200
+结果:
+  C1 PASS
+  C2 get 2293.9 / put 317.0 / batch_put 71.9 ops/s；均 fail=0
+结论: PASS — 二进制 Get 显著抬升读吞吐；Batch fan-in 可用
+```
+
+### 2026-11-11（Raw vs Txn 双模式）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  kv.v1 RawGet/RawPut/RawDelete；Gateway 无 TSO → Propose PUT/DEL + Store Get
+  openkv-client-go Raw*；bench mode rawput/rawget/rawdelete
+  Gateway 就绪探测改 AdminService.Ping（避开 ExecLine/WorkPool）
+  文档 flows/27-raw-vs-txn
+环境: Colima k3s openkv（meta=1 storage=1 RF=1）；gateway openkv-gateway:dev
+验收:
+  R1 StoreFacadeTest.RawPlane* + PutGet/Delete/OnePc → 4/4 PASS
+  R2 集群 w8 duration=8s keys=200 vsize=64
+结果:
+  R1 PASS
+  R2 isolated: rawput 243.6 ops/s fail=0；put 250.1 ops/s fail=0（同量级，p50≈15–19ms）
+  合跑 put→rawput: put 254.4 / rawput 192.0（后段受 storage 负载影响；均 fail=0）
+结论: PASS — Raw 平面可用；吞吐与 Put 同量级；fail=0
+```
+
+### 2026-11-11（Raftstore schedule 流水线）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  ScheduleQueue + Router notify；BatchSystem drain-until-empty；batch_size 默认 256
+  文档 flows/26-raftstore-schedule-pipeline
+环境: Colima k3s openkv（meta=1 storage=1 RF=1）
+验收:
+  P1 ctest -R 'ScheduleQueueTest|BatchSystemTest|RaftstoreTest' → 7/7 PASS
+  P2 put w8 8s keys=200 → 247.7 / 暖机 288.7 ops/s p50≈13ms fail=0（相对三刀后 ~250 不回退）
+结果: PASS（P1–P2）
+```
+
+### 2026-11-11（写路径三刀：Ready 攒批 / 二进制 ONEPC / workers）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  Store::request_ready + SKV_READY_COALESCE_N/MS（默认 32/1）
+  ProposeRequest.ONEPC；Gateway put/delete → store_propose_onepc_async
+  BatchSystem/MultiRaft 默认 workers 8/8；Helm raftWorkers/applyWorkers/readyCoalesce*
+  文档 flows/25-write-path-knives
+环境: Colima k3s openkv（meta=1 storage=1 RF=1）
+验收:
+  K1 ctest -R 'RequestReadyCoalescesByCount|DriveReadyCoalescesPersist|StoreFacade|OnePc'
+       → 15/15 PASS（含 RequestReadyCoalescesByCount）
+  K2 storage-0 env: SKV_RAFT_WORKERS=8 SKV_APPLY_WORKERS=8
+       SKV_READY_COALESCE_N=32 SKV_READY_COALESCE_MS=1；启动日志同字段
+  K3 集群内 kv-bench-linux put w8 8s（暖机）→ 253.6 ops/s p50=20.9ms ok=2029 fail=0
+       get w8 5s → 1880 ops/s fail=0
+结果: PASS（K1–K3）
 ```
 
 ### 2026-11-11（默认改为 Raft sync + KV apply 异步）

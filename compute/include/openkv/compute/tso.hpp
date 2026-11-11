@@ -13,27 +13,33 @@
 // limitations under the License.
 
 // @file tso.hpp
-// Gateway 本地 TSO 批缓存（对齐 Go route.TSOracle）。
+// Gateway 本地 TSO 批缓存。
 
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
+
+#include <grpcpp/grpcpp.h>
 
 namespace openkv::compute {
 
 inline constexpr uint32_t kDefaultTsoBatch = 512;
 
-/// PD 风格本地批缓存：Alloc 先吃内存，耗尽再 GET_TS 补货。
+/// 本地批缓存：Alloc 先吃内存，耗尽再 GET_TS 补货。
 class TSOracle {
  public:
   /// batch_size==0：读 OPENKV_TSO_BATCH（默认 512）；<=1 关闭缓存，每次打 Meta。
   explicit TSOracle(std::vector<std::string> meta_addrs, uint32_t batch_size = 0);
 
-  /// 返回 n 个连续时间戳的起点 [start, start+n)；n==0 视为 1。
+  /// 同步分配：缓存命中快；miss 时阻塞打 Meta（WorkPool / 单测）。
   uint64_t alloc(uint32_t n = 1);
+
+  /// 异步分配：命中则直接 cb；miss 异步补货后 cb（不堵 CQ）。
+  void alloc_async(uint32_t n, std::function<void(grpc::Status, uint64_t start)> cb);
 
   /// 单测注入已缓存区间 [next, end)。
   void inject_cache_for_test(uint64_t next, uint64_t end);
@@ -41,6 +47,11 @@ class TSOracle {
   uint32_t batch_size() const { return batch_size_; }
 
  private:
+  struct Waiter {
+    uint32_t n{1};
+    std::function<void(grpc::Status, uint64_t)> cb;
+  };
+
   void refill_locked(uint32_t need);
 
   std::vector<std::string> meta_addrs_;
@@ -48,6 +59,8 @@ class TSOracle {
   mutable std::mutex mu_;
   uint64_t next_{0};
   uint64_t end_{0};
+  bool refill_inflight_{false};
+  std::vector<Waiter> waiters_;
 };
 
 }  // namespace openkv::compute

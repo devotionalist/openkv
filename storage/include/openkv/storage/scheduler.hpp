@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file scheduler.hpp
-// Scheduler：按 key latch，串行冲突写；latch 可持到 apply（TiKV-style）。
+// Scheduler：按 key latch，串行冲突写；latch 可持到 apply。
 
 #pragma once
 

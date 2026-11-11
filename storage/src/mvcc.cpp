@@ -290,7 +290,7 @@ std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t st
   });
   if (!chosen) return std::nullopt;
   if (chosen->op == MvccOp::kDelete) return std::nullopt;
-  // TiKV 风格：过期对读不可见（不依赖 compaction 已跑完）
+  // 过期对读不可见（不依赖 compaction 已跑完）
   if (chosen->expire_at_ms > 0 && wall_ms_now() >= chosen->expire_at_ms) {
     if (out_commit_ts) *out_commit_ts = 0;
     return std::nullopt;
