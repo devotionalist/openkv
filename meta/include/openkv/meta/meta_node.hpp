@@ -35,6 +35,8 @@
 #include "openkv/raft/snap_stream.hpp"
 
 #include <atomic>
+#include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -107,6 +109,9 @@ class MetaNode {
   /// @param sess 连接级 AdminSession；nullptr 时用临时会话（单测 / 无 AUTH）
   std::string handle_line(const std::string& line, AdminSession* sess = nullptr);
 
+  /// 异步 AllocTs（GET_TS）：propose 后不占调用线程；回调在 apply / 超时路径。
+  void alloc_ts_async(uint32_t count, std::function<void(std::string)> cb);
+
   /// 只读 bootstrap 配置。
   const ClusterBootstrap& bootstrap() const { return bootstrap_; }
 
@@ -140,9 +145,15 @@ class MetaNode {
   std::thread tick_thread_;                 ///< tick_loop
   std::unique_ptr<class MetaGrpcServer> grpc_server_;  ///< 默认 gRPC 监听
   mutable std::mutex apply_mu_;             ///< propose 等待 apply 的条件同步
+  std::condition_variable apply_cv_;        ///< apply / AllocTs 唤醒（替 sleep 轮询）
   uint64_t last_applied_wait_{0};           ///< 已观察到的 apply index（配合等待）
   /// AllocTs apply 结果：raft index → 分配起点（避免 GET_TS 跨 Raft 等待持锁）。
   std::unordered_map<uint64_t, uint64_t> ts_alloc_by_index_;
+  /// 异步 GET_TS waiters：raft index → 回调列表
+  std::unordered_map<uint64_t, std::vector<std::function<void(std::string)>>> ts_async_waiters_;
+  mutable std::mutex route_mu_;             ///< WATCH_ROUTE
+  std::condition_variable route_cv_;
+  uint64_t route_version_notify_{0};        ///< 最近一次路由版本（on_apply 更新）
   uint32_t gc_advance_ticks_{0};            ///< tick 计数：满则 Leader ADVANCE_SAFE_POINT
   uint32_t stale_sweep_ticks_{0};           ///< tick 计数：满则 Leader SWEEP_STALE
   bool was_leader_{false};                  ///< 用于检测新晋 Leader，宽限租约

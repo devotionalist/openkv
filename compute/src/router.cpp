@@ -75,8 +75,37 @@ std::vector<std::string> Router::replica_addrs(openkv::RegionId region_id) const
   std::vector<std::string> out;
   auto it = table_.regions.find(region_id);
   if (it == table_.regions.end()) return out;
-  for (const auto& r : it->second.replicas) out.push_back(r.address);
+  std::string leader;
+  for (const auto& r : it->second.replicas) {
+    if (r.address.empty()) continue;
+    if (r.is_leader) {
+      leader = r.address;
+      continue;
+    }
+    out.push_back(r.address);
+  }
+  if (!leader.empty()) out.insert(out.begin(), std::move(leader));
   return out;
+}
+
+uint64_t Router::epoch(openkv::RegionId region_id) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  auto it = table_.regions.find(region_id);
+  if (it == table_.regions.end()) return 0;
+  return it->second.epoch;
+}
+
+void Router::bump_epoch(openkv::RegionId region_id, uint64_t to) {
+  if (to == 0) return;
+  std::lock_guard<std::mutex> lock(mu_);
+  auto it = table_.regions.find(region_id);
+  if (it == table_.regions.end()) return;
+  if (it->second.epoch < to) it->second.epoch = to;
+}
+
+RoutingTable Router::snapshot() const {
+  std::lock_guard<std::mutex> lock(mu_);
+  return table_;
 }
 
 void Router::bootstrap_single(const std::string& storage_addr, uint32_t) {
@@ -86,6 +115,7 @@ void Router::bootstrap_single(const std::string& storage_addr, uint32_t) {
   RegionRoute rr;
   rr.region_id = 0;
   rr.range = {};
+  rr.epoch = 1;
   rr.replicas.push_back({"storage-0", storage_addr, true});
   t.regions.emplace(0, std::move(rr));
   update(std::move(t));

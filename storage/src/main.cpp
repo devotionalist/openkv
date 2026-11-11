@@ -81,7 +81,9 @@ int main(int argc, char** argv) {
   SKV_INFO << "local_leaders=" << node.multi_raft().leader_shards().size();
 
   MetricsHttpServer metrics_http;
-  metrics_http.start(metrics_addr_from_env(), [&facade] { return facade.metrics().prometheus_text(); });
+  metrics_http.start(metrics_addr_from_env(), [&facade] {
+    return facade.metrics().prometheus_text() + facade.node().proposals().prometheus_text();
+  });
 
   while (!g_stop) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));

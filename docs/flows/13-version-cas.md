@@ -2,7 +2,7 @@
 
 **状态：** 已实现  
 **读者：** 客户端 / Gateway / Storage  
-**相关：** [01-write-put.md](01-write-put.md) · [TRANSACTION_SURVEY.md](../architecture/TRANSACTION_SURVEY.md) · [ERROR_CODES.md](../architecture/ERROR_CODES.md)
+**相关：** [01-write-put.md](01-write-put.md) · [ERROR_CODES.md](../architecture/ERROR_CODES.md)
 
 ## 问题
 
@@ -19,7 +19,7 @@
 | **Gateway Put/Get（MVCC）** | 可见版本的 **commit_ts** | `kv.Client.PutCAS` / `DeleteCAS`；`Get.revision` |
 | **plain Propose Put/Del** | `KvRecord.revision`（Raft apply index） | 行协议 `PUT/DEL … cas expected`、Storage `Propose.cas` |
 
-Gateway 日常读写走 Percolator；CAS 挂在 **Prewrite apply** 上校验最新可见版本。plain 路径 CAS 校验 RocksDB value 头 8 字节 revision。
+Gateway 日常读写走 MVCC Prewrite/Commit；CAS 挂在 **Prewrite apply** 上校验最新可见版本。plain 路径 CAS 校验 RocksDB value 头 8 字节 revision。
 
 ### 语义
 
@@ -48,7 +48,7 @@ sequenceDiagram
 
 ## 边界
 
-- 与 Percolator 多 key 事务互补：单 key 版本 CAS 用 PutCAS；跨 key 仍走 Txn*。
+- 与多 key 事务互补：单 key 版本 CAS 用 PutCAS；跨 key 仍走 Txn*。
 - plain Propose 与 MVCC **不共享**同一物理 value；不要混用两平面的 revision。
 - 分裂窗：`splitting` 拒写（与普通 Put 相同）。
 - 幂等：`request_id` 缓存含 CAS 成败。

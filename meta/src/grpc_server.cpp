@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file grpc_server.cpp
-// Meta gRPC：多数 RPC 桥接到 handle_line，避免双实现。
+// Meta gRPC：CallbackService + WorkPool；GetTs/ExecLine(GET_TS) 走 alloc_ts_async。
 
 #include "openkv/meta/grpc_server.hpp"
 
@@ -23,9 +23,12 @@
 #include "openkv/logging.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/raft/raft_node.hpp"
+#include "openkv/work_pool.hpp"
 
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
 #include <grpcpp/grpcpp.h>
 #include "meta/v1/meta.grpc.pb.h"
@@ -35,61 +38,105 @@
 
 namespace openkv::meta {
 
-
 namespace {
 
+using grpc::CallbackServerContext;
 using grpc::ServerContext;
+using grpc::ServerUnaryReactor;
+using grpc::ServerWriteReactor;
 using grpc::Status;
 namespace pb = ::meta::v1;
 
 bool line_ok(std::string_view s) { return proto::starts_with_ok(s); }
 
-class MetaServiceImpl final : public pb::MetaService::Service {
- public:
-  MetaServiceImpl(MetaNode& m, std::string token) : meta_(m), token_(std::move(token)) {}
+void fill_ts_response(pb::GetTsResponse* resp, std::string_view line) {
+  std::istringstream iss{std::string(line)};
+  std::string ok, tag;
+  uint64_t ts = 0;
+  if (iss >> ok >> tag >> ts) resp->set_ts(ts);
+}
 
-  Status auth_write(ServerContext* ctx) {
+bool line_is_get_ts(std::string_view line) {
+  return line == "GET_TS" || line.rfind("GET_TS ", 0) == 0;
+}
+
+uint32_t parse_get_ts_count(std::string_view line) {
+  if (line == "GET_TS") return 1;
+  std::istringstream iss{std::string(line)};
+  std::string op;
+  uint32_t count = 1;
+  if (iss >> op >> count) {
+    if (count == 0) count = 1;
+    if (count > 10000) count = 10000;
+    return count;
+  }
+  return 1;
+}
+
+class MetaServiceImpl final : public pb::MetaService::CallbackService {
+ public:
+  MetaServiceImpl(MetaNode& m, std::string token, openkv::WorkPool& pool)
+      : meta_(m), token_(std::move(token)), pool_(pool) {}
+
+  Status auth_write(CallbackServerContext* ctx) {
     if (!grpc_admin_allowed(*ctx, token_)) {
       return Status(grpc::StatusCode::UNAUTHENTICATED, "unauthorized");
     }
     return Status::OK;
   }
 
-  Status Ping(ServerContext*, const pb::PingRequest*, pb::PingResponse* resp) override {
-    resp->set_message(meta_.handle_line("PING"));
-    return Status::OK;
+  /// Auth early-return，否则把 body 丢到 WorkPool 再 Finish。
+  template <typename Fn>
+  ServerUnaryReactor* defer(CallbackServerContext* ctx, bool need_auth, Fn&& fn) {
+    auto* reactor = ctx->DefaultReactor();
+    if (need_auth) {
+      if (auto st = auth_write(ctx); !st.ok()) {
+        reactor->Finish(st);
+        return reactor;
+      }
+    }
+    pool_.post([reactor, fn = std::forward<Fn>(fn)]() mutable {
+      fn();
+      reactor->Finish(Status::OK);
+    });
+    return reactor;
   }
 
-  Status RegisterNode(ServerContext*, const pb::RegisterNodeRequest* req,
-                      pb::RegisterNodeResponse* resp) override {
-    const auto& n = req->node();
-    std::ostringstream oss;
-    oss << "REGISTER " << n.node_id() << " " << n.address() << " STORAGE";
-    auto line = meta_.handle_line(oss.str());
-    resp->set_ok(line_ok(line));
-    resp->set_assigned_id(n.node_id());
-    if (!resp->ok()) resp->set_error(line);
-    return Status::OK;
+  ServerUnaryReactor* Ping(CallbackServerContext* ctx, const pb::PingRequest*,
+                           pb::PingResponse* resp) override {
+    return defer(ctx, false, [this, resp] { resp->set_message(meta_.handle_line("PING")); });
   }
 
-  Status Heartbeat(ServerContext*, const pb::HeartbeatRequest* req,
-                   pb::HeartbeatResponse* resp) override {
-    std::ostringstream oss;
-    oss << "HEARTBEAT " << req->node_id();
-    for (uint32_t s : req->leader_shards()) oss << " " << s;
-    auto line = meta_.handle_line(oss.str());
-    resp->set_ok(line_ok(line));
-    if (!resp->ok()) resp->set_error(line);
-    std::string err, redir;
-    auto rt = meta_.routing_table(&err, &redir);
-    resp->set_routing_version(rt.version);
-    return Status::OK;
+  ServerUnaryReactor* RegisterNode(CallbackServerContext* ctx, const pb::RegisterNodeRequest* req,
+                                   pb::RegisterNodeResponse* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      const auto& n = req->node();
+      std::ostringstream oss;
+      oss << "REGISTER " << n.node_id() << " " << n.address() << " STORAGE";
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      resp->set_assigned_id(n.node_id());
+      if (!resp->ok()) resp->set_error(line);
+    });
   }
 
-  Status GetRoutingTable(ServerContext*, const pb::GetRoutingTableRequest*,
-                         pb::RoutingTable* resp) override {
+  ServerUnaryReactor* Heartbeat(CallbackServerContext* ctx, const pb::HeartbeatRequest* req,
+                                pb::HeartbeatResponse* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "HEARTBEAT " << req->node_id();
+      for (uint32_t s : req->leader_shards()) oss << " " << s;
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      if (!resp->ok()) resp->set_error(line);
+      std::string err, redir;
+      auto rt = meta_.routing_table(&err, &redir);
+      resp->set_routing_version(rt.version);
+    });
+  }
+
+  void fill_routing_table(pb::RoutingTable* resp) {
     auto line = meta_.handle_line("GET_ROUTE");
-    // 最小：version 从 ClusterState 读
     std::string err, redir;
     auto rt = meta_.routing_table(&err, &redir);
     resp->set_version(rt.version);
@@ -110,70 +157,85 @@ class MetaServiceImpl final : public pb::MetaService::Service {
       }
     }
     (void)line;
-    return Status::OK;
   }
 
-  Status WatchRoutingTable(ServerContext*, const pb::WatchRoutingRequest* req,
-                           grpc::ServerWriter<pb::RoutingTable>* writer) override {
-    std::ostringstream oss;
-    oss << "WATCH_ROUTE " << req->from_version();
-    if (req->timeout_ms() > 0) oss << " " << req->timeout_ms();
-    meta_.handle_line(oss.str());
-    pb::RoutingTable tbl;
-    GetRoutingTable(nullptr, nullptr, &tbl);
-    writer->Write(tbl);
-    return Status::OK;
+  ServerUnaryReactor* GetRoutingTable(CallbackServerContext* ctx, const pb::GetRoutingTableRequest*,
+                                      pb::RoutingTable* resp) override {
+    return defer(ctx, false, [this, resp] { fill_routing_table(resp); });
   }
 
-  Status ScaleOut(ServerContext* ctx, const pb::ScaleOutRequest* req,
-                  pb::ScaleOutResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    std::ostringstream oss;
-    oss << "SCALE_OUT " << req->new_storage_node_id();
-    if (!req->shard_ids().empty()) {
-      oss << " ";
-      for (int i = 0; i < req->shard_ids_size(); ++i) {
-        if (i) oss << ",";
-        oss << req->shard_ids(i);
+  ServerWriteReactor<pb::RoutingTable>* WatchRoutingTable(
+      CallbackServerContext*, const pb::WatchRoutingRequest* req) override {
+    // WATCH_ROUTE 可能长等 route_cv_：丢到 WorkPool，勿堵 callback 接收线程。
+    class Reactor final : public ServerWriteReactor<pb::RoutingTable> {
+     public:
+      pb::RoutingTable tbl;
+      void OnWriteDone(bool) override { Finish(Status::OK); }
+      void OnDone() override { delete this; }
+    };
+    auto* reactor = new Reactor();
+    const uint64_t from_version = req->from_version();
+    const int timeout_ms = req->timeout_ms();
+    pool_.post([this, reactor, from_version, timeout_ms] {
+      std::ostringstream oss;
+      oss << "WATCH_ROUTE " << from_version;
+      if (timeout_ms > 0) oss << " " << timeout_ms;
+      meta_.handle_line(oss.str());
+      fill_routing_table(&reactor->tbl);
+      reactor->StartWrite(&reactor->tbl);
+    });
+    return reactor;
+  }
+
+  ServerUnaryReactor* ScaleOut(CallbackServerContext* ctx, const pb::ScaleOutRequest* req,
+                               pb::ScaleOutResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "SCALE_OUT " << req->new_storage_node_id();
+      if (!req->shard_ids().empty()) {
+        oss << " ";
+        for (int i = 0; i < req->shard_ids_size(); ++i) {
+          if (i) oss << ",";
+          oss << req->shard_ids(i);
+        }
       }
-    }
-    auto line = meta_.handle_line(oss.str());
-    resp->set_accepted(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+      auto line = meta_.handle_line(oss.str());
+      resp->set_accepted(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status GetScaleTask(ServerContext*, const pb::GetScaleTaskRequest* req,
-                      pb::ScaleTask* resp) override {
-    auto line = meta_.handle_line("GET_SCALE " + req->task_id());
-    resp->set_task_id(req->task_id());
-    resp->set_error(line_ok(line) ? "" : line);
-    return Status::OK;
+  ServerUnaryReactor* GetScaleTask(CallbackServerContext* ctx, const pb::GetScaleTaskRequest* req,
+                                   pb::ScaleTask* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      auto line = meta_.handle_line("GET_SCALE " + req->task_id());
+      resp->set_task_id(req->task_id());
+      resp->set_error(line_ok(line) ? "" : line);
+    });
   }
 
-  Status ListScaleTasks(ServerContext*, const pb::ListScaleTasksRequest*,
-                        pb::ListScaleTasksResponse*) override {
-    meta_.handle_line("LIST_SCALE");
-    return Status::OK;
+  ServerUnaryReactor* ListScaleTasks(CallbackServerContext* ctx, const pb::ListScaleTasksRequest*,
+                                     pb::ListScaleTasksResponse*) override {
+    return defer(ctx, false, [this] { meta_.handle_line("LIST_SCALE"); });
   }
 
-  Status ListNodes(ServerContext*, const pb::ListNodesRequest*,
-                   pb::ListNodesResponse* resp) override {
-    meta_.handle_line("LIST_NODES");
-    // 填充最小空列表；完整解析可后续增强
-    (void)resp;
-    return Status::OK;
+  ServerUnaryReactor* ListNodes(CallbackServerContext* ctx, const pb::ListNodesRequest*,
+                                pb::ListNodesResponse* resp) override {
+    return defer(ctx, false, [this, resp] {
+      meta_.handle_line("LIST_NODES");
+      (void)resp;
+    });
   }
 
-#define META_NODE_RPC(Name, Op)                                                                \
-  Status Name(ServerContext* ctx, const pb::NodeIdRequest* req, pb::SimpleResponse* resp)      \
-      override {                                                                               \
-    if (auto st = auth_write(ctx); !st.ok()) return st;                                        \
-    auto line = meta_.handle_line(std::string(Op) + " " + req->node_id());                     \
-    resp->set_ok(line_ok(line));                                                               \
-    resp->set_message(line);                                                                   \
-    if (!resp->ok()) resp->set_error(line);                                                    \
-    return Status::OK;                                                                         \
+#define META_NODE_RPC(Name, Op)                                                                   \
+  ServerUnaryReactor* Name(CallbackServerContext* ctx, const pb::NodeIdRequest* req,              \
+                           pb::SimpleResponse* resp) override {                                   \
+    return defer(ctx, true, [this, req, resp] {                                                   \
+      auto line = meta_.handle_line(std::string(Op) + " " + req->node_id());                      \
+      resp->set_ok(line_ok(line));                                                                \
+      resp->set_message(line);                                                                    \
+      if (!resp->ok()) resp->set_error(line);                                                     \
+    });                                                                                           \
   }
 
   META_NODE_RPC(DrainNode, "DRAIN_NODE")
@@ -185,170 +247,181 @@ class MetaServiceImpl final : public pb::MetaService::Service {
   META_NODE_RPC(StoreDelete, "STORE_DELETE")
 #undef META_NODE_RPC
 
-  Status SplitRegion(ServerContext* ctx, const pb::SplitRegionRequest* req,
-                     pb::SplitRegionResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    std::ostringstream oss;
-    oss << "SPLIT_REGION " << req->region_id() << " " << openkv::to_hex(req->split_key());
-    auto line = meta_.handle_line(oss.str());
-    resp->set_ok(line_ok(line));
-    if (!resp->ok()) resp->set_error(line);
-    return Status::OK;
+  ServerUnaryReactor* SplitRegion(CallbackServerContext* ctx, const pb::SplitRegionRequest* req,
+                                  pb::SplitRegionResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "SPLIT_REGION " << req->region_id() << " " << openkv::to_hex(req->split_key());
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      if (!resp->ok()) resp->set_error(line);
+    });
   }
 
-  Status MergeRegions(ServerContext* ctx, const pb::MergeRegionsRequest* req,
-                      pb::SimpleResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    std::ostringstream oss;
-    oss << "MERGE_REGIONS " << req->left_region_id() << " " << req->right_region_id();
-    auto line = meta_.handle_line(oss.str());
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* MergeRegions(CallbackServerContext* ctx, const pb::MergeRegionsRequest* req,
+                                   pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "MERGE_REGIONS " << req->left_region_id() << " " << req->right_region_id();
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status PlaceRegion(ServerContext* ctx, const pb::PlaceRegionRequest* req,
-                     pb::SimpleResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    std::ostringstream oss;
-    oss << "PLACE_REGION " << req->region_id() << " ";
-    for (int i = 0; i < req->peer_node_ids_size(); ++i) {
-      if (i) oss << ",";
-      oss << req->peer_node_ids(i);
-    }
-    auto line = meta_.handle_line(oss.str());
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* PlaceRegion(CallbackServerContext* ctx, const pb::PlaceRegionRequest* req,
+                                  pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "PLACE_REGION " << req->region_id() << " ";
+      for (int i = 0; i < req->peer_node_ids_size(); ++i) {
+        if (i) oss << ",";
+        oss << req->peer_node_ids(i);
+      }
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status ScheduleMigrate(ServerContext* ctx, const pb::ScheduleMigrateRequest* req,
-                         pb::SimpleResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    std::ostringstream oss;
-    oss << "SCHEDULE_MIGRATE " << req->region_id() << " " << req->from_node() << " "
-        << req->to_node();
-    auto line = meta_.handle_line(oss.str());
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* ScheduleMigrate(CallbackServerContext* ctx,
+                                      const pb::ScheduleMigrateRequest* req,
+                                      pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "SCHEDULE_MIGRATE " << req->region_id() << " " << req->from_node() << " "
+          << req->to_node();
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status CancelMigrate(ServerContext* ctx, const pb::CancelMigrateRequest* req,
-                       pb::SimpleResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    auto line = meta_.handle_line("CANCEL_MIGRATE " + req->task_id());
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* CancelMigrate(CallbackServerContext* ctx, const pb::CancelMigrateRequest* req,
+                                    pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      auto line = meta_.handle_line("CANCEL_MIGRATE " + req->task_id());
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status ListMigrate(ServerContext*, const pb::ListMigrateRequest*,
-                     pb::ListMigrateResponse*) override {
-    meta_.handle_line("LIST_MIGRATE");
-    return Status::OK;
+  ServerUnaryReactor* ListMigrate(CallbackServerContext* ctx, const pb::ListMigrateRequest*,
+                                  pb::ListMigrateResponse*) override {
+    return defer(ctx, false, [this] { meta_.handle_line("LIST_MIGRATE"); });
   }
 
-  Status Balance(ServerContext* ctx, const pb::BalanceRequest*,
-                 pb::SimpleResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    auto line = meta_.handle_line("BALANCE");
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* Balance(CallbackServerContext* ctx, const pb::BalanceRequest*,
+                              pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, resp] {
+      auto line = meta_.handle_line("BALANCE");
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status SuggestPlace(ServerContext*, const pb::SuggestPlaceRequest* req,
-                      pb::SuggestPlaceResponse* resp) override {
-    auto line = meta_.handle_line("SUGGEST_PLACE " + std::to_string(req->count()));
-    (void)line;
-    (void)resp;
-    return Status::OK;
+  ServerUnaryReactor* SuggestPlace(CallbackServerContext* ctx, const pb::SuggestPlaceRequest* req,
+                                   pb::SuggestPlaceResponse* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      auto line = meta_.handle_line("SUGGEST_PLACE " + std::to_string(req->count()));
+      (void)line;
+      (void)resp;
+    });
   }
 
-  Status BumpRoute(ServerContext* ctx, const pb::BumpRouteRequest*,
-                   pb::SimpleResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    auto line = meta_.handle_line("BUMP_ROUTE");
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* BumpRoute(CallbackServerContext* ctx, const pb::BumpRouteRequest*,
+                                pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, resp] {
+      auto line = meta_.handle_line("BUMP_ROUTE");
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status GetTs(ServerContext*, const pb::GetTsRequest*, pb::GetTsResponse* resp) override {
-    auto line = meta_.handle_line("GET_TS");
-    std::istringstream iss(line);
-    std::string ok, tag;
-    uint64_t ts = 0;
-    if (iss >> ok >> tag >> ts) resp->set_ts(ts);
-    return Status::OK;
+  // 热路径：接收线程只发起 alloc_ts_async，apply 回调里 Finish。
+  ServerUnaryReactor* GetTs(CallbackServerContext* ctx, const pb::GetTsRequest*,
+                            pb::GetTsResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
+    meta_.alloc_ts_async(1, [reactor, resp](std::string line) {
+      fill_ts_response(resp, line);
+      reactor->Finish(Status::OK);
+    });
+    return reactor;
   }
 
-  Status GetSafePoint(ServerContext*, const pb::GetSafePointRequest*,
-                      pb::GetSafePointResponse* resp) override {
-    auto line = meta_.handle_line("GET_SAFE_POINT");
-    std::istringstream iss(line);
-    std::string ok, tag;
-    uint64_t sp = 0;
-    if (iss >> ok >> tag >> sp) resp->set_safe_point(sp);
-    return Status::OK;
+  ServerUnaryReactor* GetSafePoint(CallbackServerContext* ctx, const pb::GetSafePointRequest*,
+                                   pb::GetSafePointResponse* resp) override {
+    return defer(ctx, false, [this, resp] {
+      auto line = meta_.handle_line("GET_SAFE_POINT");
+      std::istringstream iss(line);
+      std::string ok, tag;
+      uint64_t sp = 0;
+      if (iss >> ok >> tag >> sp) resp->set_safe_point(sp);
+    });
   }
 
-  Status AdvanceSafePoint(ServerContext* ctx, const pb::AdvanceSafePointRequest* req,
-                          pb::SimpleResponse* resp) override {
-    if (auto st = auth_write(ctx); !st.ok()) return st;
-    auto line = meta_.handle_line("ADVANCE_SAFE_POINT " + std::to_string(req->safe_point()));
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* AdvanceSafePoint(CallbackServerContext* ctx,
+                                       const pb::AdvanceSafePointRequest* req,
+                                       pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      auto line = meta_.handle_line("ADVANCE_SAFE_POINT " + std::to_string(req->safe_point()));
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status ReportMinStartTs(ServerContext*, const pb::ReportMinStartTsRequest* req,
-                          pb::SimpleResponse* resp) override {
-    std::ostringstream oss;
-    oss << "REPORT_MIN_START_TS " << req->min_start_ts() << " " << req->node_id();
-    auto line = meta_.handle_line(oss.str());
-    resp->set_ok(line_ok(line));
-    resp->set_message(line);
-    return Status::OK;
+  ServerUnaryReactor* ReportMinStartTs(CallbackServerContext* ctx,
+                                       const pb::ReportMinStartTsRequest* req,
+                                       pb::SimpleResponse* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "REPORT_MIN_START_TS " << req->min_start_ts() << " " << req->node_id();
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
   }
 
-  Status Locate(ServerContext*, const pb::LocateRequest* req, pb::LocateResponse* resp) override {
-    auto line = meta_.handle_line("LOCATE " + openkv::to_hex(req->key()));
-    resp->set_ok(line_ok(line));
-    if (!resp->ok()) resp->set_error(line);
-    return Status::OK;
+  ServerUnaryReactor* Locate(CallbackServerContext* ctx, const pb::LocateRequest* req,
+                             pb::LocateResponse* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      auto line = meta_.handle_line("LOCATE " + openkv::to_hex(req->key()));
+      resp->set_ok(line_ok(line));
+      if (!resp->ok()) resp->set_error(line);
+    });
   }
 
-  Status WhoLeader(ServerContext*, const pb::WhoLeaderRequest*,
-                   pb::WhoLeaderResponse* resp) override {
-    resp->set_address(meta_.leader_address());
-    resp->set_leader_id(meta_.is_leader() ? meta_.bootstrap().node_id : "");
-    return Status::OK;
+  ServerUnaryReactor* WhoLeader(CallbackServerContext* ctx, const pb::WhoLeaderRequest*,
+                                pb::WhoLeaderResponse* resp) override {
+    return defer(ctx, false, [this, resp] {
+      resp->set_address(meta_.leader_address());
+      resp->set_leader_id(meta_.is_leader() ? meta_.bootstrap().node_id : "");
+    });
   }
 
-  Status StoreStatus(ServerContext*, const pb::StoreStatusRequest* req,
-                     pb::StoreStatusResponse* resp) override {
-    auto line = meta_.handle_line("STORE_STATUS " + req->node_id());
-    resp->set_ok(line_ok(line));
-    resp->set_status(line);
-    if (!resp->ok()) resp->set_error(line);
-    return Status::OK;
+  ServerUnaryReactor* StoreStatus(CallbackServerContext* ctx, const pb::StoreStatusRequest* req,
+                                  pb::StoreStatusResponse* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      auto line = meta_.handle_line("STORE_STATUS " + req->node_id());
+      resp->set_ok(line_ok(line));
+      resp->set_status(line);
+      if (!resp->ok()) resp->set_error(line);
+    });
   }
 
-  Status FindMergeRight(ServerContext*, const pb::FindMergeRightRequest* req,
-                        pb::FindMergeRightResponse* resp) override {
-    auto line = meta_.handle_line("FIND_MERGE_RIGHT " + std::to_string(req->left_region_id()));
-    resp->set_ok(line_ok(line));
-    if (!resp->ok()) resp->set_error(line);
-    return Status::OK;
+  ServerUnaryReactor* FindMergeRight(CallbackServerContext* ctx,
+                                     const pb::FindMergeRightRequest* req,
+                                     pb::FindMergeRightResponse* resp) override {
+    return defer(ctx, false, [this, req, resp] {
+      auto line = meta_.handle_line("FIND_MERGE_RIGHT " + std::to_string(req->left_region_id()));
+      resp->set_ok(line_ok(line));
+      if (!resp->ok()) resp->set_error(line);
+    });
   }
 
-  Status ExecLine(ServerContext* ctx, const pb::ExecLineRequest* req,
-                  pb::ExecLineResponse* resp) override {
-    AdminSession sess;
+  ServerUnaryReactor* ExecLine(CallbackServerContext* ctx, const pb::ExecLineRequest* req,
+                               pb::ExecLineResponse* resp) override {
     const auto& line = req->line();
-    // 写运维需 token；REGISTER/HEARTBEAT/读路径放行
     const bool need_auth =
         line.rfind("AUTH ", 0) == 0 || line.rfind("SCALE_", 0) == 0 ||
         line.rfind("DRAIN_", 0) == 0 || line.rfind("ACTIVATE_", 0) == 0 ||
@@ -360,16 +433,32 @@ class MetaServiceImpl final : public pb::MetaService::Service {
         line.rfind("ADVANCE_", 0) == 0 || line.rfind("REMOVE_", 0) == 0 ||
         line.rfind("STORE_DELETE", 0) == 0;
     if (need_auth) {
-      if (auto st = auth_write(ctx); !st.ok()) return st;
-      sess.authenticated = true;
+      if (auto st = auth_write(ctx); !st.ok()) {
+        auto* reactor = ctx->DefaultReactor();
+        reactor->Finish(st);
+        return reactor;
+      }
     }
-    resp->set_body(meta_.handle_line(line, &sess));
-    return Status::OK;
+    // GET_TS 热路径：接收线程只发起 alloc_ts_async。
+    if (line_is_get_ts(line)) {
+      auto* reactor = ctx->DefaultReactor();
+      meta_.alloc_ts_async(parse_get_ts_count(line), [reactor, resp](std::string body) {
+        resp->set_body(std::move(body));
+        reactor->Finish(Status::OK);
+      });
+      return reactor;
+    }
+    AdminSession sess;
+    if (need_auth) sess.authenticated = true;
+    return defer(ctx, false, [this, line = std::string(line), sess, resp]() mutable {
+      resp->set_body(meta_.handle_line(line, &sess));
+    });
   }
 
  private:
   MetaNode& meta_;
   std::string token_;
+  openkv::WorkPool& pool_;
 };
 
 void parse_vote_line(std::string_view line, ::storage::v1::RequestVoteResponse* resp) {
@@ -475,6 +564,7 @@ class MetaRaftServiceImpl final : public ::storage::v1::RaftService::Service {
 
 struct MetaGrpcServer::Impl {
   std::unique_ptr<grpc::Server> server;
+  std::unique_ptr<openkv::WorkPool> pool;
   std::unique_ptr<MetaServiceImpl> svc;
   std::unique_ptr<MetaRaftServiceImpl> raft;
 };
@@ -489,7 +579,13 @@ MetaGrpcServer::~MetaGrpcServer() { stop(); }
 
 void MetaGrpcServer::start() {
   if (running_.exchange(true)) return;
-  impl_->svc = std::make_unique<MetaServiceImpl>(meta_, admin_token_);
+  size_t pool_n = 16;
+  if (const char* e = std::getenv("SKV_META_GRPC_WORKERS")) {
+    const auto v = std::strtoul(e, nullptr, 10);
+    if (v > 0) pool_n = v;
+  }
+  impl_->pool = std::make_unique<openkv::WorkPool>(pool_n);
+  impl_->svc = std::make_unique<MetaServiceImpl>(meta_, admin_token_, *impl_->pool);
   impl_->raft = std::make_unique<MetaRaftServiceImpl>(meta_);
   grpc::ServerBuilder builder;
   builder.SetMaxReceiveMessageSize(64 << 20);
@@ -502,7 +598,7 @@ void MetaGrpcServer::start() {
     running_ = false;
     throw std::runtime_error("MetaGrpcServer failed to listen on " + listen_addr_);
   }
-  SKV_INFO << "meta gRPC listening " << listen_addr_;
+  SKV_INFO << "meta gRPC listening " << listen_addr_ << " (callback + workers=" << pool_n << ")";
 }
 
 void MetaGrpcServer::stop() {
@@ -510,6 +606,11 @@ void MetaGrpcServer::stop() {
   if (impl_ && impl_->server) {
     impl_->server->Shutdown();
     impl_->server.reset();
+  }
+  if (impl_) {
+    impl_->svc.reset();
+    impl_->raft.reset();
+    impl_->pool.reset();
   }
 }
 

@@ -421,6 +421,20 @@ void MvccStore::put_write(std::string_view user, uint64_t commit_ts, const Write
   eng_.put(write_key(user, commit_ts), encode_write(wi), rev, wi.expire_at_ms);
 }
 
+bool MvccStore::put_onepc(std::string_view user, uint64_t start_ts, uint64_t commit_ts, MvccOp op,
+                          std::string_view value, uint64_t rev, int64_t expire_at_ms) {
+  WriteInfo wi;
+  wi.start_ts = start_ts;
+  wi.op = op;
+  wi.expire_at_ms = expire_at_ms;
+  std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>> puts;
+  if (op != MvccOp::kDelete) {
+    puts.emplace_back(data_key(user, start_ts), std::string(value), rev, expire_at_ms);
+  }
+  puts.emplace_back(write_key(user, commit_ts), encode_write(wi), rev, expire_at_ms);
+  return eng_.write_batch(puts, {});
+}
+
 void MvccStore::clear_lock(std::string_view user, uint64_t rev) {
   eng_.del(lock_key(user), rev);
 }

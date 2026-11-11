@@ -45,6 +45,49 @@ std::vector<std::string> split_ws(const std::string& line) {
   return parts;
 }
 
+std::string propose_err_line(const ProposeResult& r, const char* fallback) {
+  return "ERR " + (r.error.empty() ? fallback : r.error) +
+         (r.redirect_to.empty() ? "" : (" redirect=" + r.redirect_to));
+}
+
+void apply_put_tail(Command& cmd, const std::vector<std::string>& parts) {
+  if (parts.size() == 5) {
+    cmd.ttl_ms = stamp_expire_at_ms(std::stoll(parts[4]));
+  } else if (parts.size() == 6) {
+    cmd.cas = parts[4] != "0";
+    cmd.expected_revision = std::stoull(parts[5]);
+  } else if (parts.size() == 7) {
+    cmd.ttl_ms = stamp_expire_at_ms(std::stoll(parts[4]));
+    cmd.cas = parts[5] != "0";
+    cmd.expected_revision = std::stoull(parts[6]);
+  }
+}
+
+// ONEPC / PREWRITE 可选尾部：epoch / cas / expire（字段下标从 first 起）。
+void apply_txn_write_tail(const std::vector<std::string>& parts, size_t first, uint64_t* epoch,
+                          bool* cas, uint64_t* expected_rev, int64_t* expire_at) {
+  *epoch = 0;
+  *cas = false;
+  *expected_rev = 0;
+  *expire_at = 0;
+  const size_t n = parts.size();
+  if (n == first + 1) {
+    *epoch = std::stoull(parts[first]);
+  } else if (n == first + 2) {
+    *epoch = std::stoull(parts[first]);
+    *expire_at = std::stoll(parts[first + 1]);
+  } else if (n == first + 3) {
+    *epoch = std::stoull(parts[first]);
+    *cas = parts[first + 1] != "0";
+    *expected_rev = std::stoull(parts[first + 2]);
+  } else if (n == first + 4) {
+    *epoch = std::stoull(parts[first]);
+    *cas = parts[first + 1] != "0";
+    *expected_rev = std::stoull(parts[first + 2]);
+    *expire_at = std::stoll(parts[first + 3]);
+  }
+}
+
 }  // namespace
 
 namespace proto = openkv::proto;
@@ -54,6 +97,104 @@ ExecLineHandler::ExecLineHandler(StoreFacade& facade)
 
 std::string ExecLineHandler::process_line(const std::string& line, AdminSession* sess) {
   return handle_line(line, sess);
+}
+
+bool ExecLineHandler::try_process_line_async(const std::string& line, AdminSession* sess,
+                                             std::function<void(std::string)> cb) {
+  if (!cb) return false;
+  auto parts = split_ws(line);
+  if (parts.empty()) return false;
+  const auto& op = parts[0];
+  const bool is_put = op == proto::kOpPut && parts.size() >= 4 && parts.size() <= 7;
+  const bool is_del = op == proto::kOpDel && (parts.size() == 3 || parts.size() == 5);
+  const bool is_onepc = op == proto::kOpOnePc && parts.size() >= 8 && parts.size() <= 12;
+  if (!is_put && !is_del && !is_onepc) return false;
+
+  AdminSession local;
+  AdminSession& session = sess ? *sess : local;
+  if (storage_needs_admin(op) && !admin_allowed(session, admin_token_)) {
+    cb("ERR unauthorized");
+    return true;
+  }
+  const ReqClass cls = classify_op(op);
+  if (!gate_.try_enter(cls)) {
+    cb(std::string("ERR busy class=") + req_class_name(cls));
+    return true;
+  }
+  req_total_.fetch_add(1, std::memory_order_relaxed);
+  req_gw_.fetch_add(1, std::memory_order_relaxed);
+
+  auto finish = [this, cls, cb = std::move(cb)](std::string body) {
+    gate_.leave(cls);
+    cb(std::move(body));
+  };
+
+  try {
+    if (is_put) {
+      uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
+      std::string key, value;
+      if (!from_hex(parts[2], &key) || !from_hex(parts[3], &value)) {
+        finish("ERR bad_hex");
+        return true;
+      }
+      Command cmd{CmdOp::kPut, key, value, 0};
+      apply_put_tail(cmd, parts);
+      facade_.propose_async(shard, cmd, [finish = std::move(finish)](ProposeResult r) {
+        finish(r.ok ? ("OK PUT " + std::to_string(r.revision))
+                    : propose_err_line(r, "propose_failed"));
+      });
+      return true;
+    }
+    if (is_del) {
+      uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
+      std::string key;
+      if (!from_hex(parts[2], &key)) {
+        finish("ERR bad_hex");
+        return true;
+      }
+      Command cmd{CmdOp::kDelete, key, "", 0};
+      if (parts.size() == 5) {
+        cmd.cas = parts[3] != "0";
+        cmd.expected_revision = std::stoull(parts[4]);
+      }
+      facade_.propose_async(shard, cmd, [finish = std::move(finish)](ProposeResult r) {
+        finish(r.ok ? ("OK DEL " + std::to_string(r.revision) + " 1")
+                    : propose_err_line(r, "propose_failed"));
+      });
+      return true;
+    }
+    // ONEPC
+    uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
+    std::string key, primary, value;
+    if (!from_hex(parts[2], &key) || !from_hex(parts[5], &primary)) {
+      finish("ERR bad_hex");
+      return true;
+    }
+    if (parts[7] == "-") {
+      value.clear();
+    } else if (!from_hex(parts[7], &value)) {
+      finish("ERR bad_hex");
+      return true;
+    }
+    const uint64_t start_ts = std::stoull(parts[3]);
+    const uint64_t commit_ts = std::stoull(parts[4]);
+    const uint8_t mop = static_cast<uint8_t>(std::stoul(parts[6]));
+    uint64_t epoch = 0;
+    bool cas = false;
+    uint64_t expected_rev = 0;
+    int64_t expire_at = 0;
+    apply_txn_write_tail(parts, 8, &epoch, &cas, &expected_rev, &expire_at);
+    facade_.one_pc_async(shard, std::move(key), start_ts, commit_ts, std::move(primary), mop,
+                         std::move(value), epoch, cas, expected_rev, expire_at,
+                         [finish = std::move(finish)](ProposeResult r) {
+                           finish(r.ok ? ("OK ONEPC " + std::to_string(r.revision))
+                                       : propose_err_line(r, "onepc_failed"));
+                         });
+    return true;
+  } catch (const std::exception& e) {
+    finish(std::string("ERR ") + e.what());
+    return true;
+  }
 }
 
 std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* sess) {
@@ -103,7 +244,8 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
   }
   // O2：Prometheus 文本（多行；末行 END）
   if (op == proto::kOpMetrics) {
-    return facade_.metrics().prometheus_text() + "END\n";
+    return facade_.metrics().prometheus_text() + facade_.node().proposals().prometheus_text() +
+           "END\n";
   }
   if (op != proto::kOpPing) {
     req_total_.fetch_add(1, std::memory_order_relaxed);
@@ -345,30 +487,16 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
     }
     // PUT shard hex_key hex_value [ttl_ms] [cas expected_rev]
     // ttl_ms 相对寿命；缺省 0。带 CAS 时：PUT s k v ttl cas expected
-    if (op == proto::kOpPut &&
-        (parts.size() == 4 || parts.size() == 5 || parts.size() == 6 || parts.size() == 7)) {
+    if (op == proto::kOpPut && parts.size() >= 4 && parts.size() <= 7) {
       uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
       std::string key, value;
       if (!from_hex(parts[2], &key) || !from_hex(parts[3], &value)) {
         return "ERR bad_hex";
       }
       Command cmd{CmdOp::kPut, key, value, 0};
-      if (parts.size() == 5) {
-        cmd.ttl_ms = stamp_expire_at_ms(std::stoll(parts[4]));
-      } else if (parts.size() == 6) {
-        // 兼容旧：PUT s k v cas expected（无 ttl）
-        cmd.cas = parts[4] != "0";
-        cmd.expected_revision = std::stoull(parts[5]);
-      } else if (parts.size() == 7) {
-        cmd.ttl_ms = stamp_expire_at_ms(std::stoll(parts[4]));
-        cmd.cas = parts[5] != "0";
-        cmd.expected_revision = std::stoull(parts[6]);
-      }
+      apply_put_tail(cmd, parts);
       auto r = facade_.propose(shard, cmd);
-      if (!r.ok) {
-        return "ERR " + (r.error.empty() ? "propose_failed" : r.error) +
-               (r.redirect_to.empty() ? "" : (" redirect=" + r.redirect_to));
-      }
+      if (!r.ok) return propose_err_line(r, "propose_failed");
       return "OK PUT " + std::to_string(r.revision);
     }
     // GET rid hex_key [linearizable=1]
@@ -404,10 +532,7 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
         cmd.expected_revision = std::stoull(parts[4]);
       }
       auto r = facade_.propose(shard, cmd);
-      if (!r.ok) {
-        return "ERR " + (r.error.empty() ? "propose_failed" : r.error) +
-               (r.redirect_to.empty() ? "" : (" redirect=" + r.redirect_to));
-      }
+      if (!r.ok) return propose_err_line(r, "propose_failed");
       return "OK DEL " + std::to_string(r.revision) + " 1";
     }
     // PREWRITE rid hex_key start_ts hex_primary op hex_value [epoch] [cas expected_rev] [expire_at]
@@ -432,28 +557,37 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       bool cas = false;
       uint64_t expected_rev = 0;
       int64_t expire_at = 0;
-      if (parts.size() == 8) {
-        epoch = std::stoull(parts[7]);
-      } else if (parts.size() == 9) {
-        epoch = std::stoull(parts[7]);
-        expire_at = std::stoll(parts[8]);
-      } else if (parts.size() == 10) {
-        epoch = std::stoull(parts[7]);
-        cas = parts[8] != "0";
-        expected_rev = std::stoull(parts[9]);
-      } else if (parts.size() == 11) {
-        epoch = std::stoull(parts[7]);
-        cas = parts[8] != "0";
-        expected_rev = std::stoull(parts[9]);
-        expire_at = std::stoll(parts[10]);
-      }
+      apply_txn_write_tail(parts, 7, &epoch, &cas, &expected_rev, &expire_at);
       auto r = facade_.prewrite(shard, key, start_ts, primary, mop, value, epoch, cas, expected_rev,
                                 expire_at);
-      if (!r.ok) {
-        return "ERR " + (r.error.empty() ? "prewrite_failed" : r.error) +
-               (r.redirect_to.empty() ? "" : (" redirect=" + r.redirect_to));
-      }
+      if (!r.ok) return propose_err_line(r, "prewrite_failed");
       return "OK PREWRITE " + std::to_string(r.revision);
+    }
+    // ONEPC rid hex_key start_ts commit_ts hex_primary op hex_value [epoch] [cas expected] [expire]
+    // 字段数：8 | 9(epoch) | 10(epoch+expire) | 11(cas) | 12(cas+expire)
+    if (op == proto::kOpOnePc && parts.size() >= 8 && parts.size() <= 12) {
+      uint32_t shard = static_cast<uint32_t>(std::stoul(parts[1]));
+      std::string key, primary, value;
+      if (!from_hex(parts[2], &key) || !from_hex(parts[5], &primary)) {
+        return "ERR bad_hex";
+      }
+      if (parts[7] == "-") {
+        value.clear();
+      } else if (!from_hex(parts[7], &value)) {
+        return "ERR bad_hex";
+      }
+      const uint64_t start_ts = std::stoull(parts[3]);
+      const uint64_t commit_ts = std::stoull(parts[4]);
+      const uint8_t mop = static_cast<uint8_t>(std::stoul(parts[6]));
+      uint64_t epoch = 0;
+      bool cas = false;
+      uint64_t expected_rev = 0;
+      int64_t expire_at = 0;
+      apply_txn_write_tail(parts, 8, &epoch, &cas, &expected_rev, &expire_at);
+      auto r = facade_.one_pc(shard, key, start_ts, commit_ts, primary, mop, value, epoch, cas,
+                              expected_rev, expire_at);
+      if (!r.ok) return propose_err_line(r, "onepc_failed");
+      return "OK ONEPC " + std::to_string(r.revision);
     }
     // COMMIT rid hex_key start_ts commit_ts [epoch]
     if (op == proto::kOpCommit && (parts.size() == 5 || parts.size() == 6)) {

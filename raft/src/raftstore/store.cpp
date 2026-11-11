@@ -103,10 +103,28 @@ void Store::schedule_tick() {
       std::lock_guard<std::mutex> lk(mu_);
       for (auto& [_, p] : peers_) snap.push_back(p);
     }
-    for (auto& p : snap) handle_tick(*p);
+    for (auto& p : snap) handle_tick(*p, /*process_ready=*/true);
     return;
   }
   router_->broadcast_tick();
+}
+
+void Store::drive_ready(uint32_t region_id) {
+  if (!batch_ || !batch_->running()) {
+    // BatchSystem 未起：同步 Ready（单测 / 早期路径）。
+    std::shared_ptr<Peer> peer;
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      peer = peer_locked(region_id);
+    }
+    if (!peer) return;
+    wake_peer(*peer);
+    process_ready_legacy(*peer);
+    return;
+  }
+  // 只对本 Region 投递 Wake；同批多个 propose 合并为一次 Ready/sync。
+  // mark_hot = wake + kWake；勿再 schedule_tick（避免每 Put 全表 Tick）。
+  mark_hot(region_id);
 }
 
 std::shared_ptr<Peer> Store::peer_locked(uint32_t region_id) {
@@ -194,7 +212,7 @@ std::string Store::apply_inbound_raft(uint32_t region_id, RaftMessage msg) {
   wake_peer(*peer);
   // 同步步进（行协议需立即回包）；同时投递 Router 作唤醒/批处理对齐。
   router_->send_raft(region_id, RaftMessage{msg.from, msg.type, {}});
-  return step_raft_message(*peer, msg);
+  return step_raft_message(*peer, msg, /*process_ready=*/true);
 }
 
 std::vector<uint32_t> Store::leader_shards() const {
@@ -269,20 +287,29 @@ void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
     peer = peer_locked(region_id);
   }
   if (!peer) return;
+  // Group commit：同批 Tick/Wake/Msg 只 process_ready 一次。
+  bool did_tick = false;
+  bool need_ready = false;
   for (auto& m : msgs) {
     std::visit(
         [&](auto&& arg) {
           using T = std::decay_t<decltype(arg)>;
           if constexpr (std::is_same_v<T, TickMsg>) {
-            handle_tick(*peer);
+            if (!did_tick) {
+              handle_tick(*peer, /*process_ready=*/false);
+              did_tick = true;
+            }
+            need_ready = true;
           } else if constexpr (std::is_same_v<T, RaftMessage>) {
             wake_peer(*peer);
             handle_raft_message(*peer, arg);
+            need_ready = true;
           } else if constexpr (std::is_same_v<T, SignificantMsg>) {
             wake_peer(*peer);
             if (arg.type == SignificantMsg::Type::kMsgUnreachable && peer->legacy()) {
               peer->legacy()->on_rpc_transport_fail(arg.peer_id);
             }
+            need_ready = true;  // kWake / TimeoutNow 等：批末 Ready
           } else if constexpr (std::is_same_v<T, ApplyRes>) {
             peer->touch_activity();
             if (peer->legacy()) {
@@ -292,9 +319,10 @@ void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
         },
         m);
   }
+  if (need_ready) process_ready_legacy(*peer);
 }
 
-void Store::handle_tick(Peer& peer) {
+void Store::handle_tick(Peer& peer, bool process_ready) {
   if (peer.unloaded()) {
     maybe_hibernate_or_unload(peer);
     return;
@@ -313,27 +341,29 @@ void Store::handle_tick(Peer& peer) {
   if (n->consume_activity_flag() || n->is_leader()) {
     peer.touch_activity();
   }
-  process_ready_legacy(peer);
+  if (process_ready) process_ready_legacy(peer);
   maybe_hibernate_or_unload(peer);
   meta_.set_leader(peer.region_id(), n->soft_state().leader_id);
 }
 
 void Store::handle_raft_message(Peer& peer, const RaftMessage& msg) {
   if (msg.payload.empty()) {
-    // 仅唤醒（apply_inbound_raft 已同步 step）
+    // 仅唤醒（apply_inbound_raft 已同步 step）；Ready 留给批末。
     peer.touch_activity();
-    process_ready_legacy(peer);
     return;
   }
-  (void)step_raft_message(peer, msg);
+  (void)step_raft_message(peer, msg, /*process_ready=*/false);
 }
 
-std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg) {
+std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool process_ready) {
   auto* n = peer_node(peer);
   if (!n) return "ERR no_region";
   peer.touch_activity();
   const auto& type = msg.type;
   const auto parts = split_pipe(msg.payload);
+  auto maybe_ready = [&] {
+    if (process_ready) process_ready_legacy(peer);
+  };
   try {
     if (type == "RequestVote" || type == "RequestPreVote") {
       if (parts.size() < 3) return "ERR bad_vote";
@@ -346,7 +376,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg) {
       } else {
         n->on_request_vote(msg.from, term, last_idx, last_term, &granted);
       }
-      process_ready_legacy(peer);
+      maybe_ready();
       auto st = n->soft_state();
       return std::string("OK ") + (type == "RequestPreVote" ? "PREVOTE " : "VOTE ") +
              std::to_string(st.term) + " " + (granted ? "1" : "0");
@@ -375,7 +405,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg) {
       uint64_t match = 0;
       n->on_append_entries(msg.from, term, prev_idx, prev_term, entries, leader_commit, &success,
                            &match);
-      process_ready_legacy(peer);
+      maybe_ready();
       auto st = n->soft_state();
       return "OK AE " + std::to_string(st.term) + " " + (success ? "1" : "0") + " " +
              std::to_string(match);
@@ -390,7 +420,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg) {
       if (!openkv::from_hex(parts[3], &data)) return "ERR snap_bad_hex";
       bool success = false;
       n->on_install_snapshot(msg.from, term, last_idx, last_term, data, &success);
-      process_ready_legacy(peer);
+      maybe_ready();
       auto st = n->soft_state();
       return "OK SNAP " + std::to_string(st.term) + " " + (success ? "1" : "0") + " " +
              std::to_string(last_idx);
@@ -398,7 +428,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg) {
   } catch (...) {
     return "ERR step";
   }
-  process_ready_legacy(peer);
+  maybe_ready();
   return "ERR unknown_raft_type";
 }
 
@@ -457,8 +487,7 @@ void Store::process_ready_legacy(Peer& peer) {
 }
 
 void Store::on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs) {
-  // Phase S3：同 worker 一轮内多 Region ApplyMsg 展平后逐条 apply_fn；
-  // 引擎侧可用 KvEngine::write_batch 合并（StorageNode on_apply 仍按条语义）。
+  // 同 Region 多 ApplyMsg 展平后优先 ApplyBatchFn（一次 WriteBatch）；否则逐条 ApplyFn。
   std::vector<RegionApplySlice> slices;
   for (auto& m : msgs) {
     std::visit(
@@ -467,7 +496,7 @@ void Store::on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs) {
           if constexpr (std::is_same_v<T, ApplyMsg>) {
             RegionApplySlice sl;
             sl.region_id = arg.region_id ? arg.region_id : region_id;
-            sl.entries = arg.entries;
+            sl.entries = std::move(arg.entries);
             slices.push_back(std::move(sl));
           } else if constexpr (std::is_same_v<T, SnapTask>) {
             if (batch_ && !batch_->snap_overloaded()) {
@@ -478,15 +507,27 @@ void Store::on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs) {
         },
         m);
   }
-  if (!apply_fn_ || slices.empty()) return;
+  if (slices.empty()) return;
+
+  auto finish_entry = [&](uint32_t rid, const raft::LogEntry& e) {
+    if (auto* n = get(rid)) n->report_applied(e.index);
+    const bool is_conf = !e.data.empty() && static_cast<unsigned char>(e.data[0]) == 0xFF;
+    if (is_conf) router_->send_raft(rid, ApplyRes{rid, e.index, true});
+  };
+
+  if (apply_batch_fn_) {
+    for (auto& sl : slices) {
+      if (sl.entries.empty()) continue;
+      apply_batch_fn_(sl.region_id, sl.entries);
+      for (const auto& e : sl.entries) finish_entry(sl.region_id, e);
+    }
+    return;
+  }
+  if (!apply_fn_) return;
   const auto flat = flatten_apply_slices(slices);
   for (const auto& [rid, e] : flat) {
-    const bool is_conf = !e.data.empty() && static_cast<unsigned char>(e.data[0]) == 0xFF;
     apply_fn_(rid, e.index, e.data);
-    if (auto* n = get(rid)) n->report_applied(e.index);
-    if (is_conf) {
-      router_->send_raft(rid, ApplyRes{rid, e.index, true});
-    }
+    finish_entry(rid, e);
   }
 }
 

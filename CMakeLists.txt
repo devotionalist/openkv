@@ -81,6 +81,7 @@ set(PROTO_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${PROTO_GEN_DIR})
 set(PROTO_FILES
   ${PROTO_ROOT}/kv/v1/kv.proto
+  ${PROTO_ROOT}/kv/v1/ds.proto
   ${PROTO_ROOT}/storage/v1/storage.proto
   ${PROTO_ROOT}/meta/v1/meta.proto
 )

@@ -1,6 +1,6 @@
 # 本地 Compose 参考拓扑（生产请用 deploy/helm/openkv）。
 # 镜像：docker build -f deploy/Dockerfile -t openkv:dev .
-# Gateway：docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
+# Gateway（C++ gateway_node）：docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
 version: "3.9"
 
 services:

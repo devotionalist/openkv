@@ -1,7 +1,7 @@
-# 常用数据结构（非 RESP）
+# 常用数据结构（DSService）
 
-OpenKV 在 **gRPC `kv.v1.DSService`** 上提供 Hash / Set / List / ZSet，语义对齐 Redis 常用命令子集。  
-**不做** Redis 线协议（RESP）、PubSub、Stream、Lua、Cluster `MOVED`。
+OpenKV 在 **gRPC `kv.v1.DSService`** 上提供 Hash / Set / List / ZSet。  
+**不做** 独立线协议、PubSub、Stream、脚本引擎。
 
 相关流程：[flows/12-data-structures.md](../flows/12-data-structures.md)
 
@@ -11,8 +11,8 @@ OpenKV 在 **gRPC `kv.v1.DSService`** 上提供 Hash / Set / List / ZSet，语�
 
 | 做 | 不做 |
 |----|------|
-| Gateway gRPC DS API + Go SDK | redis-cli / RESP |
-| Hash → Set → List → ZSet（分期） | 完整 Redis 命令面 |
+| Gateway gRPC DS API + 多语言 SDK | 独立线协议客户端 |
+| Hash → Set → List → ZSet（分期） | 全量命令面一次做完 |
 | 与普通 `Get`/`Put` 命名空间隔离 | 跨 Region 单对象（见路由） |
 | 短事务写（同 Put） | 一期 TTL（meta 预留字段） |
 
@@ -83,7 +83,7 @@ MetaKey(ukey) = ukey + "\x00\x01ds\x00"
 | LPush / RPush | 头/尾插入 |
 | LPop / RPop | 头/尾弹出 |
 | LLen | 长度 |
-| LRange | `[start, stop]`（同 Redis 负下标） |
+| LRange | `[start, stop]`（支持负下标） |
 | LIndex | 按下标取（可选） |
 
 ### ZSet

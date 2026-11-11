@@ -173,7 +173,7 @@ flowchart LR
 |------|------|------|
 | **本页** | `architecture/DATA_HA.md` | 目标、两面模型、边界、验收索引 |
 | 流程 | `flows/04` `05` `06` `07` `08` | 逐步 Mermaid |
-| 生产差距 | `production/*_PRODUCTION.md` | 与业界对照、已实现勾选 |
+| 生产差距 | `production/*_PRODUCTION.md` | 能力要求与已实现勾选 |
 | 运维演练 | `ops/FAULT_DRILL.md` | F1–F16 步骤与结果模板 |
 | 集成登记 | `test/TEST_CASES.md` · `INTEGRATION_TEST.md` | 命令与 PASS/FAIL |
 

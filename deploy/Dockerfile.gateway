@@ -1,15 +1,26 @@
-# OpenKV compute-gateway（Go）
+# OpenKV C++ compute gateway（gateway_node）
 # 构建：docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
 
-FROM golang:1.22-bookworm AS build
+FROM ubuntu:24.04 AS build
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    build-essential cmake git pkg-config ccache \
+    protobuf-compiler-grpc libgrpc++-dev libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-COPY client/go/go.mod client/go/go.sum ./
-RUN go mod download
-COPY client/go/ ./
-RUN CGO_ENABLED=0 go build -o /out/compute-gateway ./cmd/compute-gateway
+COPY . .
+RUN cmake -B build \
+      -DOPENKV_USE_SEASTAR=OFF \
+      -DOPENKV_BUILD_TESTS=OFF \
+ && cmake --build build -j"$(nproc)" --target gateway_node
 
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/compute-gateway /opt/openkv/compute-gateway
-USER nonroot:nonroot
+FROM ubuntu:24.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates bash \
+      libgrpc++1.51t64 libprotobuf32t64 \
+    || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates bash libgrpc++1 libprotobuf23) \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /src/build/compute/gateway_node /opt/openkv/gateway_node
+USER nobody
 EXPOSE 19000
-ENTRYPOINT ["/opt/openkv/compute-gateway"]
+ENTRYPOINT ["/opt/openkv/gateway_node"]

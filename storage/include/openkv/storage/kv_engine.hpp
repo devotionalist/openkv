@@ -68,9 +68,12 @@ class KvEngine {
   bool put(std::string_view key, std::string_view value, uint64_t revision,
            int64_t expire_at_ms = 0);
   bool del(std::string_view key, uint64_t revision);
-  /// 批量写（跨 Region Apply WriteBatch）；pairs 为 (key,value,revision)，del_keys 为删除。
+  /// 批量写；puts 为 (key,value,revision[,expire_at_ms])，缺省 expire=0。
   bool write_batch(const std::vector<std::tuple<std::string, std::string, uint64_t>>& puts,
                    const std::vector<std::string>& dels);
+  bool write_batch(
+      const std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>>& puts,
+      const std::vector<std::string>& dels);
   /// hide_expired=true（默认）：过期 key 视为不存在（TiKV 读过滤）。
   std::optional<KvRecord> get(std::string_view key, bool hide_expired = true) const;
   /// 催促 TTL CompactionFilter 回收（简化版 TiKV TTL Checker）。
@@ -97,11 +100,14 @@ class KvEngine {
   /// E3：从 checkpoint 目录导入覆盖本机（演练 / 本地恢复）；先清空再写入。
   bool restore_from_checkpoint(std::string_view src_dir);
 
-  /// 近似 key 数 / 字节数（自动分裂阈值）。
-  size_t approx_key_count() const;
-  size_t approx_bytes() const;
-  /// 选分裂点：排序后中位 key；不足 2 个返回空。
-  std::string pick_split_key() const;
+  /// 近似唯一用户 key 数 / 字节数（自动分裂阈值）。空 range = 全空间。
+  size_t approx_key_count() const { return approx_key_count(openkv::KeyRange{}); }
+  size_t approx_bytes() const { return approx_bytes(openkv::KeyRange{}); }
+  size_t approx_key_count(const openkv::KeyRange& range) const;
+  size_t approx_bytes(const openkv::KeyRange& range) const;
+  /// 选分裂点：range 内用户 key 排序后中位；不足 2 个返回空。
+  std::string pick_split_key() const { return pick_split_key(openkv::KeyRange{}); }
+  std::string pick_split_key(const openkv::KeyRange& range) const;
   /// 将 key >= split_key 的记录搬到 dst（跳过 `\xff\xffskv/` meta）。
   /// RocksDB：dst PutBatch 成功后再 src DeleteBatch；返回搬迁条数。
   size_t migrate_ge(KvEngine& dst, std::string_view split_key);

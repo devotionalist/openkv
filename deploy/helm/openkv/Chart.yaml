@@ -1,6 +1,6 @@
 apiVersion: v2
 name: openkv
-description: OpenKV HA cluster (Meta + Storage StatefulSets, compute-gateway)
+description: OpenKV HA cluster (Meta + Storage StatefulSets, C++ gateway_node)
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

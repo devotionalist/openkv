@@ -1,10 +1,10 @@
 # 流程：Meta HA
 
-**设计总览：** [DATA_HA.md](../architecture/DATA_HA.md) §4。
+**设计总览：** [DATA_HA.md](../architecture/DATA_HA.md) §4  
+**拓扑：** 3 × `meta_server`（`:8500–8502`），单 Raft Group（`kMetaShard=0`），多数派 = 2  
+**关键代码：** `MetaNode` · `MetaFsm` / `apply_meta_command` · `ClusterState` · `RaftNode` + `GrpcRaftTransport`
 
-**拓扑：** 3 × `meta_server`（如 `:8500–8502`），单 Raft Group（`kMetaShard=0`），多数派 = 2。
-
-**关键代码：** `MetaNode` · `MetaFsm` / `apply_meta_command` · `ClusterState` · 与 Storage 共用 `RaftNode` + `GrpcRaftTransport` 模式
+对外：gRPC MetaService / ExecLine。TSO 热路径见 [16-gateway-tso-perf](16-gateway-tso-perf.md)；Meta CV 见 [19](19-architecture-hardening.md)。
 
 ```mermaid
 flowchart TD

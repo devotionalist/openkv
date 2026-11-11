@@ -53,6 +53,10 @@ spec:
               value: {{ .Values.cluster.shardCount | quote }}
             - name: OPENKV_REPLICA_FACTOR
               value: {{ .Values.cluster.replicaFactor | quote }}
+            - name: SKV_SPLIT_KEYS
+              value: {{ .Values.split.keys | default "256000" | quote }}
+            - name: SKV_SPLIT_BYTES
+              value: {{ .Values.split.bytes | default "100663296" | quote }}
             {{- if .Values.adminToken }}
             - name: SKV_ADMIN_TOKEN
               valueFrom:

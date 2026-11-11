@@ -1,7 +1,9 @@
 # OpenKV 待做计划（Backlog）
 
-依据：`COMPONENT_MAP` / `META_PRODUCTION` / `STORE_PRODUCTION` / `MULTI_RAFT_PRODUCTION` / `TRANSACTION_SURVEY` / `SEASTAR_NET` 与近期缺口。  
-文档总目录（默认英文）：[English](./en/README.md) · [中文](./zh/README.md)。更新：2026-10-27。
+依据：`COMPONENT_MAP` / `META_PRODUCTION` / `STORE_PRODUCTION` / `MULTI_RAFT_PRODUCTION` / `SEASTAR_NET` 与近期缺口。  
+文档总目录（默认英文）：[English](./en/README.md) · [中文](./zh/README.md)。更新：2026-11-10。
+
+近期已交付（勿重复）：ProposalQueue · ONEPC · Region auto-split · recover_local_regions · 架构硬化见 [flows/19-architecture-hardening.md](flows/19-architecture-hardening.md)。
 
 ---
 
@@ -45,7 +47,7 @@
 
 ## 4. 事务
 
-Percolator **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve、epoch）。见 [TRANSACTION_SURVEY.md](architecture/TRANSACTION_SURVEY.md)。
+MVCC 事务 **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve、epoch）。见 [flows/13-version-cas.md](flows/13-version-cas.md)。
 
 | ID | 内容 | 说明 |
 |----|------|------|
@@ -103,7 +105,7 @@ Percolator **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve�
 - **R2–R5 数据面硬化**：模块边界约定；Coprocessor key/value 前缀 + keys/count_only + `ADMIN_COP`；SnapWorker 合并/重试/Stats；转主前追平门闩（见 DATA_PLANE_HARDENING）
 - 单 Store RocksDB + RaftEngine；raftstore BatchSystem / Hibernate / SnapWorker 骨架
 - Helm HA（Meta×3 + Storage×N + Gateway + Web）；运维页 JOIN / 拓扑
-- Percolator 同 Region 事务 P1–P3；GC SafePoint
+- MVCC 同 Region 事务 P1–P3；GC SafePoint
 - 文档统一在 `docs/`（USER_GUIDE · NETWORKING · architecture/ops/test/flows · 管控台截图）
 - **D1–D3 / A4**：README 与 ARCHITECTURE 对齐 gRPC 强制；Meta A4 标已实现
 
@@ -120,6 +122,6 @@ Percolator **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve�
 | [META_PRODUCTION.md](production/META_PRODUCTION.md) | Meta 缺口与阶段 |
 | [STORE_PRODUCTION.md](production/STORE_PRODUCTION.md) | Store + 跨 Region 2PC backlog |
 | [MULTI_RAFT_PRODUCTION.md](production/MULTI_RAFT_PRODUCTION.md) | Raft 运行时 |
-| [TRANSACTION_SURVEY.md](architecture/TRANSACTION_SURVEY.md) | 事务方案与现状 |
+| [flows/13-version-cas.md](flows/13-version-cas.md) | 版本 CAS / 事务相关 |
 | [SEASTAR_NET.md](architecture/SEASTAR_NET.md) | Seastar 落地阶段 |
 | [flows/README.md](flows/README.md) | 流程图分类索引 |

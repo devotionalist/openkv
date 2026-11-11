@@ -36,7 +36,7 @@ flowchart LR
   RN -->|TransportSend| TT[GrpcRaftTransport]
   RN -->|SnapshotProvider| CS[create_snapshot]
   RN -->|SnapshotApplier| AS[apply_snapshot]
-  TT -->|RAFT_* TCP| Peer[其它 Storage]
+  TT -->|RAFT_* gRPC| Peer[其它 Storage]
 ```
 
 ## 启动顺序约束

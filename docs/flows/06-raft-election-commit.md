@@ -57,10 +57,14 @@ flowchart TD
   E -->|是| Y[granted=1<br/>persist voted_for]
 ```
 
-## RPC 线协议
+## Raft RPC（gRPC 承载的 ExecLine 语义）
+
+节点间经 `GrpcRaftTransport` 发下列命令（行协议文本在 gRPC 帧内；**无**独立 TCP 双栈）：
 
 | 类型 | 请求 | 响应 |
 |------|------|------|
 | RequestVote | `RAFT_VOTE shard from term last_idx last_term` | `OK VOTE term granted` |
 | AppendEntries | `RAFT_AE shard from term prev prev_term commit n …` | `OK AE term success match` |
 | InstallSnapshot | `RAFT_SNAP shard from term last_idx last_term hex` | `OK SNAP term success match` |
+
+网络总览：[NETWORKING.md](../NETWORKING.md) · [GRPC_MANDATORY](GRPC_MANDATORY.md)。

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file grpc_server.cpp
-// Storage gRPC Server 实现（强制 gRPC）。
+// Storage gRPC Server：Store/Admin 用 CallbackService（热路径不占线程等 apply）。
 
 #include "openkv/storage/grpc_server.hpp"
 
@@ -22,7 +22,9 @@
 #include "openkv/logging.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/storage/storage_node.hpp"
+#include "openkv/work_pool.hpp"
 
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -43,54 +45,69 @@ std::string extract_redirect(std::string_view s) {
   return std::string(rest);
 }
 
-}  // namespace
-
-
-namespace {
-
+using openkv::WorkPool;
+using grpc::CallbackServerContext;
 using grpc::ServerContext;
+using grpc::ServerUnaryReactor;
 using grpc::Status;
 namespace pb = ::storage::v1;
 
-class StoreServiceImpl final : public pb::StoreService::Service {
+void fill_propose_response(pb::ProposeResponse* resp, const ProposeResult& r) {
+  resp->set_ok(r.ok);
+  resp->set_revision(r.revision);
+  resp->set_error(r.error);
+  resp->set_redirect_to(r.redirect_to);
+  resp->set_cas_failed(r.cas_failed);
+  resp->set_current_revision(r.current_revision);
+}
+
+Command command_from_propose_req(const pb::ProposeRequest& req) {
+  Command cmd;
+  cmd.op = req.op() == pb::ProposeRequest::DELETE ? CmdOp::kDelete : CmdOp::kPut;
+  cmd.key = req.key();
+  cmd.value = req.value();
+  cmd.ttl_ms = stamp_expire_at_ms(req.ttl_ms());
+  cmd.request_id = req.request_id();
+  cmd.cas = req.cas();
+  cmd.expected_revision = req.expected_revision();
+  return cmd;
+}
+
+class StoreServiceImpl final : public pb::StoreService::CallbackService {
  public:
   StoreServiceImpl(StoreFacade& f, std::string token) : facade_(f), token_(std::move(token)) {}
 
-  Status Get(ServerContext*, const pb::StoreGetRequest* req,
-             pb::StoreGetResponse* resp) override {
+  ServerUnaryReactor* Get(CallbackServerContext* ctx, const pb::StoreGetRequest* req,
+                          pb::StoreGetResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     auto r = facade_.get(req->shard_id(), req->key(), req->linearizable());
     resp->set_found(r.found);
     resp->set_value(r.value);
     resp->set_revision(r.revision);
     resp->set_is_leader(r.is_leader);
     resp->set_redirect_to(r.redirect_to);
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status Propose(ServerContext*, const pb::ProposeRequest* req,
-                 pb::ProposeResponse* resp) override {
-    Command cmd;
-    cmd.op = req->op() == pb::ProposeRequest::DELETE ? CmdOp::kDelete : CmdOp::kPut;
-    cmd.key = req->key();
-    cmd.value = req->value();
-    cmd.ttl_ms = stamp_expire_at_ms(req->ttl_ms());  // 相对 → 绝对
-    cmd.request_id = req->request_id();
-    cmd.cas = req->cas();
-    cmd.expected_revision = req->expected_revision();
-    auto r = facade_.propose(req->shard_id(), cmd);
-    resp->set_ok(r.ok);
-    resp->set_revision(r.revision);
-    resp->set_error(r.error);
-    resp->set_redirect_to(r.redirect_to);
-    resp->set_cas_failed(r.cas_failed);
-    resp->set_current_revision(r.current_revision);
-    return Status::OK;
+  // Finish-on-apply：callback 线程只发起 propose_async，apply/超时后再 Finish。
+  ServerUnaryReactor* Propose(CallbackServerContext* ctx, const pb::ProposeRequest* req,
+                              pb::ProposeResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
+    facade_.propose_async(req->shard_id(), command_from_propose_req(*req),
+                          [reactor, resp](ProposeResult r) {
+                            fill_propose_response(resp, r);
+                            reactor->Finish(Status::OK);
+                          });
+    return reactor;
   }
 
-  Status TransferLeadership(ServerContext* ctx, const pb::TransferRequest* req,
-                             pb::TransferResponse* resp) override {
+  ServerUnaryReactor* TransferLeadership(CallbackServerContext* ctx, const pb::TransferRequest* req,
+                                         pb::TransferResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     if (!grpc_admin_allowed(*ctx, token_)) {
-      return Status(grpc::StatusCode::UNAUTHENTICATED, "unauthorized");
+      reactor->Finish(Status(grpc::StatusCode::UNAUTHENTICATED, "unauthorized"));
+      return reactor;
     }
     auto msg = facade_.node().admin_transfer_leader(req->shard_id(), req->target_peer());
     resp->set_ok(proto::starts_with_ok(msg));
@@ -98,7 +115,8 @@ class StoreServiceImpl final : public pb::StoreService::Service {
       resp->set_error(msg);
       resp->set_redirect_to(extract_redirect(msg));
     }
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
  private:
@@ -107,11 +125,9 @@ class StoreServiceImpl final : public pb::StoreService::Service {
 };
 
 void parse_vote_line(std::string_view line, pb::RequestVoteResponse* resp) {
-  // OK VOTE term granted | ERR ...
   resp->set_vote_granted(false);
   resp->set_term(0);
   if (!proto::starts_with_ok(line)) return;
-  // "OK VOTE <term> <0|1>" roughly — see exec_line_handler / storage handlers
   std::istringstream iss{std::string(line)};
   std::string ok, tag;
   uint64_t term = 0;
@@ -126,14 +142,10 @@ void parse_ae_line(std::string_view line, pb::AppendEntriesResponse* resp) {
   resp->set_success(false);
   resp->set_term(0);
   resp->set_match_index(0);
-  if (!proto::starts_with_ok(line)) {
-    // still try parse term
-  }
   std::istringstream iss{std::string(line)};
   std::string a, b;
   uint64_t term = 0, match = 0;
   int success = 0;
-  // OK AE term success match
   if (iss >> a >> b >> term >> success >> match) {
     resp->set_term(term);
     resp->set_success(success != 0);
@@ -192,7 +204,6 @@ class RaftServiceImpl final : public pb::RaftService::Service {
       if (chunk.done()) break;
     }
     auto line = node_.handle_raft_snapshot(shard, from, term, last_idx, last_term, buf);
-    // OK SNAP <term> <success> <match>
     std::istringstream iss(line);
     std::string ok, tag;
     uint64_t out_term = term;
@@ -222,189 +233,215 @@ pb::AdminSimpleResponse make_admin_resp(std::string_view msg) {
   return r;
 }
 
-class AdminServiceImpl final : public pb::AdminService::Service {
+class AdminServiceImpl final : public pb::AdminService::CallbackService {
  public:
-  AdminServiceImpl(StorageNode& n, ExecLineHandler* line, std::string token)
-      : node_(n), line_(line), token_(std::move(token)) {}
+  AdminServiceImpl(StorageNode& n, ExecLineHandler* line, std::string token, WorkPool& pool)
+      : node_(n), line_(line), token_(std::move(token)), pool_(pool) {}
 
-  Status ensure_auth(ServerContext* ctx) {
+  Status ensure_auth(CallbackServerContext* ctx) {
     if (!grpc_admin_allowed(*ctx, token_)) {
       return Status(grpc::StatusCode::UNAUTHENTICATED, "unauthorized");
     }
     return Status::OK;
   }
 
-  Status EnsureRegion(ServerContext* ctx, const pb::EnsureRegionRequest* req,
-                      pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    std::vector<raft::Peer> peers;
-    for (const auto& p : req->peers()) {
-      peers.push_back(raft::Peer{p.node_id(), p.address(), p.learner()});
+  /// Auth → run body → Finish(OK)。失败时已 Finish，调用方直接 return reactor。
+  template <typename Fn>
+  ServerUnaryReactor* with_auth(CallbackServerContext* ctx, Fn&& fn) {
+    auto* reactor = ctx->DefaultReactor();
+    if (auto st = ensure_auth(ctx); !st.ok()) {
+      reactor->Finish(st);
+      return reactor;
     }
-    *resp = make_admin_resp(node_.admin_ensure_region(req->region_id(), peers));
-    return Status::OK;
+    fn();
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status AddLearner(ServerContext* ctx, const pb::PeerOpRequest* req,
-                    pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(
-        node_.admin_add_learner(req->region_id(), raft::Peer{req->node_id(), req->address(), true}));
-    return Status::OK;
+  ServerUnaryReactor* EnsureRegion(CallbackServerContext* ctx, const pb::EnsureRegionRequest* req,
+                                   pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      std::vector<raft::Peer> peers;
+      for (const auto& p : req->peers()) {
+        peers.push_back(raft::Peer{p.node_id(), p.address(), p.learner()});
+      }
+      *resp = make_admin_resp(node_.admin_ensure_region(req->region_id(), peers));
+    });
   }
 
-  Status Promote(ServerContext* ctx, const pb::PeerOpRequest* req,
-                 pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_promote(req->region_id(), req->node_id()));
-    return Status::OK;
+  ServerUnaryReactor* AddLearner(CallbackServerContext* ctx, const pb::PeerOpRequest* req,
+                                 pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_add_learner(
+          req->region_id(), raft::Peer{req->node_id(), req->address(), true}));
+    });
   }
 
-  Status RemovePeer(ServerContext* ctx, const pb::PeerOpRequest* req,
-                    pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_remove_peer(req->region_id(), req->node_id()));
-    return Status::OK;
+  ServerUnaryReactor* Promote(CallbackServerContext* ctx, const pb::PeerOpRequest* req,
+                              pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_promote(req->region_id(), req->node_id()));
+    });
   }
 
-  Status DestroyRegion(ServerContext* ctx, const pb::DestroyRegionRequest* req,
-                       pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_destroy_region(req->region_id()));
-    return Status::OK;
+  ServerUnaryReactor* RemovePeer(CallbackServerContext* ctx, const pb::PeerOpRequest* req,
+                                 pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_remove_peer(req->region_id(), req->node_id()));
+    });
   }
 
-  Status PeerProgress(ServerContext* ctx, const pb::PeerOpRequest* req,
-                      pb::PeerProgressResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    auto msg = node_.admin_peer_progress(req->region_id(), req->node_id());
-    resp->set_ok(proto::starts_with_ok(msg));
-    resp->set_message(msg);
-    resp->set_redirect_to(extract_redirect(msg));
-    // OK PROGRESS match commit last caught learner
-    std::istringstream iss(msg);
-    std::string ok, tag;
-    uint64_t match = 0, commit = 0, last = 0;
-    int caught = 0, learner = 0;
-    if (iss >> ok >> tag >> match >> commit >> last >> caught >> learner) {
-      resp->set_match_index(match);
-      resp->set_commit_index(commit);
-      resp->set_last_index(last);
-      resp->set_caught_up(caught != 0);
-      resp->set_is_learner(learner != 0);
-    }
-    return Status::OK;
+  ServerUnaryReactor* DestroyRegion(CallbackServerContext* ctx, const pb::DestroyRegionRequest* req,
+                                    pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_destroy_region(req->region_id()));
+    });
   }
 
-  Status TransferLeader(ServerContext* ctx, const pb::TransferRequest* req,
-                        pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_transfer_leader(req->shard_id(), req->target_peer()));
-    return Status::OK;
+  ServerUnaryReactor* PeerProgress(CallbackServerContext* ctx, const pb::PeerOpRequest* req,
+                                   pb::PeerProgressResponse* resp) override {
+    return with_auth(ctx, [&] {
+      auto msg = node_.admin_peer_progress(req->region_id(), req->node_id());
+      resp->set_ok(proto::starts_with_ok(msg));
+      resp->set_message(msg);
+      resp->set_redirect_to(extract_redirect(msg));
+      std::istringstream iss(msg);
+      std::string ok, tag;
+      uint64_t match = 0, commit = 0, last = 0;
+      int caught = 0, learner = 0;
+      if (iss >> ok >> tag >> match >> commit >> last >> caught >> learner) {
+        resp->set_match_index(match);
+        resp->set_commit_index(commit);
+        resp->set_last_index(last);
+        resp->set_caught_up(caught != 0);
+        resp->set_is_learner(learner != 0);
+      }
+    });
   }
 
-  Status Campaign(ServerContext* ctx, const pb::CampaignRequest* req,
-                  pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_campaign(req->region_id()));
-    return Status::OK;
+  ServerUnaryReactor* TransferLeader(CallbackServerContext* ctx, const pb::TransferRequest* req,
+                                     pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_transfer_leader(req->shard_id(), req->target_peer()));
+    });
   }
 
-  Status PlaceRegion(ServerContext* ctx, const pb::PlaceRegionRequest* req,
-                     pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    std::vector<std::string> peers(req->desired_peers().begin(), req->desired_peers().end());
-    *resp = make_admin_resp(node_.admin_place_region(req->region_id(), peers));
-    return Status::OK;
+  ServerUnaryReactor* Campaign(CallbackServerContext* ctx, const pb::CampaignRequest* req,
+                               pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_campaign(req->region_id()));
+    });
   }
 
-  Status PrepareSplit(ServerContext* ctx, const pb::PrepareSplitRequest* req,
-                      pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_prepare_split(req->left_region(), req->split_key()));
-    return Status::OK;
+  ServerUnaryReactor* PlaceRegion(CallbackServerContext* ctx, const pb::PlaceRegionRequest* req,
+                                  pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      std::vector<std::string> peers(req->desired_peers().begin(), req->desired_peers().end());
+      *resp = make_admin_resp(node_.admin_place_region(req->region_id(), peers));
+    });
   }
 
-  Status Split(ServerContext* ctx, const pb::SplitRequest* req,
-               pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(
-        node_.admin_split(req->left_region(), req->right_region(), req->split_key()));
-    return Status::OK;
+  ServerUnaryReactor* PrepareSplit(CallbackServerContext* ctx, const pb::PrepareSplitRequest* req,
+                                   pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_prepare_split(req->left_region(), req->split_key()));
+    });
   }
 
-  Status Merge(ServerContext* ctx, const pb::MergeRequest* req,
-               pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_merge(req->left_region(), req->right_region()));
-    return Status::OK;
+  ServerUnaryReactor* Split(CallbackServerContext* ctx, const pb::SplitRequest* req,
+                            pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(
+          node_.admin_split(req->left_region(), req->right_region(), req->split_key()));
+    });
   }
 
-  Status SetEpoch(ServerContext* ctx, const pb::SetEpochRequest* req,
-                  pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_set_epoch(req->region_id(), req->epoch()));
-    return Status::OK;
+  ServerUnaryReactor* Merge(CallbackServerContext* ctx, const pb::MergeRequest* req,
+                            pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_merge(req->left_region(), req->right_region()));
+    });
   }
 
-  Status Checkpoint(ServerContext* ctx, const pb::CheckpointRequest* req,
-                    pb::AdminSimpleResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    *resp = make_admin_resp(node_.admin_checkpoint(req->region_id(), req->path()));
-    return Status::OK;
+  ServerUnaryReactor* SetEpoch(CallbackServerContext* ctx, const pb::SetEpochRequest* req,
+                               pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_set_epoch(req->region_id(), req->epoch()));
+    });
   }
 
-  Status RegionStats(ServerContext* ctx, const pb::RegionStatsRequest* req,
-                     pb::RegionStatsResponse* resp) override {
-    if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    (void)req;
-    resp->set_ok(true);
-    resp->set_message("OK");
-    resp->set_epoch(node_.region_epoch(req->region_id()));
-    if (auto* eng = node_.engines().get(req->region_id())) {
-      resp->set_key_count(eng->approx_key_count());
-      resp->set_approx_bytes(eng->approx_bytes());
-    }
-    return Status::OK;
+  ServerUnaryReactor* Checkpoint(CallbackServerContext* ctx, const pb::CheckpointRequest* req,
+                                 pb::AdminSimpleResponse* resp) override {
+    return with_auth(ctx, [&] {
+      *resp = make_admin_resp(node_.admin_checkpoint(req->region_id(), req->path()));
+    });
   }
 
-  Status Ping(ServerContext*, const pb::PingRequest*, pb::PingResponse* resp) override {
+  ServerUnaryReactor* RegionStats(CallbackServerContext* ctx, const pb::RegionStatsRequest* req,
+                                  pb::RegionStatsResponse* resp) override {
+    return with_auth(ctx, [&] {
+      resp->set_ok(true);
+      resp->set_message("OK");
+      resp->set_epoch(node_.region_epoch(req->region_id()));
+      if (auto* eng = node_.engines().get(req->region_id())) {
+        resp->set_key_count(eng->approx_key_count());
+        resp->set_approx_bytes(eng->approx_bytes());
+      }
+    });
+  }
+
+  ServerUnaryReactor* Ping(CallbackServerContext* ctx, const pb::PingRequest*,
+                           pb::PingResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     resp->set_message("PONG");
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status ExecLine(ServerContext* ctx, const pb::ExecLineRequest* req,
-                  pb::ExecLineResponse* resp) override {
+  ServerUnaryReactor* ExecLine(CallbackServerContext* ctx, const pb::ExecLineRequest* req,
+                               pb::ExecLineResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     if (!line_) {
-      return Status(grpc::StatusCode::UNIMPLEMENTED, "ExecLine: no line handler");
+      reactor->Finish(Status(grpc::StatusCode::UNIMPLEMENTED, "ExecLine: no line handler"));
+      return reactor;
     }
-    // ADMIN_* / AUTH 走 token；普通 KV/Txn 行不强制 metadata。
-    const auto& line = req->line();
+    const std::string& line = req->line();
     if (line.rfind("ADMIN_", 0) == 0 || line.rfind("AUTH ", 0) == 0) {
-      if (auto st = ensure_auth(ctx); !st.ok()) return st;
-    }
-    AdminSession sess;
-    if (admin_acl_enabled(token_)) {
-      // metadata 已校验时视为已认证会话
-      const auto& md = ctx->client_metadata();
-      if (md.find(kGrpcAdminTokenMeta) != md.end()) {
-        sess.authenticated = true;
+      if (auto st = ensure_auth(ctx); !st.ok()) {
+        reactor->Finish(st);
+        return reactor;
       }
     }
-    resp->set_body(line_->process_line(line, &sess));
-    return Status::OK;
+    AdminSession sess;
+    if (admin_acl_enabled(token_) &&
+        ctx->client_metadata().find(kGrpcAdminTokenMeta) != ctx->client_metadata().end()) {
+      sess.authenticated = true;
+    }
+    auto finish = [reactor, resp](std::string body) {
+      resp->set_body(std::move(body));
+      reactor->Finish(Status::OK);
+    };
+    // PUT/DEL/ONEPC：接收线程直接 propose_async，不进池、不 future.get。
+    if (line_->try_process_line_async(line, &sess, finish)) return reactor;
+    // 其它行可能 sync wait；丢到 WorkPool，立刻归还 callback 线程。
+    pool_.post([line, sess, finish = std::move(finish), handler = line_]() mutable {
+      finish(handler->process_line(line, &sess));
+    });
+    return reactor;
   }
 
  private:
   StorageNode& node_;
   ExecLineHandler* line_;
   std::string token_;
+  WorkPool& pool_;
 };
 
 }  // namespace
 
 struct StorageGrpcServer::Impl {
   std::unique_ptr<grpc::Server> server;
+  std::unique_ptr<WorkPool> pool;
   std::unique_ptr<StoreServiceImpl> store;
   std::unique_ptr<RaftServiceImpl> raft;
   std::unique_ptr<AdminServiceImpl> admin;
@@ -422,9 +459,16 @@ StorageGrpcServer::~StorageGrpcServer() { stop(); }
 
 void StorageGrpcServer::start() {
   if (running_.exchange(true)) return;
+  size_t pool_n = 32;
+  if (const char* e = std::getenv("SKV_STORAGE_GRPC_WORKERS")) {
+    const auto v = std::strtoul(e, nullptr, 10);
+    if (v > 0) pool_n = v;
+  }
+  impl_->pool = std::make_unique<WorkPool>(pool_n);
   impl_->store = std::make_unique<StoreServiceImpl>(facade_, admin_token_);
   impl_->raft = std::make_unique<RaftServiceImpl>(facade_.node());
-  impl_->admin = std::make_unique<AdminServiceImpl>(facade_.node(), line_server_, admin_token_);
+  impl_->admin =
+      std::make_unique<AdminServiceImpl>(facade_.node(), line_server_, admin_token_, *impl_->pool);
 
   grpc::ServerBuilder builder;
   builder.SetMaxReceiveMessageSize(64 << 20);
@@ -438,7 +482,7 @@ void StorageGrpcServer::start() {
     running_ = false;
     throw std::runtime_error("StorageGrpcServer failed to listen on " + listen_addr_);
   }
-  SKV_INFO << "storage gRPC listening " << listen_addr_;
+  SKV_INFO << "storage gRPC listening " << listen_addr_ << " (callback + workers=" << pool_n << ")";
 }
 
 void StorageGrpcServer::stop() {
@@ -447,6 +491,10 @@ void StorageGrpcServer::stop() {
     impl_->server->Shutdown();
     impl_->server.reset();
   }
+  impl_->admin.reset();
+  impl_->store.reset();
+  impl_->raft.reset();
+  impl_->pool.reset();
 }
 
 }  // namespace openkv::storage

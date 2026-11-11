@@ -38,6 +38,7 @@ struct ReplicaEndpoint {
 struct RegionRoute {
   openkv::RegionId region_id{0};
   openkv::KeyRange range;
+  uint64_t epoch{1};
   std::vector<ReplicaEndpoint> replicas;
 };
 
@@ -59,7 +60,16 @@ class Router {
 
   std::optional<std::string> leader_addr(openkv::RegionId region_id) const;
   std::optional<std::string> leader_addr_for_key(std::string_view key) const;
+  /// 副本地址；leader 优先（对齐 Go route.Cache.ReplicaAddrs）。
   std::vector<std::string> replica_addrs(openkv::RegionId region_id) const;
+
+  /// Region conf epoch；未知返回 0。
+  uint64_t epoch(openkv::RegionId region_id) const;
+  /// 将本地缓存 epoch 抬到至少 to（Storage 返回 expected= 时用）。
+  void bump_epoch(openkv::RegionId region_id, uint64_t to);
+
+  /// 当前表快照（拷贝）。
+  RoutingTable snapshot() const;
 
   /// 单机 demo：一个覆盖全空间的 Region 0。
   void bootstrap_single(const std::string& storage_addr, uint32_t /*ignored_shard_count*/ = 1);

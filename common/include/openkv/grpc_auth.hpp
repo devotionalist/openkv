@@ -28,7 +28,7 @@ namespace openkv {
 
 inline constexpr const char* kGrpcAdminTokenMeta = "x-skv-admin-token";
 
-inline bool grpc_admin_allowed(const grpc::ServerContext& ctx, const std::string& configured) {
+inline bool grpc_admin_allowed(const grpc::ServerContextBase& ctx, const std::string& configured) {
   if (!admin_acl_enabled(configured)) return true;
   const auto& md = ctx.client_metadata();
   auto it = md.find(kGrpcAdminTokenMeta);

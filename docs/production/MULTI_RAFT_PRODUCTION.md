@@ -1,7 +1,6 @@
 # 生产级 Multi-Raft 要求与路线图
 
-本文定义 OpenKV 达到 **生产级 Multi-Raft** 的能力要求、验收标准与分阶段实现。  
-对标：工业界 Multi-Raft 运行时（如 CockroachDB），而非仅 HashiCorp 单组 Raft 库。
+本文定义 OpenKV 达到 **生产级 Multi-Raft** 的能力要求、验收标准与分阶段实现。
 
 相关实现：`raft/` · 故障演练 [FAULT_DRILL.md](../ops/FAULT_DRILL.md) · 选举流程 [flows/06-raft-election-commit.md](../flows/06-raft-election-commit.md)
 

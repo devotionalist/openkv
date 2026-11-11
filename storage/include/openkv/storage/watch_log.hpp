@@ -44,6 +44,8 @@ class WatchLog {
                              std::string* value);
 
   static void append(KvEngine& eng, const WatchRecord& rec, size_t capacity = kDefaultCapacity);
+  /// 批量 apply 写完后裁剪 watch log（避免每条 append 都扫一遍）。
+  static void trim(KvEngine& eng, size_t capacity = kDefaultCapacity);
   /// 返回 revision > since 的事件（升序）；region_id 填入每条记录。
   static std::vector<WatchRecord> poll(const KvEngine& eng, uint32_t region_id, uint64_t since,
                                        size_t limit);

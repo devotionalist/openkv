@@ -53,6 +53,38 @@ TEST(SchedulerTest, LatchSerializesConflict) {
   EXPECT_EQ(max_in.load(), 1);
 }
 
+TEST(SchedulerTest, LatchHoldUntilUnlock) {
+  openkv::storage::Scheduler sched;
+  std::atomic<int> hold_writes{0};
+  sched.set_write_fn([&](uint32_t, std::string, uint64_t* idx, std::string*) {
+    if (idx) *idx = 1;
+    ++hold_writes;
+    return true;
+  });
+  uint64_t tok = 0;
+  uint64_t i = 0;
+  ASSERT_TRUE(sched.schedule_write_hold(0, "k", "a", &i, &tok, nullptr));
+  ASSERT_NE(tok, 0u);
+  EXPECT_EQ(hold_writes.load(), 1);
+  std::atomic<bool> second_done{false};
+  std::thread t2([&] {
+    uint64_t j = 0;
+    uint64_t tok2 = 0;
+    // 阻塞直到主线程 unlock
+    if (sched.schedule_write_hold(0, "k", "b", &j, &tok2, nullptr)) {
+      sched.unlock(tok2);
+      second_done.store(true);
+    }
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  EXPECT_FALSE(second_done.load());
+  EXPECT_EQ(hold_writes.load(), 1);
+  sched.unlock(tok);
+  t2.join();
+  EXPECT_TRUE(second_done.load());
+  EXPECT_EQ(hold_writes.load(), 2);
+}
+
 TEST(CoprocessorTest, PrefixScanInRange) {
   auto dir = fs::temp_directory_path() / ("skv_cop_" + std::to_string(::getpid()));
   fs::remove_all(dir);

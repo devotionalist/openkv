@@ -4,7 +4,7 @@
 
 **This is the default documentation language.**
 
-OpenKV is a compute/storage-separated distributed KV store: **Multi-Raft + RocksDB + gRPC** (C++ Meta/Storage, Go Gateway). Keys live in ordered **Range Regions** with default replication factor **3**.
+OpenKV is a compute/storage-separated distributed KV store: **Multi-Raft + RocksDB + gRPC** (C++ Meta/Storage/Gateway). Keys live in ordered **Range Regions** with default replication factor **3**.
 
 ## Clients (separate repositories)
 
@@ -15,7 +15,7 @@ OpenKV is a compute/storage-separated distributed KV store: **Multi-Raft + Rocks
 | Java | [openkv-client-java](https://github.com/devotionalist/openkv-client-java) |
 | TypeScript | [openkv-client-typescript](https://github.com/devotionalist/openkv-client-typescript) |
 
-Details: [Multi-lang clients](../flows/15-multi-client-sdk.md). This repo’s `client/go` is the **Gateway**, not the public SDK.
+Details: [Multi-lang clients](../flows/15-multi-client-sdk.md). This repo’s `client/go` is **examples / tools** only; the public SDK lives in the separate repos above.
 
 ## Getting started & operations
 
@@ -27,7 +27,7 @@ Details: [Multi-lang clients](../flows/15-multi-client-sdk.md). This repo’s `c
 | [Architecture](architecture.md) | Topology, components, HA / scale boundaries |
 | [Contributing](contributing.md) | PR-only workflow, owner approval, tags/releases |
 | [Version CAS (ZH)](../flows/13-version-cas.md) | Single-key revision CAS (Gateway + plain Propose) |
-| [KV TTL (ZH)](../flows/14-kv-ttl.md) | TiKV-style Put TTL: expire_at on value, lazy read filter, TTL checker |
+| [KV TTL (ZH)](../flows/14-kv-ttl.md) | Put TTL: expire_at on value, lazy read filter, TTL checker |
 | [Multi-lang clients (ZH)](../flows/15-multi-client-sdk.md) | openkv-client-{go,rust,java,typescript} |
 
 ## Additional design / SOP / test docs

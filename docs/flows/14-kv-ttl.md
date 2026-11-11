@@ -1,4 +1,4 @@
-# 流程：KV TTL（TiKV RawKV 风格）
+# 流程：KV TTL
 
 **状态：** 已实现  
 **读者：** Client / Gateway / Storage  
@@ -6,14 +6,14 @@
 
 > **易混：** `LockInfo.ttl_ms` 是**事务锁租约**，不是用户 KV TTL。
 
-对齐 [TiKV RawKV TTL](https://github.com/tikv/tikv/issues/9612)：
+模型：
 
 1. value 侧挂绝对 `expire_at_ms`（0=永不过期）；propose 前 stamp
 2. 读路径过滤：过期 ⇒ 不可见（不保证立刻腾盘）
 3. **TTL Checker**：Leader 定时扫描删除已过期 KV，再 `CompactRange` 回收  
-   （上游 TiKV 用 CompactionFilter；本仓库 RocksDB 以 `-fno-rtti` 构建，无法挂 filter 子类，故用显式删除 + compact，语义等价）
+   （本仓库 RocksDB 以 `-fno-rtti` 构建，无法挂 CompactionFilter 子类，故用显式删除 + compact）
 
-**不做：** etcd Lease；DS 对象 TTL；依赖 compaction 才不可见（读过滤保证正确性）。
+**不做：** 独立租约服务；DS 对象 TTL；依赖 compaction 才不可见（读过滤保证正确性）。
 
 ---
 
@@ -27,7 +27,7 @@
 | `Expire(key, ttl_ms)` | 读出 value 后写回并 stamp 新寿命；`ttl_ms<=0` 永久；不存在 `found=false` |
 | `Persist(key)` | 等价 `Expire(key, 0)` |
 
-线性一致：带 `linearizable` 的读走 Leader，与 TiKV「Leader 判定过期后它处不可读」同目标（副本落后读仍可能用本地钟，属 `linearizable=false` 语义）。
+线性一致：带 `linearizable` 的读走 Leader，由 Leader 判定过期（副本落后读仍可能用本地钟，属 `linearizable=false` 语义）。
 
 ---
 

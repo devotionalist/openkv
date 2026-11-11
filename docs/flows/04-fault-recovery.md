@@ -1,10 +1,10 @@
 # 流程：故障恢复
 
-**设计总览：** [DATA_HA.md](../architecture/DATA_HA.md) §3.2 · 演练：[FAULT_DRILL.md](../ops/FAULT_DRILL.md)。
+**设计总览：** [DATA_HA.md](../architecture/DATA_HA.md) §3.2 · 演练：[FAULT_DRILL.md](../ops/FAULT_DRILL.md)  
+**场景：** Storage 宕机再启；或落后过久超出本地日志窗口。  
+**关键代码：** `RaftPersist` · `RaftNode::load_from_disk` / `recover_apply` · `RAFT_AE` / `RAFT_SNAP` · `KvEngine::{create,apply}_snapshot`
 
-**场景：** Storage 宕机再启；或落后过久超出本地日志窗口。
-
-**关键代码：** `RaftPersist` · `RaftNode::load_from_disk` / `recover_apply` · `RAFT_AE` · `RAFT_SNAP` · `KvEngine::{create,apply}_snapshot`
+启动装载见 [07-storage-startup](07-storage-startup.md)；选举见 [06-raft-election-commit](06-raft-election-commit.md)。
 
 ```mermaid
 flowchart TD

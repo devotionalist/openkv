@@ -86,14 +86,22 @@ TEST(RouterTest, ReplicaAddrsAndFallback) {
   t.shard_count = 1;
   RegionRoute sr;
   sr.region_id = 0;
+  sr.epoch = 3;
   sr.replicas.push_back({"s0", "a:1", false});
-  sr.replicas.push_back({"s1", "b:2", false});
+  sr.replicas.push_back({"s1", "b:2", true});
   t.regions[0] = sr;
   r.update(t);
   auto leader = r.leader_addr(0);
   ASSERT_TRUE(leader);
-  EXPECT_EQ(*leader, "a:1");
-  EXPECT_EQ(r.replica_addrs(0).size(), 2u);
+  EXPECT_EQ(*leader, "b:2");
+  auto addrs = r.replica_addrs(0);
+  ASSERT_EQ(addrs.size(), 2u);
+  EXPECT_EQ(addrs[0], "b:2");  // leader first
+  EXPECT_EQ(r.epoch(0), 3u);
+  r.bump_epoch(0, 5);
+  EXPECT_EQ(r.epoch(0), 5u);
+  r.bump_epoch(0, 4);  // no downgrade
+  EXPECT_EQ(r.epoch(0), 5u);
 }
 
 TEST(RouterTest, MissingShard) {

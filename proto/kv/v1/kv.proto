@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package kv.v1;
 
-option go_package = "github.com/devotionalist/openkv/client/go/gen/kv/v1;kvv1";
+option go_package = "github.com/devotionalist/openkv-client-go/gen/kv/v1;kvv1";
 option cc_enable_arenas = true;
 
 // 对外 KV API，由 Compute Proxy 提供

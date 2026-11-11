@@ -36,6 +36,7 @@ struct RaftMessage {
   std::string payload;
 };
 struct SignificantMsg {
+  /// kWake：唤醒 Peer 并驱动一次 Ready（propose 后 group-commit 入口；批内合并）。
   enum class Type { kMsgTimeoutNow, kMsgUnreachable, kWake };
   Type type{Type::kWake};
   std::string peer_id;

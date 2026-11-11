@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package kv.v1;
 
-option go_package = "github.com/devotionalist/openkv/client/go/gen/kv/v1;kvv1";
+option go_package = "github.com/devotionalist/openkv-client-go/gen/kv/v1;kvv1";
 option cc_enable_arenas = true;
 
 // 常用数据结构 API（非 RESP）。实现于 Compute Gateway。

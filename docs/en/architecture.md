@@ -31,7 +31,7 @@ Storage ×N (:9100…)  · per-Region Raft (RF=3) · RocksDB
 
 | Component | Responsibility |
 |-----------|----------------|
-| **compute-gateway** | Stateless range routing, leader cache, retry |
+| **gateway_node (C++)** | Stateless range routing, leader cache, retry |
 | **storage** | Multi-Raft + RocksDB; Admin / Raft on same gRPC port |
 | **meta** | Region table, topology, split/merge/scale orchestration; **Raft ×3 HA** |
 | **client/go** | gRPC SDK |

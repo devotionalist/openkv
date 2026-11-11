@@ -24,7 +24,7 @@ Chart：[`deploy/helm/openkv`](../../deploy/helm/openkv)
 镜像：
 
 - `deploy/Dockerfile` → `openkv:<tag>`（`meta_server` / `storage_node`）
-- `deploy/Dockerfile.gateway` → `openkv-gateway:<tag>`（compute-gateway）
+- `deploy/Dockerfile.gateway` → `openkv-gateway:<tag>`（C++ `gateway_node`）
 - `deploy/Dockerfile.web` → `openkv-web:<tag>`（管控台）
 
 ## 边界

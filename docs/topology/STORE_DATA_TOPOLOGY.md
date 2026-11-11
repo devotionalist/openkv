@@ -109,7 +109,7 @@ flowchart TB
 | `key` / `value` | 载荷 | KV 或编码的 txn/Admin |
 | `ttl_ms` | TTL | 锁过期等 |
 | `request_id` | 客户端请求号 | E4 幂等 |
-| `kPrewrite`…`kCommit` | 事务 | Percolator |
+| `kPrewrite`…`kCommit` | 事务 | MVCC Prewrite/Commit |
 | `kAdminSplit` 等 | Admin 入 Raft | 与 ConfChange 分离 |
 
 ### `KvRecord` / `LockInfo` / `WriteInfo`

@@ -59,7 +59,15 @@ std::vector<std::string> split_ws(const std::string& line) {
   return parts;
 }
 
+std::string ok_ts_line(uint64_t start, uint32_t n) {
+  return "OK TS " + std::to_string(start) + " " + std::to_string(n);
+}
 
+void fire_line_cbs(std::vector<std::function<void(std::string)>>& cbs, const std::string& line) {
+  for (auto& cb : cbs) {
+    if (cb) cb(line);
+  }
+}
 
 }  // namespace
 
@@ -106,7 +114,7 @@ std::string MetaNode::leader_address() const {
   return raft_ ? raft_->leader_address() : std::string{};
 }
 
-// Raft 提交回调：解码并 apply；更新 last_applied_wait_ 唤醒 replicate。
+// Raft 提交回调：解码并 apply；更新 last_applied_wait_ 唤醒 replicate / GET_TS / WATCH。
 void MetaNode::on_apply(uint64_t index, const std::string& data) {
   MetaCommand cmd;
   if (!decode_meta_command(data, &cmd)) {
@@ -114,12 +122,83 @@ void MetaNode::on_apply(uint64_t index, const std::string& data) {
     return;
   }
   apply_meta_command(*state_, cmd);
-  std::lock_guard<std::mutex> lock(apply_mu_);
-  if (cmd.op == MetaOp::kAllocTs) {
-    const uint32_t n = cmd.ts_count == 0 ? 1 : cmd.ts_count;
-    ts_alloc_by_index_[index] = state_->next_ts() - n;
+
+  std::vector<std::function<void(std::string)>> ts_cbs;
+  std::string ts_line;
+  {
+    std::lock_guard<std::mutex> lock(apply_mu_);
+    if (cmd.op == MetaOp::kAllocTs) {
+      const uint32_t n = cmd.ts_count == 0 ? 1 : cmd.ts_count;
+      const uint64_t start = state_->next_ts() - n;
+      auto wit = ts_async_waiters_.find(index);
+      if (wit != ts_async_waiters_.end()) {
+        // async 路径已挂 waiter：直接回调，不落 ts_alloc_by_index_。
+        ts_cbs = std::move(wit->second);
+        ts_async_waiters_.erase(wit);
+        ts_line = ok_ts_line(start, n);
+        tso_alloc_total_.fetch_add(n, std::memory_order_relaxed);
+      } else {
+        // sync GET_TS / 尚未 register 的 alloc_ts_async：按 index 暂存起点。
+        ts_alloc_by_index_[index] = start;
+      }
+    }
+    last_applied_wait_ = index;
   }
-  last_applied_wait_ = index;
+  apply_cv_.notify_all();
+  fire_line_cbs(ts_cbs, ts_line);
+
+  const uint64_t ver = state_->routing_table().version;
+  {
+    std::lock_guard<std::mutex> lock(route_mu_);
+    if (ver > route_version_notify_) route_version_notify_ = ver;
+  }
+  route_cv_.notify_all();
+}
+
+void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (count == 0) count = 1;
+  if (count > 10000) count = 10000;
+  if (!raft_ || !raft_->is_leader()) {
+    const auto a = leader_address();
+    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    return;
+  }
+  MetaCommand cmd;
+  cmd.op = MetaOp::kAllocTs;
+  cmd.ts_count = count;
+  uint64_t idx = 0;
+  if (!raft_->propose(encode_meta_command(cmd), &idx)) {
+    cb("ERR propose_failed");
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> lock(apply_mu_);
+    auto it = ts_alloc_by_index_.find(idx);
+    if (it != ts_alloc_by_index_.end()) {
+      // apply 已先于 register 完成（快路径）。
+      const uint64_t start = it->second;
+      ts_alloc_by_index_.erase(it);
+      lock.unlock();
+      tso_alloc_total_.fetch_add(count, std::memory_order_relaxed);
+      cb(ok_ts_line(start, count));
+      return;
+    }
+    ts_async_waiters_[idx].push_back(std::move(cb));
+  }
+  // 超时：5s 后若仍挂起则回调 apply_timeout（on_apply 已取走则 no-op）。
+  std::thread([this, idx] {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::vector<std::function<void(std::string)>> cbs;
+    {
+      std::lock_guard<std::mutex> lock(apply_mu_);
+      auto it = ts_async_waiters_.find(idx);
+      if (it == ts_async_waiters_.end()) return;
+      cbs = std::move(it->second);
+      ts_async_waiters_.erase(it);
+    }
+    fire_line_cbs(cbs, "ERR apply_timeout");
+  }).detach();
 }
 
 // 写入口：非 Leader 立即 redirect；Leader propose 后自旋等到 apply index。
@@ -138,21 +217,17 @@ bool MetaNode::replicate(const MetaCommand& cmd, std::string* error, std::string
     if (error) *error = "propose_failed";
     return false;
   }
-  // 最长约 5s；给多数派 AE 留余量，避免与 Store HB 抢队列时误报 apply_timeout。
-  for (int i = 0; i < 1000; ++i) {
-    {
-      std::lock_guard<std::mutex> lock(apply_mu_);
-      if (last_applied_wait_ >= idx) {
-        return true;
-      }
+  // CV 等 apply（tick_loop 推进 Ready）；最长 ~5s。
+  std::unique_lock<std::mutex> lock(apply_mu_);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (last_applied_wait_ < idx) {
+    if (apply_cv_.wait_until(lock, deadline) == std::cv_status::timeout &&
+        last_applied_wait_ < idx) {
+      if (error) *error = "apply_timeout";
+      return false;
     }
-    if (i % 10 == 9) {
-      raft_->tick();
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  if (error) *error = "apply_timeout";
-  return false;
+  return true;
 }
 
 bool MetaNode::replicate_async(const MetaCommand& cmd, std::string* error,
@@ -506,7 +581,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       // A3：Follower 可读
       return format_route(state_->routing_table());
     }
-    // WATCH_ROUTE since_ver [timeout_ms] — A2 长轮询；version>since 或超时返回当前表
+    // WATCH_ROUTE since_ver [timeout_ms] — A2 长轮询；route_cv_ 唤醒（无 sleep）
     if (op == "WATCH_ROUTE" && parts.size() >= 2) {
       const uint64_t since = std::stoull(parts[1]);
       int timeout_ms = 5000;
@@ -518,13 +593,17 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       const auto deadline =
           std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
       route_watch_waits_.fetch_add(1, std::memory_order_relaxed);
-      for (;;) {
+      std::unique_lock<std::mutex> lock(route_mu_);
+      while (route_version_notify_ <= since) {
         auto rt = state_->routing_table();
-        if (rt.version > since || std::chrono::steady_clock::now() >= deadline) {
+        if (rt.version > since) {
+          route_version_notify_ = rt.version;
           return format_route(rt);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        route_cv_.wait_until(lock, deadline);
       }
+      return format_route(state_->routing_table());
     }
     // GET_TS [count] — Percolator TSO；返回 OK TS <start> <count>
     if (op == "GET_TS") {
@@ -535,8 +614,6 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       MetaCommand cmd;
       cmd.op = MetaOp::kAllocTs;
       cmd.ts_count = count;
-      std::string err, redir;
-      // 不跨 Raft 等待持全局锁：并发 GET_TS 可并行 propose，起点按 apply index 回读。
       if (!raft_ || !raft_->is_leader()) {
         auto a = leader_address();
         return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
@@ -546,24 +623,27 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         return "ERR propose_failed";
       }
       uint64_t start = 0;
-      bool got = false;
-      for (int i = 0; i < 1000; ++i) {
-        {
-          std::lock_guard<std::mutex> lock(apply_mu_);
+      {
+        std::unique_lock<std::mutex> lock(apply_mu_);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for (;;) {
           auto it = ts_alloc_by_index_.find(idx);
           if (it != ts_alloc_by_index_.end()) {
             start = it->second;
             ts_alloc_by_index_.erase(it);
-            got = true;
+            break;
+          }
+          if (apply_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
+            auto it2 = ts_alloc_by_index_.find(idx);
+            if (it2 == ts_alloc_by_index_.end()) return "ERR apply_timeout";
+            start = it2->second;
+            ts_alloc_by_index_.erase(it2);
             break;
           }
         }
-        if (i % 10 == 9) raft_->tick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
-      if (!got) return "ERR apply_timeout";
       tso_alloc_total_.fetch_add(count, std::memory_order_relaxed);
-      return "OK TS " + std::to_string(start) + " " + std::to_string(count);
+      return ok_ts_line(start, count);
     }
     // GET_SAFE_POINT — 读 GC 水位；OK SAFE <gc_safe_ts> <next_ts> <min_start_hint>
     if (op == "GET_SAFE_POINT") {

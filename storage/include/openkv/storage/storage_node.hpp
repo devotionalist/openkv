@@ -23,6 +23,7 @@
 #include "openkv/raft/snap_stream.hpp"
 #include "openkv/region.hpp"
 #include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/proposal_queue.hpp"
 #include "openkv/storage/raftkv.hpp"
 #include "openkv/storage/rocks_raft_engine.hpp"
 #include "openkv/storage/scheduler.hpp"
@@ -33,12 +34,14 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace openkv::storage {
@@ -52,9 +55,22 @@ class StorageNode {
   void stop();
 
   void on_apply(uint32_t shard_id, uint64_t index, const std::string& data);
+  /// 同 Region 一批 committed entries：可批的 ONEPC/Put/Delete 合并为一次 WriteBatch。
+  void on_apply_entries(uint32_t shard_id, const std::vector<raft::LogEntry>& entries);
 
   /// S2：propose 等待 apply 后读取结果；空串=成功。无条目视为成功。
   std::optional<std::string> take_apply_result(uint64_t index);
+
+  /// TiKV-style：阻塞至 apply invoke 或超时。tick 用于等待期间推进 Ready。
+  ProposalQueue::WaitOutcome wait_apply(uint64_t index, std::chrono::milliseconds timeout,
+                                        const std::function<void()>& tick = {});
+
+  /// 异步等 apply：不占调用线程；回调在 invoke / 超时线程上。
+  void wait_apply_async(uint64_t index, std::chrono::milliseconds timeout,
+                        ProposalQueue::CompleteCb cb);
+
+  ProposalQueue& proposals() { return proposals_; }
+  const ProposalQueue& proposals() const { return proposals_; }
 
   /// E4：request_id 去重缓存（Leader 重试短路 / apply 跳过重复）。
   struct IdempotentRecord {
@@ -149,10 +165,15 @@ class StorageNode {
 
  private:
   void tick_loop();
+  void split_worker_loop();
   void register_and_heartbeat();
+  /// TiKV-style：REGISTER 后按 Meta 路由 ENSURE 本机应托管的全部 Region（含 split 产物）。
+  void recover_local_regions_from_meta();
   void ensure_region(uint32_t region_id);
   bool meta_split(uint32_t left, const std::string& split_key, uint32_t* right_out);
   void broadcast_admin_split(uint32_t left, uint32_t right, const std::string& split_key);
+  /// split 成功后可选 Place（SKV_PD_AUTO_BALANCE=1 且 RF>1）。
+  void maybe_place_after_split(uint32_t left, uint32_t right);
   /// S2：在左 Region 全体成员上 ENSURE 右 Region（同成员集），再允许 migrate。
   std::string seed_right_region(uint32_t left_region, uint32_t right_region);
 
@@ -170,12 +191,17 @@ class StorageNode {
   std::atomic<uint64_t> meta_out_{0};  // 本节点 → Meta 出站 RPC
   PeerCounter meta_out_peers_;         // Meta 地址 → 出站次数
   std::thread tick_thread_;
+  std::thread split_thread_;
   std::thread hb_thread_;
   std::vector<raft::Peer> bootstrap_peers_;
-  size_t auto_split_keys_{0};   // 0=关；SKV_SPLIT_KEYS
-  size_t auto_split_bytes_{0};  // 0=关；SKV_SPLIT_BYTES
-  size_t auto_merge_keys_{0};   // 0=关；SKV_MERGE_KEYS（两侧都低于阈值才合）
+  size_t auto_split_keys_{256000};              // TiKV-style 默认；SKV_SPLIT_KEYS=0 关
+  size_t auto_split_bytes_{96ull << 20};        // 96MiB；SKV_SPLIT_BYTES=0 关
+  size_t auto_merge_keys_{0};                   // 0=关；SKV_MERGE_KEYS
   std::mutex split_mu_;
+  std::condition_variable split_cv_;
+  std::deque<uint32_t> split_queue_;
+  std::unordered_set<uint32_t> split_queued_;
+  std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> last_auto_split_at_;
   std::mutex create_mu_;
   std::mutex place_mu_;
   mutable std::mutex destroy_mu_;
@@ -209,8 +235,7 @@ class StorageNode {
   uint64_t load_epoch_from_engine(uint32_t region_id);
   void publish_apply_result(uint64_t index, std::string error);
 
-  mutable std::mutex apply_res_mu_;
-  std::unordered_map<uint64_t, std::string> apply_results_;
+  ProposalQueue proposals_;
 
   mutable std::mutex req_mu_;
   std::unordered_map<uint32_t, std::unordered_map<uint64_t, IdempotentRecord>> req_cache_;

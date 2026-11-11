@@ -1,47 +1,104 @@
-# 流程：写入 Put
+# 流程：写入 Put / Delete
 
-**路径：** Client → gRPC Gateway → Range locate → Storage TCP → Region Raft Leader → 多数派提交 → apply → RocksDB
+**路径：** SDK → gRPC Gateway → Locate Region → Storage ExecLine/ONEPC → Region Raft Leader → 多数派提交 → apply → RocksDB → 唤醒 waiter
 
-**关键代码：** `client/go/kv` · `compute-gateway` · `internal/route` · `storagetcp` · `ExecLineHandler` · `StoreFacade::propose` · `RaftNode::propose` · `StorageNode::on_apply` · `KvEngine::put`
+**关键代码：**
 
-**多数派：** RF=3 → 需 ≥2 副本 `match_index` 推进 `commit_index`
+| 层 | 符号 / 路径 |
+|----|-------------|
+| SDK | `openkv-client-go`（及 rust/java/ts）`Put` / `Delete` |
+| Gateway | `GatewayServer::PutBody` · `alloc_ts` · `StoreClient::one_pc` |
+| Storage | `StoreFacade` / `propose_async` · `CmdOp::kOnePc` · `MvccStore` · `ProposalQueue` |
+| Raft | `RaftKV::async_write` · `Store::drive_ready` · `RaftNode::persist_ready` |
+
+短 Put/Delete 走 **ONEPC**（1 次 Raft Propose，一次写入 MVCC data+write）。多 key / 显式 Txn 仍 **Prewrite → Commit**（见 Gateway `Txn*`）。
+
+**多数派：** RF=3 → 需 ≥2 副本 `match_index` 推进 `commit_index`。
 
 ```mermaid
 flowchart TD
-  A[Go Client<br/>kv.Client.Put] -->|gRPC KVService.Put| B[compute-gateway<br/>server.Put]
-  B --> C[route.Locate key<br/>tryOrder region]
-  C --> D[storagetcp.Client.Put<br/>PUT region hexKey hexVal]
-  D --> E[ExecLineHandler::handle_line]
-  E --> F[StoreFacade::propose]
-  F --> G{本机是<br/>该 Region Leader?}
-  G -->|否| H[ERR not_leader<br/>redirect=leader_addr]
-  H --> R[Gateway 重试<br/>见 08-not-leader-redirect]
-  G -->|是| I[encode_command<br/>RaftNode::propose]
-  I --> J[log.append + persist_locked<br/>raft_shard_N/]
-  J --> K[broadcast_heartbeat<br/>RAFT_AE → Follower]
-  K --> L[Follower on_append_entries<br/>写日志 + 回 OK AE]
-  L --> M[Leader on_append_entries_reply<br/>更新 match_index]
-  M --> N{match_index 多数派<br/>≥ majority=2?}
+  A[SDK Put/Delete] -->|gRPC kv.v1| B[gateway_node<br/>GatewayServer]
+  B --> T[alloc_ts 2<br/>本地 TSO 批缓存]
+  T --> C[Router Locate key<br/>leader 优先 replicas]
+  C --> D[StoreClient.one_pc<br/>ExecLine ONEPC]
+  D --> E[Storage Callback<br/>propose_async]
+  E --> F{本机是<br/>该 Region Leader?}
+  F -->|否| H[ERR not_leader<br/>redirect=leader_addr]
+  H --> R[Gateway rememberLeader<br/>重试 · 见 08]
+  F -->|是| I[encode kOnePc<br/>RaftKV async_write]
+  I --> J[log.append + persist_ready<br/>raft_shard_N /]
+  J --> K[RAFT_AE → Followers]
+  K --> L[Follower 写日志 + OK AE]
+  L --> M[Leader 更新 match_index]
+  M --> N{match 多数派?}
   N -->|否| K
-  N -->|是| O[maybe_commit<br/>推进 commit_index]
-  O --> P[apply_committed<br/>StorageNode::on_apply]
-  P --> Q[KvEngine::put<br/>RocksDB shard_N]
-  Q --> S[轮询 last_applied ≥ idx]
-  S --> T[OK PUT revision]
-  T --> U[Gateway → Client<br/>gRPC PutResponse]
+  N -->|是| O[maybe_commit<br/>commit_index++]
+  O --> P[apply_committed<br/>on_apply / ApplyBatch]
+  P --> Q[MvccStore put_data+put_write<br/>RocksDB]
+  Q --> S[ProposalQueue.invoke]
+  S --> U[OK → Gateway → SDK<br/>revision=commit_ts]
 ```
 
-> 磁盘目录名仍可能带 `shard_<id>`（与 `region_id` 同号）；路由语义是 Range Region，见 [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md)。
+> 磁盘目录名可能仍为 `shard_<id>`（与 `region_id` 同号）；路由语义是 **Range Region**，见 [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md)。
+
+---
+
+## 短写 vs 事务写
+
+| 路径 | Gateway | Storage | Raft 次数 |
+|------|---------|---------|-----------|
+| 短 Put/Delete | `alloc_ts(2)` → `one_pc` | `kOnePc` apply 写 data+write | **1** |
+| PutCAS / DeleteCAS | 同 ONEPC，带 `cas`+`expected` | apply 内校验可见版本 | **1** |
+| Txn* 多 key | Prewrite → Commit | `kPrewrite` / `kCommit` | **≥2** |
+| DS（HSet 等） | TxnGet blob → Prewrite → Commit | 同 Txn | **≥2** |
+
+TSO 批缓存说明：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。
+
+---
 
 ## 落盘边界
 
 | 层 | 目录 / 内容 |
 |----|-------------|
-| Raft WAL | `{data_dir}/raft_shard_<id>/hard.state` + `log.entries` |
-| KV | `{data_dir}/shard_<id>/` RocksDB |
+| Raft WAL | `{data_dir}/raft_shard_<id>/`（hard.state + log） |
+| KV | `{data_dir}/shard_<id>/` RocksDB（或单 Store 引擎按 Region 区间） |
+| 耐久 | `persist_sync=data` 时 Ready 组 batch 后 sync；ACK 仍在 apply 后 |
+
+批写与 fsync 摊销：[23-write-path-batching.md](23-write-path-batching.md)。
+
+---
 
 ## 时序要点
 
-1. `propose` 后同步轮询 `soft_state.last_applied`（demo 模型，非异步回调）。
-2. 空心跳 / 写触发的 AE 都会推进复制。
-3. 仅 **当前 term** 的日志条目可被 `maybe_commit` 提交。
+1. Gateway 热路径在 **Callback 接收线程** 取本地 TS，再 `store_exec_line_async`；不在 handler 里 sleep 等 apply（见 [22](22-async-threading-model.md)）。
+2. `propose` 后按 index 挂 **ProposalQueue**；apply `invoke`（或 `wait_async` 回调）唤醒。
+3. 仅当前 term 日志可 commit；空心跳 / 写触发的 AE 都会推进复制。
+4. 撞 `locked` → Lock Resolver 后重试；`splitting` / `epoch_not_match` → 刷路由重试。
+5. Latch：用户 key 在 propose 前锁定，**持到 apply 结束**（[19](19-architecture-hardening.md)）。
+
+---
+
+## 失败与重试（Gateway）
+
+| 错误 | 行为 |
+|------|------|
+| `not_leader` + redirect | 缓存 Leader，改打该地址 |
+| `epoch_not_match` / `key_not_in_region` | bump epoch，重新 Locate |
+| `splitting` | 短暂退避重试 |
+| `write_conflict` / `locked` | resolve 或换 TS 重试 |
+| `cas_failed` | 不重试业务失败（见 [13](13-version-cas.md)） |
+
+---
+
+## 验收
+
+```bash
+make cluster-up
+cd client/go && go run ./examples/basic   # Put/Get
+go run ./examples/bench -op put -w 8 -n 200
+make cluster-down
+# 单测
+./build/tests/openkv_unit_tests --gtest_filter='*OnePc*:*ProposalQueue*'
+```
+
+期望：Put 返回递增 revision；bench `fail=0`。记录见 [TEST_CASES.md](../test/TEST_CASES.md)。

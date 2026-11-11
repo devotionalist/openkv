@@ -28,6 +28,9 @@
 | 故障演练 | F1/F2/F4/F5/F8/F10 子集；设计见 [DATA_HA.md](../architecture/DATA_HA.md) | `make fault-drill` |
 | 发版门禁 | unit + e2e + it-web/region/txn + fault-drill | `make release-gate` |
 | Sanitizer | ASan/UBSan | `make memcheck` |
+| Gateway 全接口压测 | KV/Txn/Watch/DS 吞吐与分位 | `client/go/examples/bench`（`-mode all`）；见 [17-gateway-api-bench.md](../flows/17-gateway-api-bench.md) |
+| 写路径批处理 | Ready/apply/多 Region 验收 W1–W4 | gtest + bench；见 [23-write-path-batching.md](../flows/23-write-path-batching.md) |
+| C++ Gateway 切流 | `gateway_node` 替换 Go | 构建/镜像/SDK 冒烟；见 [18-cpp-gateway.md](../flows/18-cpp-gateway.md) |
 
 产物建议：`./.run/release-gate.log`、各 `scripts/*.sh` 终端输出。
 
@@ -139,12 +142,24 @@
 </details>
 
 <details>
-<summary>compute（8）</summary>
+<summary>compute（Router/Proxy + Gateway 出站客户端）</summary>
 
-| Suite | Cases |
-|-------|-------|
-| RouterTest | BootstrapSingle, UpdateIgnoresStaleVersion, RangeLocateAfterSplit, ReplicaAddrsAndFallback, MissingShard |
-| KvProxyTest | PutGetViaTransport, NoRoute, RedirectRetry |
+| Suite | Cases | 最近结果 |
+|-------|-------|----------|
+| RouterTest | BootstrapSingle, UpdateIgnoresStaleVersion, RangeLocateAfterSplit, ReplicaAddrsAndFallback（含 epoch/leader 优先）, MissingShard | **PASS** 2026-11-10 |
+| KvProxyTest | PutGetViaTransport, NoRoute, RedirectRetry | （未改行为） |
+| DsEncodeTest | MetaKeyPrefix, HashRoundTrip, WrongType, SetListZSet | **PASS** 2026-11-10 |
+| MetaClientTest / ExecLineTest / TsoTest / ActiveTsTest | ParseRedirect, ParseRoute*, AllocMonotonicLocal, ConcurrentUnique, MinAndExpire | **PASS** 2026-11-10（15/15 含 Router） |
+
+```bash
+# 验收 C1（阶段 1 出站库）：docs/flows/18-cpp-gateway.md
+ctest --test-dir build -R 'DsEncodeTest|MetaClientTest|TsoTest|ActiveTsTest|ExecLineTest|RouterTest' --output-on-failure
+# 最近：15/15 PASS（2026-11-10）
+
+# 验收 G1（阶段 2 gateway_node）：docs/flows/18-cpp-gateway.md
+cmake --build build -j8 --target gateway_node
+# 最近：PASS（2026-11-10）→ build/compute/gateway_node
+```
 
 </details>
 
@@ -200,7 +215,7 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 | 2026-11-09 | TTL / Expire / Persist RPC | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'`；设计 [14-kv-ttl.md](../flows/14-kv-ttl.md)；SDK `TTL`/`Expire`/`Persist` |
 | 2026-11-09 | Gateway Scan / ListPrefix（无旁路索引） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='MvccTest.TxnScan*'` → 1/1；`bash scripts/it-scan.sh` → `scan smoke PASS`；设计 [16-scan-list-prefix.md](../flows/16-scan-list-prefix.md) |
 | 2026-11-09 | 独立客户端仓 openkv-client-{go,rust,java,typescript} | **PASS** | 同级四仓 `go test` / `cargo test` / `mvn test` / `npm test`；设计 [15-multi-client-sdk.md](../flows/15-multi-client-sdk.md) |
-| 2026-11-09 | KV TTL（TiKV：懒过期 + TTL Checker） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'`；设计 [14-kv-ttl.md](../flows/14-kv-ttl.md)；SDK `PutTTL` |
+| 2026-11-09 | KV TTL（懒过期 + TTL Checker） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Ttl*'`；设计 [14-kv-ttl.md](../flows/14-kv-ttl.md)；SDK `PutTTL` |
 | 2026-11-09 | Version CAS（plain + MVCC） | **PASS** | `./build/tests/openkv_unit_tests --gtest_filter='*Cas*'` → 3/3；设计 [13-version-cas.md](../flows/13-version-cas.md)；SDK `PutCAS`/`DeleteCAS` |
 | 2026-10-25 | Gateway Put/Get | FAIL→PASS | Meta 硬重启 TSO 回退 + epoch 错位；TSO 墙钟下界 + epoch 修复 |
 | 2026-10-25 | SCALE_OUT `storage-5→R1` Promote | FAIL→PASS | 快照未带 ConfState，新 Leader 丢 Learner；并发 scale 撞 Joint。已补 ConfState / busy / 串行扩容；现网补 ADD_LEARNER+PROMOTE |
@@ -268,6 +283,282 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
   kv-example via gateway                                         → PASS
 结果: PASS
 摘要: 拓扑不再画本机 127.0.0.1 离线假节点；Meta/Storage/Gateway 均在线
+```
+
+### 2026-11-10（client/go 改依赖独立 SDK）
+
+```text
+日期: 2026-11-10
+执行人: agent
+命令:
+  删除本仓 client/go/{kv,ds,gen/kv}；examples/cmd/web → openkv-client-go
+  openkv-client-go 增加 ds.proto + ds 包
+  (cd client/go && go build ./examples/... ./cmd/...) → PASS
+  (cd web && go test ./internal/...) → PASS
+  kv-example + ds-smoke → 对 C++ gateway 冒烟
+结果: PASS
+摘要: 本仓不再内嵌对外 SDK；client/go 仅 tools + Meta/Storage stubs
+```
+
+### 2026-11-10（Region auto-split）
+
+```text
+日期: 2026-11-10
+执行人: agent
+环境: darwin local + Colima k3s
+命令:
+  ctest -R ApproxAndPickSplitScopedToRange → PASS
+  默认 SKV_SPLIT_KEYS=256000 / BYTES=96MiB；Helm values.split 可调
+  统计改为按 KeyRange；10s 冷却；文档 RANGE_SHARDING / 16-gateway-tso-perf
+结果: UT PASS；集群压测见同节部署记录
+摘要: 默认开启 auto-split；修共享引擎整库误计
+```
+
+### 2026-11-11（P1 多 Region + apply WriteBatch）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  Store::ApplyBatchFn；StorageNode::on_apply_entries 合并 ONEPC/Put/Delete → 一次 write_batch
+  WatchLog::trim；scripts/bench-multi-region.sh；skv region_addrs 遇集群 DNS 时回退 SKV_STORAGES
+  文档: flows/23 §9
+命令:
+  ./build/tests/openkv_unit_tests --gtest_filter='StoreFacadeTest.*'
+  → ApplyEntriesBatchesPutAndOnePc PASS（含其余 facade）
+  SKV_META/SKV_STORAGES port-forward → bash scripts/bench-multi-region.sh bench-mr 4 200
+  → route region_count=4
+  集群内 put -prefix bench-mr -workers 4 -duration 8s → 62.0ops/s p50=29.9ms ok=496 fail=0
+  （对照 P0 单 Region w8 ≈56.5ops/s；w8 多 Region 可达 ~88ops/s 但高 fail，宜降并发）
+验收: M1/M2/M3 PASS
+结果: PASS
+备注: 连续 split 后若 key_not_in_region，重启 storage 走 recover_local_regions_from_meta
+```
+
+### 2026-11-11（P0 Ready group commit + fsync 解锁）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  Store::drive_ready + on_raft_batch 批末一次 process_ready（Wake/Tick 合并）
+  RaftKV::flush_ready → drive_ready（不再 broadcast_tick）
+  RaftNode::persist_ready：mu_ 外 consume/fsync（persist_io_mu_）；stable 只前进
+  单测: RaftstoreTest.DriveReadyCoalescesPersist
+  文档: flows/23 §8
+命令:
+  ./build/tests/openkv_unit_tests --gtest_filter='Raftstore*:RaftNode*:RawNode*:ProposalQueue*:RocksRaft*:StoreFacade*:StoreAdmin*'
+  → 37/37 PASS；DriveReadyCoalescesPersist PASS（persists<8, max_entries≥2）
+  docker build -f deploy/Dockerfile -t openkv:dev . → import k3s → rollout storage
+  集群内 put w8 8s → 56.5ops/s p50=114.6ms ok=452 fail=0（P0 前基线 ≈47ops/s）
+验收: G1/G2/G3 PASS（相对基线不回退且略升）
+结果: PASS
+```
+
+### 2026-11-11（文档整理：去掉对比/第三方对照）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  删除 flows/23-oxia-tikv-write-path-compare、architecture/SHARDING_STRATEGIES、TRANSACTION_SURVEY
+  新增 flows/23-write-path-batching（仅 OpenKV）
+  清洗 META/STORE/MULTI_RAFT_PRODUCTION 与索引中的第三方对照
+结果: PASS（索引可导航；无对比类正文）
+```
+
+### 2026-11-11（flows 重梳理）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  重写 flows/README：A–E 分区 + 阅读顺序 + 文档约定
+  按当前实现重写 01/02/08/16-tso/18/19/20/21/23（C++ Gateway · ONEPC · gRPC）
+  zh/README flows 分区对齐
+验收:
+  F1 索引无死链；A–E 覆盖全部 flows/*.md
+  F2 01/02 描述与 gateway_node one_pc / TXN_GET 一致
+  F3 无 TCP 双栈 / Go compute-gateway 作为当前路径
+结果: PASS（文档；无新代码）
+```
+
+### 2026-11-11（async Put 去掉双 GetTs）
+
+```text
+日期: 2026-11-11
+执行人: agent
+命令:
+  cmake --build build --target gateway_node → PASS
+  ctest -R TsoTest → 2/2 PASS
+  docker build Dockerfile.gateway → rollout gateway（先重启 storage 解 ping 超时）
+  bench put w1 → 27ops/s p50=10.3ms fail=0；w8 → 39.4ops/s p50=189ms fail=0
+改动:
+  with_start_commit_ts / get_async：改回本地 alloc_ts(2|1)（TSO 批缓存），不再串行两次 meta_get_ts_async
+  文档: flows/21、22
+结果: PASS；热路径与 PutBody 对齐。吞吐仍≈40ops/s（单 Region / PF 环境），但不再每 Put 打两次 Meta
+```
+
+### 2026-11-10（全链路异步线程模型 · 接收+WorkPool）
+
+```text
+日期: 2026-11-10
+执行人: agent
+命令:
+  ctest --test-dir build -R 'ProposalQueue|OnePc|TsoTest|ExecLine|RouterTest|StoreFacade' → 25/25 PASS
+  docker build openkv:dev + openkv-gateway:dev → k3s import → rollout meta/storage/gateway
+  日志: meta/storage/gateway 均含 "(callback + workers=…)"
+  go run ./examples/basic 127.0.0.1:19100 → PASS
+  go run ./examples/bench -mode put -workers 8 -duration 8s → 31.1ops/s ok=249 fail=0
+  设计: docs/flows/22-async-threading-model.md · 21-async-network.md
+改动:
+  Storage：one_pc_async；ExecLine PUT/DEL/ONEPC try_process_line_async（Finish@apply）
+  Meta/Gateway：入站 CallbackService + openkv::WorkPool
+  Meta GetTs / ExecLine(GET_TS) → alloc_ts_async；Gateway Put/Delete/Get → meta_get_ts_async→store_exec_line_async
+结果: PASS（T1–T4）
+```
+
+### 2026-11-10（全链路异步网络）
+
+```text
+日期: 2026-11-10
+执行人: agent
+命令:
+  ctest -R 'ProposalQueue|OnePc|ExecLine|TsoTest|MetaHaTest.FsmSnap' → 14/14 PASS
+  docker build openkv:dev + openkv-gateway:dev → import k3s → rollout meta/storage/gateway
+  go run ./examples/basic → PASS
+  go run ./examples/bench -mode put -workers 8 -duration 8s → 65.6ops/s ok=525 fail=0
+  设计: docs/flows/21-async-network.md
+改动:
+  ProposalQueue::wait_async + 超时线程；StoreFacade::propose_async
+  Storage Store/Admin → CallbackService（Propose Finish@apply；ExecLine WorkPool）
+  MetaNode::alloc_ts_async；Gateway store_exec_line_async / meta_get_ts_async
+结果: PASS（A1–A3）；相对 N1–N7 基线 39.1ops/s 提升约 1.7×
+```
+
+### 2026-11-10（下一轮优化 N1/N3/N4/N5/N7）
+
+```text
+日期: 2026-11-10
+执行人: agent
+命令:
+  ctest -R 'FsmSnap|MetaHa|OnePc|ApproxAndPickSplit|ProposalQueue|LatchHold' → 17/17 PASS
+  设计: docs/flows/20-next-optimizations.md
+改动:
+  N1 RaftNode 本地 FSM snap（compact/每32 apply）+ 重启 restore/replay
+  N3 ONEPC put_onepc WriteBatch；N4 mailbox CV 等待 + SKV_RAFT/APPLY_WORKERS
+  N5 BatchPut 并行 16；N7 propose 拦 ONEPC splitting
+  docker build openkv+gateway → rollout meta/storage/gateway
+  meta logs: fsm snap missing; replaying log … / fsm snap saved
+  go run examples/basic → PASS
+  go run ./examples/bench -mode put -workers 8 -duration 8s → 39.1ops/s ok=313 fail=0
+  meta 持续 fsm snap saved；压测后无 storage Deadline 风暴
+结果: PASS（O1–O3）
+```
+
+### 2026-11-10（架构硬化 H1–H5）
+
+```text
+日期: 2026-11-10
+执行人: agent
+环境: darwin local + Colima k3s
+命令:
+  ctest -R 'ApproxAndPickSplit|ProposalQueue|LatchHold|SchedulerTest|OnePc|MetaHa|MetaFsm|RegionScheduler' → 16/16 PASS
+  设计: docs/flows/19-architecture-hardening.md
+改动摘要:
+  F1 propose+flush_ready + ProposalQueue 纯 CV
+  F2 GetApproximateSizes / estimate-num-keys + split_worker
+  F3 Meta apply_cv_/route_cv_（GET_TS/WATCH/replicate）
+  F4 latch 持到 apply（schedule_write_hold / Facade lock_key）
+  F5 post_split place（SKV_PD_AUTO_BALANCE=1）
+  docker build openkv:dev → import；rollout meta+storage+gateway
+  logs: split_worker=1；recover ensured=1；压测窗口 Deadline Exceeded=0
+  go run examples/basic → PASS
+  go run ./examples/bench -mode put -workers 8 -duration 8s → 26.2ops/s ok=210 fail=0
+结果: PASS（H1–H3）
+```
+
+### 2026-11-10（重启后 Meta 路由恢复本机 Region）
+
+```text
+日期: 2026-11-10
+执行人: agent
+环境: darwin local + Colima k3s openkv（RF=1，此前已 auto-split）
+命令:
+  docker build -f deploy/Dockerfile -t openkv:dev . → PASS
+  docker save | k3s ctr import + kubectl rollout restart sts/storage
+  logs: recover_local_regions_from_meta ensured=35 local_groups=35
+  go run examples/{basic,cas,ttl,txn} + ds-smoke → PASS（无 no_region）
+  go run ./examples/bench -mode put -workers 8 -duration 5s → 32.6ops/s ok=163 fail=0
+结果: PASS
+摘要: REGISTER 后 GET_ROUTE + ENSURE 恢复 split Region（本机 peer 恢复）
+设计: docs/flows/16-gateway-tso-perf.md · docs/architecture/RANGE_SHARDING.md
+```
+
+### 2026-11-10（短 Put ONEPC / 1PC）
+
+```text
+日期: 2026-11-10
+执行人: agent
+环境: darwin local + Colima k3s openkv（RF=1）
+命令:
+  ctest -R 'OnePc|StoreCodecTest.OnePc' → PASS（P1）
+  docker build Dockerfile + Dockerfile.gateway → import + rollout
+  kv-bench -mode put -workers 8 -duration 5s → 31.2ops/s ok=156 fail=0（1PC 前≈35ops/s fail=4）
+  examples/{basic,cas,ttl,txn}+ds-smoke → PASS（P3）
+结果: PASS（语义/稳定性）；单 Region 下吞吐未翻倍（apply 仍是瓶颈）
+摘要: Put/Delete 改 ONEPC（1 Propose）；Txn 多 key 仍 Prewrite+Commit
+设计: docs/flows/16-gateway-tso-perf.md
+```
+
+### 2026-11-10（ProposalQueue 写管道）
+
+```text
+日期: 2026-11-10
+执行人: agent
+环境: darwin local + Colima k3s openkv（RF=1 storage=1）
+命令:
+  ctest --test-dir build -R 'ProposalQueueTest' → 5/5 PASS（W1）
+  docker build -f deploy/Dockerfile -t openkv:dev .
+  docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
+  ctr import + rollout storage/gateway
+  kv-bench -mode put -workers 8 -duration 5s → put 35.4ops/s ok=177 fail=4（基线≈6ops/s 高 fail）
+  kv-bench -mode all -workers 8 -duration 5s → put ok=227 fail=0；DS/Txn/BatchPut ok>0
+  go run examples/{basic,cas,ttl,txn} + ds-smoke → PASS
+结果: PASS（W1–W4）
+摘要: ProposalQueue（apply invoke）替换 5ms 轮询；Put locked→resolve；BatchPut≤8
+设计: docs/flows/16-gateway-tso-perf.md · docs/flows/01-write-put.md
+```
+
+### 2026-11-10（C++ gateway 切流）
+
+```text
+日期: 2026-11-10
+执行人: agent
+环境: Colima k3s openkv；镜像 openkv-gateway:dev = C++ gateway_node
+命令:
+  ctest -R 'DsEncodeTest|MetaClientTest|TsoTest|ActiveTsTest|ExecLineTest|RouterTest' → 15/15 PASS
+  docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
+  kubectl rollout restart deploy/gateway → Running
+  go run ./examples/{basic,cas,ttl,scan,txn} 127.0.0.1:19000 → PASS
+  go run ./cmd/ds-smoke -addr 127.0.0.1:19000 → ALL PASS
+  .run/kv-bench -mode get,put,scan,ttl,hset,zadd -workers 4 -duration 3s → get fail=0
+  test ! -d client/go/cmd/compute-gateway → PASS（已删）
+结果: PASS（G1–G4）；设计见 docs/flows/18-cpp-gateway.md
+摘要: 生产 Gateway 已切 C++；SDK 冒烟与 DS 全绿；读路径 ~1.2k ops/s
+```
+
+### 2026-11-10（Go gateway 压测基线，切流前）
+
+```text
+日期: 2026-11-10
+执行人: agent
+环境: Colima k3s, openkv ns（meta=1 storage=1 RF=1）; 集群内 alpine Pod 跑 linux/amd64 bench
+命令:
+  GOOS=linux GOARCH=amd64 go build -o .run/kv-bench-linux ./client/go/examples/bench
+  kubectl exec okv-bench -- /kv-bench -addr gateway:19000 -mode all -workers 8 -duration 5s
+结果: PASS（B1–B3）；SUMMARY 见 docs/flows/17-gateway-api-bench.md
+摘要: get≈429ops/s fail=0；put≈6ops/s 高 fail（apply_timeout/locked）；写路径为瓶颈
 ```
 
 ### 2026-10-26

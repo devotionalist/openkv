@@ -1,4 +1,4 @@
-# Range 分片（有序区间 / FDB / HBase 类）
+# Range 分片（有序区间）
 
 OpenKV 使用 **有序 Range + 分裂/合并**（已从早期哈希取模切换）。总览见 [ARCHITECTURE.md](ARCHITECTURE.md)；流程见 [flows/09-range-split-merge.md](../flows/09-range-split-merge.md)、[flows/10-region-placement.md](../flows/10-region-placement.md)；**逐步详解**见 [REGION_OPS.md](../ops/REGION_OPS.md)。
 
@@ -36,11 +36,17 @@ ADMIN_REMOVE_PEER / ADMIN_DESTROY_REGION
 
 | 环境变量 | 含义 | 默认 |
 |----------|------|------|
-| `SKV_SPLIT_KEYS` | key 数 ≥ 阈值则分裂 | `0`（关闭） |
-| `SKV_SPLIT_BYTES` | 近似字节数 ≥ 阈值则分裂 | `0`（关闭） |
+| `SKV_SPLIT_KEYS` | **本 Region 区间内**唯一用户 key 数 ≥ 阈值则分裂 | `256000`（`0`=关） |
+| `SKV_SPLIT_BYTES` | 区间内近似字节数 ≥ 阈值则分裂 | `96MiB`（`0`=关） |
 | `SKV_MERGE_KEYS` | 两侧 key 数都 < 阈值则合并相邻 | `0`（关闭） |
 
-Split **不**自动 place。无感扩容：`join` → `balance`；手动打散：`skv place`。
+统计：RocksDB `GetApproximateSizes` + `estimate-num-keys`（小库精确唯一）；tick 只入队，`split_worker` 跑 Meta SPLIT。分裂点为区间用户 key 采样中位；同 Region 10s 冷却。
+
+重启恢复：Storage `REGISTER` 成功后拉 `GET_ROUTE`，对本机出现的 Region 做 `ADMIN_ENSURE` 并恢复 range/epoch。
+
+Split 后 Place：`SKV_PD_AUTO_BALANCE=1` 且建议集含他机时对 right 调 `place_region`；默认关。无感扩容：`join` → `balance`；手动打散：`skv place`。
+
+详见 [flows/19-architecture-hardening.md](../flows/19-architecture-hardening.md)。
 
 ## 运维（skv）
 
@@ -72,4 +78,4 @@ Split **不**自动 place。无感扩容：`join` → `balance`；手动打散�
 - 事务 GC：`SKV_TXN_GC`（默认开）过期锁 rollback + 按 Meta TSO `GET_SAFE_POINT` 做 MVCC GC（floor 保留）
 - Gateway `Get/Put/Delete` 已与 Txn MVCC 可见性统一
 
-事务细节见 [TRANSACTION_SURVEY.md](TRANSACTION_SURVEY.md)。
+事务细节见 [flows/13-version-cas.md](../flows/13-version-cas.md) 与 Gateway Txn API。

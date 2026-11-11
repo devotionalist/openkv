@@ -22,6 +22,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -131,6 +134,8 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
     engine_ = owned_file_engine_;
   }
   if (engine_) load_from_disk();
+  // compact 后日志窗口不含历史：必须先恢复本地 FSM 快照再 recover_apply。
+  restore_local_fsm_snapshot();
   start_apply_worker();
 }
 
@@ -172,6 +177,8 @@ void RaftNode::apply_worker_loop() {
     {
       std::lock_guard<std::mutex> lock(mu_);
       if (item.index > last_applied_) last_applied_ = item.index;
+      // 定期落 FSM（不依赖 compact），避免重启后 last_applied 已推进但状态机仍是 bootstrap。
+      if (snap_provider_ && (item.index % 32 == 0)) save_local_fsm_snapshot_locked();
       maybe_compact();
       persist_locked();
     }
@@ -256,10 +263,13 @@ void RaftNode::persist_maybe_flush(bool force) {
   persist_pending_ = 0;
 }
 
-void RaftNode::engine_flush_locked(bool sync) {
-  if (!engine_) return;
-  const uint64_t first = log_.first_index();
-  const uint64_t last = log_.last_index();
+std::unique_ptr<RaftLogBatch> RaftNode::build_engine_batch_locked(uint64_t& out_first,
+                                                                 uint64_t& out_last) {
+  if (!engine_) return nullptr;
+  out_first = log_.first_index();
+  out_last = log_.last_index();
+  const uint64_t first = out_first;
+  const uint64_t last = out_last;
 
   auto batch = engine_->make_log_batch();
 
@@ -278,15 +288,15 @@ void RaftNode::engine_flush_locked(bool sync) {
   if (stable_last_index_ == 0) {
     from = first;
   } else if (last > stable_last_index_) {
-    from = stable_last_index_ + 1;
-    if (from < first) from = first;
+    from = std::max(stable_last_index_ + 1, first);
   }
-  std::vector<LogEntry> delta;
   if (from != 0 && last >= from) {
-    // 若 from..last 与盘上重叠（同 index 重写），先 cut 再 append
+    // 与盘上重叠（同 index 重写）时先 cut 再 append
     if (stable_last_index_ != 0 && from <= stable_last_index_) {
       batch->cut_logs(group_id_, from, stable_last_index_ + 1);
     }
+    std::vector<LogEntry> delta;
+    delta.reserve(static_cast<size_t>(last - from + 1));
     for (uint64_t i = from; i <= last; ++i) {
       if (auto e = log_.entry(i)) delta.push_back(*e);
     }
@@ -301,10 +311,26 @@ void RaftNode::engine_flush_locked(bool sync) {
   hs.first_index = first;
   hs.snapshot_term = log_.snapshot_term();
   batch->put_raft_state(group_id_, RaftLocalState::from_persisted(hs, last));
-  engine_->consume(*batch, sync);
+  return batch;
+}
 
-  stable_first_index_ = first;
-  stable_last_index_ = last;
+void RaftNode::commit_stable_locked(uint64_t first, uint64_t last) {
+  if (last > stable_last_index_) {
+    stable_last_index_ = last;
+    stable_first_index_ = first;
+  } else if (last == stable_last_index_ && first > stable_first_index_) {
+    stable_first_index_ = first;
+  }
+}
+
+void RaftNode::engine_flush_locked(bool sync) {
+  if (!engine_) return;
+  uint64_t first = 0;
+  uint64_t last = 0;
+  auto batch = build_engine_batch_locked(first, last);
+  if (!batch || batch->empty()) return;
+  engine_->consume(*batch, sync);
+  commit_stable_locked(first, last);
 }
 
 void RaftNode::recover_apply() {
@@ -667,14 +693,27 @@ void RaftNode::advance(const Ready& rd) {
 }
 
 void RaftNode::persist_ready(const Ready& rd) {
+  // fsync 不占 mu_：propose 可与 sync 重叠，便于 Ready 攒批。
+  std::unique_ptr<RaftLogBatch> batch;
+  bool sync = false;
+  uint64_t first = 0;
+  uint64_t last = 0;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (!opts_.external_io || !engine_) return;
+    sync = rd.must_sync || opts_.persist_sync != SyncMode::kNone || ready_hs_dirty_;
+    batch = build_engine_batch_locked(first, last);
+    ready_hs_dirty_ = false;
+    persist_dirty_ = false;
+    persist_pending_ = 0;
+  }
+  if (!batch || batch->empty()) return;
+  {
+    std::lock_guard<std::mutex> io(persist_io_mu_);
+    engine_->consume(*batch, sync);
+  }
   std::lock_guard<std::mutex> lock(mu_);
-  if (!opts_.external_io || !engine_) return;
-  const bool sync =
-      rd.must_sync || opts_.persist_sync != SyncMode::kNone || ready_hs_dirty_;
-  engine_flush_locked(sync);
-  ready_hs_dirty_ = false;
-  persist_dirty_ = false;
-  persist_pending_ = 0;
+  commit_stable_locked(first, last);
 }
 
 void RaftNode::report_applied(uint64_t index) {
@@ -1231,12 +1270,121 @@ void RaftNode::apply_committed() {
   if (!opts_.enable_async_apply && !opts_.external_io) maybe_compact();
 }
 
+std::string RaftNode::local_fsm_snap_path() const {
+  if (opts_.persist_dir.empty()) return {};
+  return (std::filesystem::path(opts_.persist_dir) / ("fsm_" + std::to_string(group_id_) + ".snap"))
+      .string();
+}
+
+void RaftNode::save_local_fsm_snapshot_locked() {
+  if (!snap_provider_) return;
+  const auto path = local_fsm_snap_path();
+  if (path.empty()) return;
+  uint64_t li = last_applied_;
+  uint64_t lt = log_.snapshot_term();
+  if (auto e = log_.entry(last_applied_)) lt = e->term;
+  // provider 可改写 li/lt；Meta 侧通常忽略并返回 serialize()。
+  std::string blob = snap_provider_(&li, &lt);
+  try {
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    const auto tmp = path + ".tmp";
+    {
+      std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+      if (!out) {
+        SKV_WARN << "shard=" << opts_.shard_id << " fsm snap open failed path=" << tmp;
+        return;
+      }
+      // magic(4) | last_idx u64 LE | last_term u64 LE | blob
+      out.write("FSN1", 4);
+      out.write(reinterpret_cast<const char*>(&li), sizeof(li));
+      out.write(reinterpret_cast<const char*>(&lt), sizeof(lt));
+      out.write(blob.data(), static_cast<std::streamsize>(blob.size()));
+      out.flush();
+      if (!out) {
+        SKV_WARN << "shard=" << opts_.shard_id << " fsm snap write failed";
+        return;
+      }
+    }
+    std::filesystem::rename(tmp, path);
+    SKV_INFO << "shard=" << opts_.shard_id << " fsm snap saved idx=" << li << " term=" << lt
+             << " bytes=" << blob.size();
+  } catch (const std::exception& e) {
+    SKV_WARN << "shard=" << opts_.shard_id << " fsm snap save: " << e.what();
+  }
+}
+
+void RaftNode::restore_local_fsm_snapshot() {
+  const auto path = local_fsm_snap_path();
+  if (snap_applier_ && !path.empty() && std::filesystem::exists(path)) {
+    try {
+      std::ifstream in(path, std::ios::binary);
+      if (in) {
+        char magic[4] = {};
+        uint64_t li = 0, lt = 0;
+        in.read(magic, 4);
+        in.read(reinterpret_cast<char*>(&li), sizeof(li));
+        in.read(reinterpret_cast<char*>(&lt), sizeof(lt));
+        if (in && std::memcmp(magic, "FSN1", 4) == 0) {
+          std::string blob((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+          if (snap_applier_(li, lt, blob)) {
+            SKV_INFO << "shard=" << opts_.shard_id << " fsm snap restored idx=" << li
+                     << " term=" << lt << " bytes=" << blob.size()
+                     << " first=" << log_.first_index();
+            return;
+          }
+          SKV_WARN << "shard=" << opts_.shard_id << " fsm snap_applier failed idx=" << li;
+        } else {
+          SKV_WARN << "shard=" << opts_.shard_id << " fsm snap bad header";
+        }
+      }
+    } catch (const std::exception& e) {
+      SKV_WARN << "shard=" << opts_.shard_id << " fsm snap restore: " << e.what();
+    }
+  }
+  // 无快照文件（升级场景）：若日志窗口仍覆盖已 apply 区间，重放进 FSM。
+  if (!on_apply_ || last_applied_ == 0) return;
+  const uint64_t first = log_.first_index();
+  if (last_applied_ < first) {
+    SKV_WARN << "shard=" << opts_.shard_id
+             << " fsm snap missing and log compacted past applied; state may be bootstrap-only"
+             << " applied=" << last_applied_ << " first=" << first;
+    return;
+  }
+  SKV_INFO << "shard=" << opts_.shard_id << " fsm snap missing; replaying log " << first << ".."
+           << last_applied_;
+  for (uint64_t i = first; i <= last_applied_; ++i) {
+    auto e = log_.entry(i);
+    if (!e) continue;
+    const bool is_conf =
+        !e->data.empty() && static_cast<unsigned char>(e->data[0]) == 0xFF;
+    if (is_conf) {
+      apply_conf_entry(*e);
+      continue;
+    }
+    in_on_apply_.store(true, std::memory_order_relaxed);
+    try {
+      on_apply_(i, e->data);
+    } catch (...) {
+      in_on_apply_.store(false, std::memory_order_relaxed);
+      throw;
+    }
+    in_on_apply_.store(false, std::memory_order_relaxed);
+  }
+  // 重放后立刻落一份，后续重启走快照路径。
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    save_local_fsm_snapshot_locked();
+  }
+}
+
 void RaftNode::maybe_compact() {
   if (opts_.compact_threshold == 0) return;
   if (!snap_provider_) return;
   if (log_.size() <= opts_.compact_threshold) return;
   if (last_applied_ < log_.first_index()) return;
   const uint64_t old_first = log_.first_index();
+  // 先落 FSM，再砍日志——否则重启无法重建状态机。
+  save_local_fsm_snapshot_locked();
   uint64_t term = log_.snapshot_term();
   if (auto e = log_.entry(last_applied_)) term = e->term;
   log_.compact_to(last_applied_, term);

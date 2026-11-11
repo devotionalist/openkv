@@ -310,9 +310,18 @@ bool KvEngine::put(std::string_view key, std::string_view value, uint64_t revisi
 
 bool KvEngine::write_batch(const std::vector<std::tuple<std::string, std::string, uint64_t>>& puts,
                            const std::vector<std::string>& dels) {
+  std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>> ext;
+  ext.reserve(puts.size());
+  for (const auto& [k, v, rev] : puts) ext.emplace_back(k, v, rev, 0);
+  return write_batch(ext, dels);
+}
+
+bool KvEngine::write_batch(
+    const std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>>& puts,
+    const std::vector<std::string>& dels) {
   rocksdb::WriteBatch batch;
-  for (const auto& [k, v, rev] : puts) {
-    batch.Put(rocks_->cf(classify_key(k)), k, encode_kv_payload(rev, 0, v));
+  for (const auto& [k, v, rev, exp] : puts) {
+    batch.Put(rocks_->cf(classify_key(k)), k, encode_kv_payload(rev, exp, v));
   }
   for (const auto& k : dels) {
     const CfId id = classify_key(k);
@@ -625,39 +634,115 @@ bool KvEngine::restore_from_checkpoint(std::string_view src_dir) {
   return true;
 }
 
-size_t KvEngine::approx_key_count() const {
-  size_t n = 0;
-  for (auto* cf : rocks_->all) {
-    std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
-    for (it->SeekToFirst(); it->Valid(); it->Next()) ++n;
+namespace {
+constexpr std::string_view kMetaPrefix = "\xff\xffskv/";
+
+std::string user_of_phys(std::string_view phys) {
+  if (phys.compare(0, kMetaPrefix.size(), kMetaPrefix) == 0) return {};
+  const auto pos = phys.find('\0');
+  return std::string(pos == std::string_view::npos ? phys : phys.substr(0, pos));
+}
+}  // namespace
+
+namespace {
+
+/// 用户 KeyRange → RocksDB Range（物理前缀；end 空用极大 sentinel）。
+rocksdb::Range rocks_range_for(const openkv::KeyRange& range, std::string* start_hold,
+                               std::string* limit_hold) {
+  *start_hold = range.start_key;
+  if (range.end_key.empty()) {
+    // 半开 +∞：用高字节前缀作 exclusive limit（跳过引擎 meta `\xff\xffskv/`）。
+    *limit_hold = std::string("\xff\xfe");
+  } else {
+    *limit_hold = range.end_key;
   }
-  return n;
+  return rocksdb::Range(*start_hold, *limit_hold);
 }
 
-size_t KvEngine::approx_bytes() const {
-  size_t n = 0;
-  for (auto* cf : rocks_->all) {
-    std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
-    for (it->SeekToFirst(); it->Valid(); it->Next()) {
-      n += it->key().size() + it->value().size();
-    }
+uint64_t approx_sizes_sum(rocksdb::DB* db, const std::vector<rocksdb::ColumnFamilyHandle*>& cfs,
+                          const rocksdb::Range& r) {
+  uint64_t total = 0;
+  const auto kIncl = rocksdb::DB::SizeApproximationFlags::INCLUDE_FILES |
+                     rocksdb::DB::SizeApproximationFlags::INCLUDE_MEMTABLES;
+  for (auto* cf : cfs) {
+    if (!cf) continue;
+    uint64_t sz = 0;
+    db->GetApproximateSizes(cf, &r, 1, &sz, kIncl);
+    total += sz;
   }
-  return n;
+  return total;
 }
 
-std::string KvEngine::pick_split_key() const {
+}  // namespace
+
+size_t KvEngine::approx_bytes(const openkv::KeyRange& range) const {
+  std::string start_hold, limit_hold;
+  const auto r = rocks_range_for(range, &start_hold, &limit_hold);
+  return static_cast<size_t>(approx_sizes_sum(rocks_->db.get(), rocks_->all, r));
+}
+
+size_t KvEngine::approx_key_count(const openkv::KeyRange& range) const {
+  auto exact_unique = [&](size_t cap) -> size_t {
+    std::vector<std::string> users;
+    users.reserve(std::min(cap, size_t{4096}));
+    for_each([&](std::string_view phys, const KvRecord&) {
+      auto u = user_of_phys(phys);
+      if (u.empty() || !range.contains(u)) return true;
+      users.push_back(std::move(u));
+      return users.size() < cap;
+    });
+    std::sort(users.begin(), users.end());
+    users.erase(std::unique(users.begin(), users.end()), users.end());
+    return users.size();
+  };
+
+  // 小库（含单测 / 早期增长）：精确唯一用户 key，避免 memtable 上 GetApproximateSizes=0。
+  constexpr size_t kExactCap = 8192;
+  uint64_t est_keys = 0;
+  rocks_->db->GetIntProperty(rocks_->data_cf ? rocks_->data_cf : rocks_->default_cf,
+                             "rocksdb.estimate-num-keys", &est_keys);
+  if (est_keys == 0) rocks_->db->GetIntProperty("rocksdb.estimate-num-keys", &est_keys);
+  if (est_keys < kExactCap) return exact_unique(kExactCap);
+
+  const bool full = range.start_key.empty() && range.end_key.empty();
+  if (full) return static_cast<size_t>(est_keys);
+
+  std::string start_hold, limit_hold, full_start, full_limit;
+  const auto rr = rocks_range_for(range, &start_hold, &limit_hold);
+  openkv::KeyRange whole;
+  const auto wr = rocks_range_for(whole, &full_start, &full_limit);
+  const uint64_t range_sz = approx_sizes_sum(rocks_->db.get(), rocks_->all, rr);
+  const uint64_t whole_sz = approx_sizes_sum(rocks_->db.get(), rocks_->all, wr);
+  if (whole_sz == 0) return exact_unique(4096);
+  return static_cast<size_t>((est_keys * range_sz) / whole_sz);
+}
+
+std::string KvEngine::pick_split_key(const openkv::KeyRange& range) const {
+  // 采样用户 key（上限 512），取中位；避免全表排序。
+  constexpr size_t kMaxSample = 512;
   std::vector<std::string> users;
+  users.reserve(kMaxSample);
+  size_t seen = 0;
   for_each([&](std::string_view phys, const KvRecord&) {
-    const auto pos = phys.find('\0');
-    users.push_back(pos == std::string_view::npos ? std::string(phys)
-                                                   : std::string(phys.substr(0, pos)));
+    auto u = user_of_phys(phys);
+    if (u.empty() || !range.contains(u)) return true;
+    ++seen;
+    // 蓄水池：均匀保留最多 kMaxSample 个
+    if (users.size() < kMaxSample) {
+      users.push_back(std::move(u));
+    } else {
+      const size_t j = seen == 0 ? 0 : (seen - 1) % kMaxSample;
+      if (j < users.size()) users[j] = std::move(u);
+    }
     return true;
   });
   if (users.size() < 2) return {};
   std::sort(users.begin(), users.end());
   users.erase(std::unique(users.begin(), users.end()), users.end());
   if (users.size() < 2) return {};
-  return users[users.size() / 2];
+  const std::string& mid = users[users.size() / 2];
+  if (!range.can_split_at(mid)) return {};
+  return mid;
 }
 
 size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
@@ -752,9 +837,18 @@ bool KvEngine::put(std::string_view key, std::string_view value, uint64_t revisi
 
 bool KvEngine::write_batch(const std::vector<std::tuple<std::string, std::string, uint64_t>>& puts,
                            const std::vector<std::string>& dels) {
+  std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>> ext;
+  ext.reserve(puts.size());
+  for (const auto& [k, v, rev] : puts) ext.emplace_back(k, v, rev, 0);
+  return write_batch(ext, dels);
+}
+
+bool KvEngine::write_batch(
+    const std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>>& puts,
+    const std::vector<std::string>& dels) {
   std::lock_guard<std::mutex> lock(mu_);
-  for (const auto& [k, v, rev] : puts) {
-    mem_[k] = KvRecord{v, rev, 0};
+  for (const auto& [k, v, rev, exp] : puts) {
+    mem_[k] = KvRecord{v, rev, exp};
   }
   for (const auto& k : dels) mem_.erase(k);
   return true;
@@ -930,33 +1024,54 @@ void KvEngine::apply_snapshot(std::string_view data, const openkv::KeyRange& ran
   }
 }
 
-size_t KvEngine::approx_key_count() const {
+size_t KvEngine::approx_key_count(const openkv::KeyRange& range) const {
   std::lock_guard<std::mutex> lock(mu_);
-  return mem_.size();
+  std::vector<std::string> users;
+  users.reserve(mem_.size());
+  for (const auto& [k, _] : mem_) {
+    const auto pos = k.find('\0');
+    std::string u = pos == std::string::npos ? k : k.substr(0, pos);
+    if (u.compare(0, 8, "\xff\xffskv/") == 0) continue;
+    if (!range.contains(u)) continue;
+    users.push_back(std::move(u));
+  }
+  std::sort(users.begin(), users.end());
+  users.erase(std::unique(users.begin(), users.end()), users.end());
+  return users.size();
 }
 
-size_t KvEngine::approx_bytes() const {
+size_t KvEngine::approx_bytes(const openkv::KeyRange& range) const {
   std::lock_guard<std::mutex> lock(mu_);
   size_t n = 0;
   for (const auto& [k, r] : mem_) {
+    const auto pos = k.find('\0');
+    std::string_view u = pos == std::string::npos ? std::string_view(k)
+                                                  : std::string_view(k).substr(0, pos);
+    if (u.compare(0, 8, "\xff\xffskv/") == 0) continue;
+    if (!range.contains(u)) continue;
     n += k.size() + r.value.size() + sizeof(r.revision);
   }
   return n;
 }
 
-std::string KvEngine::pick_split_key() const {
+std::string KvEngine::pick_split_key(const openkv::KeyRange& range) const {
   std::lock_guard<std::mutex> lock(mu_);
   if (mem_.size() < 2) return {};
   std::vector<std::string> users;
   users.reserve(mem_.size());
   for (const auto& [k, _] : mem_) {
     const auto pos = k.find('\0');
-    users.push_back(pos == std::string::npos ? k : k.substr(0, pos));
+    std::string u = pos == std::string::npos ? k : k.substr(0, pos);
+    if (u.compare(0, 8, "\xff\xffskv/") == 0) continue;
+    if (!range.contains(u)) continue;
+    users.push_back(std::move(u));
   }
   std::sort(users.begin(), users.end());
   users.erase(std::unique(users.begin(), users.end()), users.end());
   if (users.size() < 2) return {};
-  return users[users.size() / 2];
+  const std::string& mid = users[users.size() / 2];
+  if (!range.can_split_at(mid)) return {};
+  return mid;
 }
 
 size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {

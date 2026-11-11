@@ -136,7 +136,9 @@ def main() -> int:
     for port, logname in port_logs.items():
         wait_port(port, hint_log=logname)
 
-    gw = RUN / "compute-gateway"
+    gw = RUN / "gateway_node"
+    if not gw.exists():
+        gw = RUN / "compute-gateway"
     procs.append(
         start(
             "gateway",

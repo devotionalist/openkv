@@ -42,7 +42,7 @@ cmake --build build -j --target skv
 | `SKV_META` | `127.0.0.1:8500,8501,8502` |
 | `SKV_GATEWAY` | `127.0.0.1:19000`（status/ping 端口探测） |
 
-Storage 自动分裂（进程环境，非 skv）：`SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES`（默认 `0` = 关），见 [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md)。
+Storage 自动分裂（进程环境，非 skv）：`SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES`（默认 `256000` / `96MiB`；`0` = 关），见 [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md)。
 
 ## 示例
 

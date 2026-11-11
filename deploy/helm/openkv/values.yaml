@@ -34,6 +34,12 @@ cluster:
   replicaFactor: 3
   domain: cluster.local
 
+# TiKV-style Region auto-split（Storage 进程环境变量）
+# keys/bytes：任一超阈值即分裂；设 0 关闭该项。默认对齐 TiKV ~96MiB / 256k keys。
+split:
+  keys: "256000"
+  bytes: "100663296"  # 96MiB
+
 persistence:
   enabled: true
   size: 10Gi

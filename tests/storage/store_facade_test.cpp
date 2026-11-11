@@ -15,6 +15,7 @@
 // @file store_facade_test.cpp
 // 集成测试 StorageNode + StoreFacade：Raft 选主后 propose/get 端到端。
 
+#include "openkv/storage/mvcc.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/store_service.hpp"
 
@@ -103,6 +104,57 @@ TEST_F(StoreFacadeTest, IndependentShards) {
   EXPECT_TRUE(node_->engines().shares_engine(0, 1));
 }
 
+TEST_F(StoreFacadeTest, ApplyEntriesBatchesPutAndOnePc) {
+  using openkv::raft::LogEntry;
+  using openkv::storage::encode_command;
+  using openkv::storage::encode_onepc_value;
+  using openkv::storage::MvccOp;
+  using openkv::storage::MvccStore;
+
+  std::vector<LogEntry> ents;
+  for (int i = 0; i < 6; ++i) {
+    Command cmd;
+    cmd.op = CmdOp::kPut;
+    cmd.key = "batch-put-" + std::to_string(i);
+    cmd.value = "pv" + std::to_string(i);
+    LogEntry e;
+    e.index = 2000 + static_cast<uint64_t>(i);
+    e.term = 1;
+    e.data = encode_command(cmd);
+    ents.push_back(std::move(e));
+  }
+  for (int i = 0; i < 4; ++i) {
+    Command cmd;
+    cmd.op = CmdOp::kOnePc;
+    cmd.key = "batch-1pc-" + std::to_string(i);
+    const uint64_t start = 500 + static_cast<uint64_t>(i) * 2;
+    cmd.value = encode_onepc_value(start, start + 1, static_cast<uint8_t>(MvccOp::kPut), cmd.key,
+                                   "ov" + std::to_string(i));
+    LogEntry e;
+    e.index = 3000 + static_cast<uint64_t>(i);
+    e.term = 1;
+    e.data = encode_command(cmd);
+    ents.push_back(std::move(e));
+  }
+  node_->on_apply_entries(0, ents);
+
+  for (int i = 0; i < 6; ++i) {
+    auto gr = facade_->get(0, "batch-put-" + std::to_string(i), false);
+    ASSERT_TRUE(gr.found) << i;
+    EXPECT_EQ(gr.value, "pv" + std::to_string(i));
+  }
+  auto* eng = node_->engines().get(0);
+  ASSERT_NE(eng, nullptr);
+  MvccStore mvcc(*eng);
+  for (int i = 0; i < 4; ++i) {
+    bool locked = false;
+    auto vis = mvcc.txn_get("batch-1pc-" + std::to_string(i), ~uint64_t{0}, &locked);
+    ASSERT_TRUE(vis.has_value()) << i;
+    EXPECT_EQ(*vis, "ov" + std::to_string(i));
+    EXPECT_FALSE(locked);
+  }
+}
+
 TEST_F(StoreFacadeTest, PlainCasCreateOnlyAndMatch) {
   Command create;
   create.op = CmdOp::kPut;
@@ -135,6 +187,35 @@ TEST_F(StoreFacadeTest, PlainCasCreateOnlyAndMatch) {
   ASSERT_FALSE(stale.ok);
   EXPECT_TRUE(stale.cas_failed);
   EXPECT_EQ(stale.current_revision, c2.revision);
+}
+
+TEST_F(StoreFacadeTest, OnePcPutGetAndCas) {
+  auto r = facade_->one_pc(0, "1pc-k", 10, 11, "1pc-k", 0, "v1", 0, false, 0);
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_EQ(r.revision, 11u);
+  auto tg = facade_->txn_get(0, "1pc-k", ~uint64_t{0}, true);
+  ASSERT_TRUE(tg.found);
+  EXPECT_EQ(tg.value, "v1");
+  EXPECT_EQ(tg.revision, 11u);
+  // 无残留 lock
+  auto lk = facade_->get_lock(0, "1pc-k");
+  EXPECT_FALSE(lk.found);
+
+  auto create = facade_->one_pc(0, "1pc-new", 20, 21, "1pc-new", 0, "x", 0, true, 0);
+  ASSERT_TRUE(create.ok) << create.error;
+  auto stale = facade_->one_pc(0, "1pc-k", 30, 31, "1pc-k", 0, "v2", 0, true, 10);
+  ASSERT_FALSE(stale.ok);
+  EXPECT_TRUE(stale.cas_failed);
+  auto ok = facade_->one_pc(0, "1pc-k", 30, 31, "1pc-k", 0, "v2", 0, true, 11);
+  ASSERT_TRUE(ok.ok) << ok.error;
+  auto tg2 = facade_->txn_get(0, "1pc-k", ~uint64_t{0}, true);
+  ASSERT_TRUE(tg2.found);
+  EXPECT_EQ(tg2.value, "v2");
+
+  auto del = facade_->one_pc(0, "1pc-k", 40, 41, "1pc-k", 1, {}, 0, false, 0);
+  ASSERT_TRUE(del.ok) << del.error;
+  auto gone = facade_->txn_get(0, "1pc-k", ~uint64_t{0}, true);
+  EXPECT_FALSE(gone.found);
 }
 
 TEST_F(StoreFacadeTest, MvccCasViaPrewrite) {

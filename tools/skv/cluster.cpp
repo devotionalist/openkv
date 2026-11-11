@@ -190,15 +190,18 @@ int cmd_start(const std::string& root, bool fresh) {
   auto bin = fs::path(root) / "build";
   auto meta = bin / "meta" / "meta_server";
   auto stor = bin / "storage" / "storage_node";
-  auto gw = run_dir(root) / "compute-gateway";
+  auto gw = run_dir(root) / "gateway_node";
+  if (!fs::exists(gw)) gw = bin / "compute" / "gateway_node";
+  if (!fs::exists(gw)) gw = run_dir(root) / "compute-gateway";
   if (!fs::exists(meta) || !fs::exists(stor)) {
     std::cerr << "missing binaries; build first:\n"
-              << "  cmake --build build -j --target meta_server storage_node\n";
+              << "  cmake --build build -j --target meta_server storage_node gateway_node\n";
     return 1;
   }
   if (!fs::exists(gw)) {
     std::cerr << "missing gateway; build:\n"
-              << "  (cd client/go && go build -o " << gw << " ./cmd/compute-gateway)\n";
+              << "  cmake --build build -j --target gateway_node\n"
+              << "  cp build/compute/gateway_node " << (run_dir(root) / "gateway_node") << "\n";
     return 1;
   }
 
@@ -278,7 +281,9 @@ int cmd_restart(const std::string& root, const std::string& name) {
     auto stor = bin / "storage" / "storage_node";
     spawn_logged(root, name, {stor.string(), (fs::path(root) / c->conf).string()});
   } else if (name == "gateway") {
-    auto gw = run_dir(root) / "compute-gateway";
+    auto gw = run_dir(root) / "gateway_node";
+    if (!fs::exists(gw)) gw = bin / "compute" / "gateway_node";
+    if (!fs::exists(gw)) gw = run_dir(root) / "compute-gateway";
     spawn_logged(root, "gateway",
                  {gw.string(), "-listen", "0.0.0.0:19000", "-storages",
                   "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"

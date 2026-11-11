@@ -164,7 +164,7 @@ Inflight 类名：`storage/include/openkv/storage/inflight_gate.hpp`。
 | `splitting` / `epoch_not_match` | — | 刷路由 / bump epoch |
 | `write_conflict` | — | Put 换 TSO 重试 |
 
-锚点：`client/go/internal/storagetcp/client.go` · `compute-gateway/{main,txn,ds}.go` · `route/range.go`。
+锚点：`compute/src/store_client.cpp` · `compute/src/gateway_{server,txn,ds}.cpp` · `compute/src/meta_client.cpp`。
 
 C++ 遗留 stub：`no_route`、`stub_transport`（`compute/`）。
 

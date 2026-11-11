@@ -86,10 +86,8 @@ bool WatchLog::decode_payload(std::string_view payload, bool* deleted, std::stri
   return true;
 }
 
-void WatchLog::append(KvEngine& eng, const WatchRecord& rec, size_t capacity) {
+void WatchLog::trim(KvEngine& eng, size_t capacity) {
   if (capacity == 0) capacity = kDefaultCapacity;
-  eng.put(make_key(rec.revision), encode_payload(rec.deleted, rec.key, rec.value), rec.revision);
-
   std::vector<std::string> keys;
   eng.scan_prefix(kWatchLogPrefix, [&](std::string_view key, const KvRecord&) {
     keys.emplace_back(key);
@@ -100,6 +98,11 @@ void WatchLog::append(KvEngine& eng, const WatchRecord& rec, size_t capacity) {
   for (size_t i = 0; i < excess; ++i) {
     eng.del(keys[i], 0);
   }
+}
+
+void WatchLog::append(KvEngine& eng, const WatchRecord& rec, size_t capacity) {
+  eng.put(make_key(rec.revision), encode_payload(rec.deleted, rec.key, rec.value), rec.revision);
+  trim(eng, capacity);
 }
 
 std::vector<WatchRecord> WatchLog::poll(const KvEngine& eng, uint32_t region_id, uint64_t since,

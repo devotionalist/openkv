@@ -1,78 +1,151 @@
-# OpenKV 处理流程图索引
+# OpenKV 流程图（flows）
 
-每个流程一份独立 Markdown（内含 Mermaid）。与当前实现对齐：**Go Gateway + Meta/Storage gRPC + Range Region + Multi-Raft RF=3**。
+与当前实现对齐：**C++ `gateway_node` + Meta/Storage gRPC + Range Region + Multi-Raft RF=3**。
 
-上级目录（默认英文）：[docs/en/](../en/README.md) · [中文索引](../zh/README.md) · 网络：[networking](../en/networking.md) / [NETWORKING.md](../NETWORKING.md)
-
----
-
-## A. 读写与数据结构
-
-| 流程 | 文件 |
-|------|------|
-| 写入 Put | [01-write-put.md](01-write-put.md) |
-| 读取 Get | [02-read-get.md](02-read-get.md) |
-| not_leader 重定向 | [08-not-leader-redirect.md](08-not-leader-redirect.md) |
-| Watch | [11-watch.md](11-watch.md) |
-| Hash / Set / List / ZSet | [12-data-structures.md](12-data-structures.md) · [DATA_STRUCTURES.md](../architecture/DATA_STRUCTURES.md) |
-| 版本 CAS | [13-version-cas.md](13-version-cas.md) |
-| KV TTL（TiKV 风格） | [14-kv-ttl.md](14-kv-ttl.md) |
-| 多语言客户端（独立仓） | [15-multi-client-sdk.md](15-multi-client-sdk.md) · `openkv-client-{go,rust,java,typescript}` |
-| Scan / ListPrefix（无旁路索引） | [16-scan-list-prefix.md](16-scan-list-prefix.md) |
+上级入口：[docs/en/](../en/README.md) · [中文索引](../zh/README.md) · 网络 [NETWORKING.md](../NETWORKING.md) · 架构 [ARCHITECTURE.md](../architecture/ARCHITECTURE.md)
 
 ---
 
-## B. Raft / 启动 / 故障
+## 怎么读
 
-**设计总览（两面 HA、故障域、验收）：** [DATA_HA.md](../architecture/DATA_HA.md) · 演练手册：[FAULT_DRILL.md](../ops/FAULT_DRILL.md)
+| 你想… | 从这里开始 |
+|-------|------------|
+| 一条 Put/Get 怎么走完 | [A. KV API](#a-kv-api客户端可见) → [01](01-write-put.md) / [02](02-read-get.md) |
+| 事务 / CAS / TTL / Scan / Watch / DS | [A](#a-kv-api客户端可见) 对应小节 |
+| Leader 切换、宕机恢复、Meta HA | [B. 一致性与 HA](#b-一致性--raft--ha) |
+| Split / Place / 扩缩容 | [C. Region](#c-region-生命周期与扩缩容) |
+| Gateway 内部、异步、批写、TSO | [D. 内部实现](#d-gateway-与写路径内部) |
+| Helm / 门禁 / gRPC 强制 | [E. 部署与工程](#e-部署--门禁--工程变更) |
 
-| 流程 | 文件 |
-|------|------|
-| Raft 选举 / 心跳 / 提交 | [06-raft-election-commit.md](06-raft-election-commit.md) |
-| Storage 节点启动 | [07-storage-startup.md](07-storage-startup.md) |
-| 故障恢复（WAL / AE / Snapshot） | [04-fault-recovery.md](04-fault-recovery.md) |
-| Meta HA | [05-meta-ha.md](05-meta-ha.md) |
-
----
-
-## C. Region / 扩缩容
-
-**设计总览：** [DATA_SCALE.md](../architecture/DATA_SCALE.md)（扩容）· [DATA_SCALE_IN.md](../architecture/DATA_SCALE_IN.md)（缩容 Draining→Tombstone）
-
-| 流程 | 文件 |
-|------|------|
-| Range 分裂 / 合并 | [09-range-split-merge.md](09-range-split-merge.md) |
-| Region 放置 place | [10-region-placement.md](10-region-placement.md) |
-| 扩容 / 缩容设计 | [扩容缩容设计.md](扩容缩容设计.md) |
-| Scale-out（加副本 · 抬 RF） | [03-scale-out.md](03-scale-out.md) |
-
-配套 SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_OUT_SOP.md) · [SCALE_LIVE_SOP.md](../ops/SCALE_LIVE_SOP.md)
+**建议顺序（新人）：** 01 → 02 → 08 → 06 → 07 → 09 → 18 → 22 → 23。
 
 ---
 
-## D. 工程变更 / 数据面
+## 文档约定
 
-| 流程 | 文件 |
+每篇尽量包含：
+
+1. **路径 / 角色** — Client、Gateway、Meta、Storage、Raft 谁做什么  
+2. **关键代码** — 可跳进源码的符号或路径  
+3. **流程图** — Mermaid（VS Code / GitHub / Cursor 可预览）  
+4. **边界与失败** — 错误 token、重试、不做的事  
+5. **验收** — 可执行命令；结果记入 [TEST_CASES.md](../test/TEST_CASES.md)
+
+编号文件名保持稳定（外链不改）；正文按「当前行为」写，历史变更只保留必要一句。
+
+---
+
+## 端到端鸟瞰
+
+```text
+SDK / skv / Web
+      │  gRPC kv.v1 / ds.v1  (:19000)
+      ▼
+gateway_node（无状态：路由 · TSO 批缓存 · 重试 · Watch 轮询）
+      │  gRPC Store / Admin / ExecLine
+      ▼
+StorageNode × N（Scheduler latch → RaftKV → raftstore Ready → RocksDB）
+      ▲
+      │  HEARTBEAT / SPLIT / PLACE / GET_ROUTE / GET_TS …
+      ▼
+Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
+```
+
+短 Put/Delete：**本地 `alloc_ts(2)` → Storage `ONEPC`（1 次 Propose）**。  
+多 key Txn：**Prewrite → Commit**。线性读：**TSO + Leader `TXN_GET`**。
+
+组件对照：[COMPONENT_MAP.md](../architecture/COMPONENT_MAP.md)。
+
+---
+
+## A. KV API（客户端可见）
+
+| 流程 | 文件 | 要点 |
+|------|------|------|
+| 写入 Put / Delete | [01-write-put.md](01-write-put.md) | Locate → ONEPC → 多数派 → apply → ProposalQueue |
+| 读取 Get | [02-read-get.md](02-read-get.md) | 线性一致 vs 副本读；无 ReadIndex |
+| not_leader 重定向 | [08-not-leader-redirect.md](08-not-leader-redirect.md) | `rememberLeader` / `tryOrder` |
+| Watch | [11-watch.md](11-watch.md) | Gateway 轮询 `WATCH_POLL`；revision=apply index |
+| Hash / Set / List / ZSet | [12-data-structures.md](12-data-structures.md) | MetaKey blob RMW；总览 [DATA_STRUCTURES](../architecture/DATA_STRUCTURES.md) |
+| 版本 CAS | [13-version-cas.md](13-version-cas.md) | apply 内校验；MVCC commit_ts vs plain revision |
+| KV TTL | [14-kv-ttl.md](14-kv-ttl.md) | `expire_at_ms`；读过滤 + TTL Checker |
+| Scan / ListPrefix | [16-scan-list-prefix.md](16-scan-list-prefix.md) | 跨 Region `TXN_SCAN`；无旁路索引 |
+| 多语言 SDK | [15-multi-client-sdk.md](15-multi-client-sdk.md) | 独立仓 `openkv-client-{go,rust,java,typescript}` |
+
+错误码总表：[ERROR_CODES.md](../architecture/ERROR_CODES.md)。
+
+---
+
+## B. 一致性 / Raft / HA
+
+总览：[DATA_HA.md](../architecture/DATA_HA.md) · 演练：[FAULT_DRILL.md](../ops/FAULT_DRILL.md)
+
+| 流程 | 文件 | 要点 |
+|------|------|------|
+| Raft 选举 / 心跳 / 提交 | [06-raft-election-commit.md](06-raft-election-commit.md) | `maybe_commit`、选票、AE/SNAP |
+| Storage 启动 | [07-storage-startup.md](07-storage-startup.md) | MultiRaft 工厂、WAL、tick、gRPC listen |
+| 故障恢复 | [04-fault-recovery.md](04-fault-recovery.md) | load WAL → AE 追赶 / InstallSnapshot |
+| Meta HA | [05-meta-ha.md](05-meta-ha.md) | Meta×3、管控命令、TSO |
+
+---
+
+## C. Region 生命周期与扩缩容
+
+总览：[DATA_SCALE.md](../architecture/DATA_SCALE.md) · [DATA_SCALE_IN.md](../architecture/DATA_SCALE_IN.md) · 分片 [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md)
+
+| 流程 | 文件 | 要点 |
+|------|------|------|
+| Split / Merge | [09-range-split-merge.md](09-range-split-merge.md) | PREPARE→SPLIT；同机不搬 KV |
+| Place | [10-region-placement.md](10-region-placement.md) | Learner→追赶→Promote→踢旧副本 |
+| 扩缩容设计 | [扩容缩容设计.md](扩容缩容设计.md) | join / Balance Replace / Draining |
+| Scale-out（加副本） | [03-scale-out.md](03-scale-out.md) | RF↑；默认扩容请看 DATA_SCALE |
+
+SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_OUT_SOP.md) · [SCALE_LIVE_SOP.md](../ops/SCALE_LIVE_SOP.md)
+
+---
+
+## D. Gateway 与写路径内部
+
+实现细节与线程/批处理模型；**对外 API 见 A**。
+
+| 主题 | 文件 | 要点 |
+|------|------|------|
+| C++ Gateway | [18-cpp-gateway.md](18-cpp-gateway.md) | `gateway_node` 组件、端口、启动参数 |
+| TSO 热路径 | [16-gateway-tso-perf.md](16-gateway-tso-perf.md) | 批缓存；`alloc_ts(2)`；短 Put 一次 Meta 跳 |
+| 异步网络 | [21-async-network.md](21-async-network.md) | CallbackService；`propose_async` / `wait_async` |
+| 异步线程模型 | [22-async-threading-model.md](22-async-threading-model.md) | 接收线程 vs WorkPool vs apply 回调 |
+| 架构硬化 | [19-architecture-hardening.md](19-architecture-hardening.md) | CV 等 apply、latch 持到 apply、approx split、Meta CV |
+| 写路径批处理 | [23-write-path-batching.md](23-write-path-batching.md) | Ready group commit、apply WriteBatch、多 Region |
+| 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、ONEPC WriteBatch、BatchSystem CV |
+| 全接口压测 | [17-gateway-api-bench.md](17-gateway-api-bench.md) | `examples/bench`；基线记 TEST_CASES |
+
+生产写路径总图：[COMPONENT_MAP §3](../architecture/COMPONENT_MAP.md) · [MULTI_RAFT_PRODUCTION](../production/MULTI_RAFT_PRODUCTION.md)
+
+---
+
+## E. 部署 / 门禁 / 工程变更
+
+| 主题 | 文件 |
 |------|------|
-| gRPC 强制 | [GRPC_MANDATORY.md](GRPC_MANDATORY.md) |
+| gRPC 强制（拆除行协议双栈） | [GRPC_MANDATORY.md](GRPC_MANDATORY.md) |
 | 数据面硬化（Cop / Snap / 转主） | [DATA_PLANE_HARDENING.md](DATA_PLANE_HARDENING.md) |
 | 集成覆盖扩展 | [IT_COVERAGE_EXPANSION.md](IT_COVERAGE_EXPANSION.md) |
+| Helm HA | [K8S_HELM.md](K8S_HELM.md) |
+| K8s 加节点 vs 运维页加入 | [K8S_SCALE.md](K8S_SCALE.md) |
 
----
-
-## E. Kubernetes
-
-| 流程 | 文件 |
-|------|------|
-| Helm HA 部署 | [K8S_HELM.md](K8S_HELM.md) |
-| 加节点 vs 运维页加入 | [K8S_SCALE.md](K8S_SCALE.md) |
-
-公开步骤：[docs/USER_GUIDE.md](../USER_GUIDE.md) §3–§4。
+公开步骤：[USER_GUIDE.md](../USER_GUIDE.md) §3–§4。
 
 ---
 
 ## 相关总览
 
-[ARCHITECTURE.md](../architecture/ARCHITECTURE.md) · [COMPONENT_MAP.md](../architecture/COMPONENT_MAP.md) · [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md) · [FAULT_DRILL.md](../ops/FAULT_DRILL.md) · [INTEGRATION_TEST.md](../test/INTEGRATION_TEST.md) · [MULTI_RAFT_PRODUCTION.md](../production/MULTI_RAFT_PRODUCTION.md)
-
-> VS Code / GitHub / Cursor 可直接预览 Mermaid。
+| 文档 | 用途 |
+|------|------|
+| [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) | 存算分离总览 |
+| [COMPONENT_MAP.md](../architecture/COMPONENT_MAP.md) | 组件与写路径 |
+| [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md) | Region 有序区间 |
+| [NETWORKING.md](../NETWORKING.md) | gRPC / 端口 |
+| [FAULT_DRILL.md](../ops/FAULT_DRILL.md) | 故障演练 |
+| [INTEGRATION_TEST.md](../test/INTEGRATION_TEST.md) | 集成场景编号 |
+| [TEST_CASES.md](../test/TEST_CASES.md) | 用例与执行记录 |
+| [BACKLOG.md](../BACKLOG.md) | 待办 |

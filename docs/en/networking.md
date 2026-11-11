@@ -16,7 +16,7 @@ How OpenKV talks on the wire today, and what the optional Seastar switch does. F
 Client / skv / Web
         │  gRPC  :19000
         ▼
-Go compute-gateway          KVService / DSService
+C++ gateway_node            KVService / DSService
         │  gRPC
    ┌────┴────┐
    ▼         ▼

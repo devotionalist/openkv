@@ -136,12 +136,14 @@ else
     echo "==> reuse $BUILD_DIR (skip cmake configure; FORCE_CMAKE=1 to redo)"
   fi
   echo "==> cmake --build -j${BUILD_JOBS} (incremental)"
-  cmake --build "$BUILD_DIR" -j"${BUILD_JOBS}" --target meta_server storage_node
+  cmake --build "$BUILD_DIR" -j"${BUILD_JOBS}" --target meta_server storage_node gateway_node
 fi
 
-echo "==> build Go compute-gateway + client"
-(cd "$ROOT/client/go" && go build -o "$RUN_DIR/compute-gateway" ./cmd/compute-gateway \
-  && go build -o "$RUN_DIR/kv-example" ./examples/basic)
+echo "==> build C++ gateway_node + Go client examples"
+cmake --build "$BUILD_DIR" -j"${BUILD_JOBS}" --target gateway_node
+cp -f "$BUILD_DIR/compute/gateway_node" "$RUN_DIR/gateway_node"
+ln -sfn "$RUN_DIR/gateway_node" "$RUN_DIR/compute-gateway"
+(cd "$ROOT/client/go" && go build -o "$RUN_DIR/kv-example" ./examples/basic)
 
 echo "==> start cluster (daemon)"
 # 本地 RocksDB/Raft 损坏时：SKV_FRESH=1 ./scripts/start-cluster.sh

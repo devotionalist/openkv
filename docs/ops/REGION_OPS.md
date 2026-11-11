@@ -30,7 +30,7 @@ flowchart LR
 **入口**
 
 - 手动：`skv split <region_id> <split_key>`
-- 自动：Storage Leader tick，`SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES`（默认 `0` = 关）
+- 自动：Storage Leader tick，`SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES`（默认 `256000` / `96MiB`；`0` = 关）
 
 **含义**：例如 `split 0 m` → 左 `[…, m)` 仍是 region `0`，右 `[m, …)` 新建 region（如 `1`）。
 
@@ -179,4 +179,4 @@ DESTROY 历史问题与修复见 [flows/10-region-placement.md](../flows/10-regi
 |------|---------|
 | `SPLIT_REGION` · `MERGE_REGIONS` · `PLACE_REGION` · `SUGGEST_PLACE` · `FIND_MERGE_RIGHT` · `GET_ROUTE` · `LOCATE` · `LIST_NODES` | `ADMIN_PREPARE_SPLIT` · `ADMIN_SPLIT` · `ADMIN_MERGE` · `ADMIN_ENSURE_REGION` · `ADMIN_ADD_LEARNER` · `ADMIN_PEER_PROGRESS` · `ADMIN_PROMOTE` · `ADMIN_TRANSFER_LEADER` · `ADMIN_CAMPAIGN` · `ADMIN_REMOVE_PEER` · `ADMIN_DESTROY_REGION` · `ADMIN_PLACE_REGION` |
 
-环境变量（Storage 进程）：`SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES` / `SKV_MERGE_KEYS`。
+环境变量（Storage 进程）：`SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES`（默认 `256000` / `96MiB`）/ `SKV_MERGE_KEYS`；重启后 `REGISTER`→`GET_ROUTE` ENSURE 本机副本。

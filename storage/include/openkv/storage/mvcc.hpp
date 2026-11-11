@@ -118,6 +118,9 @@ class MvccStore {
   void put_data(std::string_view user, uint64_t start_ts, std::string_view value, uint64_t rev,
                 int64_t expire_at_ms = 0);
   void put_write(std::string_view user, uint64_t commit_ts, const WriteInfo& wi, uint64_t rev);
+  /// ONEPC：data+write 一次 WriteBatch（可无 data，仅写 delete tombstone）。
+  bool put_onepc(std::string_view user, uint64_t start_ts, uint64_t commit_ts, MvccOp op,
+                 std::string_view value, uint64_t rev, int64_t expire_at_ms = 0);
   void clear_lock(std::string_view user, uint64_t rev);
   void clear_data(std::string_view user, uint64_t start_ts, uint64_t rev);
   void clear_write(std::string_view user, uint64_t commit_ts, uint64_t rev);

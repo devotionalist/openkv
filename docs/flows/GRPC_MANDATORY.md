@@ -15,7 +15,7 @@
 
 - CMake：**强制**拉取/链接 gRPC（系统包优先，否则 FetchContent）；旧 cache `OFF` 自动抬升为 ON
 - Meta / Storage：**只**在主端口起 gRPC；`ExecLineHandler` 作进程内 ExecLine 行协议解析（不 listen）
-- Go Gateway / Web / `storagetcp` / `line-rpc` / `skv`：**只**走 gRPC ExecLine
+- C++ Gateway / Web / `skv`：**只**走 gRPC ExecLine
 - 删除环境变量 `SKV_LEGACY_TCP` 与相关自动导出逻辑
 
 ## 废代码清理（随强制 gRPC）

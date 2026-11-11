@@ -45,7 +45,7 @@ flowchart LR
 | balance / place **迁入** | Scheduler **迁出**（同 Place 算子） |
 | Helm +1 在 join **之前** | Helm -1 在 remove-tombstone **之后** |
 
-对齐业界 `pd-ctl store delete`：先下线再迁光，最后才允许从拓扑抹掉。
+顺序：先下线再迁光，最后才允许从拓扑抹掉。
 
 ---
 

@@ -90,9 +90,11 @@ cleanup_load() {
 trap cleanup_load EXIT
 
 log "==> build"
-test -x build/meta/meta_server || cmake --build build -j --target meta_server storage_node
-(cd client/go && go build -o "$RUN/compute-gateway" ./cmd/compute-gateway \
-  && go build -o "$RUN/kv-chaos" ./examples/chaos \
+test -x build/meta/meta_server || cmake --build build -j --target meta_server storage_node gateway_node
+cmake --build build -j --target gateway_node
+cp -f build/compute/gateway_node "$RUN/gateway_node"
+ln -sfn "$RUN/gateway_node" "$RUN/compute-gateway"
+(cd client/go && go build -o "$RUN/kv-chaos" ./examples/chaos \
   && go build -o "$RUN/kv-example" ./examples/basic \
   && go build -o "$RUN/kv-e2e" ./examples/e2e \
   && go build -o "$RUN/kv-txn" ./examples/txn \

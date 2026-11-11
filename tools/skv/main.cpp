@@ -151,6 +151,17 @@ std::vector<std::string> region_addrs(uint32_t rid) {
     }
   } catch (...) {
   }
+  // k3s / 集群 DNS 在宿主机不可达：若设置了 SKV_STORAGES（常为 port-forward），改走该列表。
+  if (!out.empty() && std::getenv("SKV_STORAGES") != nullptr) {
+    bool need_rewrite = false;
+    for (const auto& a : out) {
+      if (a.find(".svc.") != std::string::npos || a.find("storage-") == 0) {
+        need_rewrite = true;
+        break;
+      }
+    }
+    if (need_rewrite) return storage_addrs();
+  }
   return out;
 }
 

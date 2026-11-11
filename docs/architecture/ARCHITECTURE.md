@@ -3,24 +3,25 @@
 **文档总目录（默认英文）：** [English](../en/README.md) · [中文](../zh/README.md) · 本文英文摘要：[architecture](../en/architecture.md)
 
 处理流程图：[flows/README.md](../flows/README.md) · 运维 CLI：[SKV_CLI.md](../ops/SKV_CLI.md)  
-组件对照：[COMPONENT_MAP.md](COMPONENT_MAP.md) · **高可用**：[DATA_HA.md](DATA_HA.md) · **扩容**：[DATA_SCALE.md](DATA_SCALE.md) · **缩容**：[DATA_SCALE_IN.md](DATA_SCALE_IN.md) · **错误码**：[ERROR_CODES.md](ERROR_CODES.md) · 分片：[RANGE_SHARDING.md](RANGE_SHARDING.md) · [SHARDING_STRATEGIES.md](SHARDING_STRATEGIES.md)  
-事务调研：[TRANSACTION_SURVEY.md](TRANSACTION_SURVEY.md) · 待做：[BACKLOG.md](../BACKLOG.md)
+组件：[COMPONENT_MAP.md](COMPONENT_MAP.md) · **高可用**：[DATA_HA.md](DATA_HA.md) · **扩容**：[DATA_SCALE.md](DATA_SCALE.md) · **缩容**：[DATA_SCALE_IN.md](DATA_SCALE_IN.md) · **错误码**：[ERROR_CODES.md](ERROR_CODES.md) · 分片：[RANGE_SHARDING.md](RANGE_SHARDING.md)  
+写路径批处理：[flows/23-write-path-batching.md](../flows/23-write-path-batching.md) · 待做：[BACKLOG.md](../BACKLOG.md)
 
 ## 设计目标
 
 | 目标 | 方案 |
 |------|------|
 | 网络协议 | **全链路强制 gRPC**（见 [NETWORKING.md](../NETWORKING.md)、[flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md)） |
+| 异步网络 | gRPC **Callback 接收线程** + **WorkPool**；热路径 `propose_async` / async stub；Raft Transport worker（见 [flows/22-async-threading-model.md](../flows/22-async-threading-model.md)） |
 | 高性能异步 IO | Seastar **可选**（默认 OFF；业务路径未接入，见 [SEASTAR_NET.md](SEASTAR_NET.md)） |
 | 持久化存储 | RocksDB（单 Store 一份 KV；Region 靠 KeyRange） |
 | 强一致 | Multi-Raft（每 Region 一个 Raft Group，默认 RF=3）；生产要求见 [MULTI_RAFT_PRODUCTION.md](../production/MULTI_RAFT_PRODUCTION.md) |
-| 对外 API | gRPC → Go Compute Gateway（`KVService` + `DSService`，见 [DATA_STRUCTURES.md](DATA_STRUCTURES.md)） |
+| 对外 API | gRPC → C++ Compute Gateway（`KVService` + `DSService`，见 [DATA_STRUCTURES.md](DATA_STRUCTURES.md)） |
 | 存算分离 | Gateway 无状态；Storage 只负责复制与落盘 |
 | 在线伸缩 | Region 分裂 / 合并 + Raft 成员变更 + 数据迁移 |
 
 ## 逻辑架构（当前实现）
 
-本地默认可运行形态：**Go Gateway + C++ Meta/Storage（gRPC）+ RocksDB**；Seastar 默认不编。
+本地默认可运行形态：**C++ Gateway + C++ Meta/Storage（gRPC）+ RocksDB**；Seastar 默认不编。
 
 ```
 ┌─────────────┐
@@ -29,7 +30,7 @@
        │ gRPC KV + DS API  (:19000)
        ▼
 ┌──────────────────────────────────────────┐
-│     Compute Gateway (Go, 无状态)          │
+│     Compute Gateway (C++ gateway_node)   │
 │  Range 路由缓存 ← Meta GET_ROUTE          │
 │  Leader hint + not_leader 重试            │
 └───────┬──────────────────────────────────┘
@@ -37,7 +38,7 @@
         ▼
 ┌──────────────────────────────────────────┐
 │     Storage ×6 (:9100–9105)               │
-│  每 Region 一组 Raft (RF=3) + RocksDB     │
+│  每 Region 一组 Raft (RF=3)；Store 级共享 RocksDB │
 │  Region 可 place 到任意 RF 个节点子集      │
 └──────────────────────────────────────────┘
         ▲
@@ -75,7 +76,7 @@
 
 | 层 | 实现 | 职责 | 状态 |
 |----|------|------|------|
-| Compute | Go `compute-gateway` | 路由、重试、Leader 缓存；（鉴权/限流可扩展） | 无本地数据 |
+| Compute | C++ `gateway_node` | 路由、重试、Leader 缓存、TSO 批；（鉴权/限流可扩展） | 无本地数据 |
 | Storage | C++ `storage_node` | Multi-Raft、RocksDB、WAL、快照、ADMIN 迁移 | 有状态 |
 | Meta | C++ `meta_server` ×3 | 拓扑、Region 表、SPLIT/MERGE/LOCATE | Raft 3 副本 HA |
 
@@ -93,11 +94,11 @@ Compute 重启不影响数据；Storage 按 Raft 冗余；Meta 挂 1 台数据�
 
 **Region 分裂 / 合并（切区间，非腾盘）：**
 
-1. 手动 `skv split/merge`，或 `SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES` 自动分裂（默认关）
+1. 手动 `skv split/merge`，或 `SKV_SPLIT_KEYS` / `SKV_SPLIT_BYTES` 自动分裂（默认开；`0` 关）
 2. Meta 更新 Range 表 → `ADMIN_PREPARE_SPLIT` / `ADMIN_SPLIT`（同机 **不搬 KV**）
 3. Gateway 拉新 `GET_ROUTE`；跨机打散另走 `place` / `balance`
 
-分裂前 **PREPARE 写暂停**；事务为 Percolator。见 [TRANSACTION_SURVEY.md](TRANSACTION_SURVEY.md)、[flows/09-range-split-merge.md](../flows/09-range-split-merge.md)。
+分裂前 **PREPARE 写暂停**；事务为 MVCC Prewrite/Commit。见 [flows/09-range-split-merge.md](../flows/09-range-split-merge.md)、[flows/13-version-cas.md](../flows/13-version-cas.md)。
 
 ## 目录结构
 
@@ -106,10 +107,9 @@ proto/           gRPC 协议
 common/          配置、Region、日志等公共类型
 raft/            轻量 Multi-Raft
 storage/         RocksDB + Storage Node（gRPC；raftstore Ready）
-compute/         C++ 路由库占位（生产 Gateway 为 Go）
+compute/         C++ Gateway（gateway_node：KVService + DSService）
 meta/            集群状态 + Meta Raft + Scaler（gRPC）
-client/go/       compute-gateway + legacy Go SDK path
-                 对外 SDK 见同级仓 openkv-client-{go,rust,java,typescript}
+client/go/       本仓 Go 工具（examples/e2e + Meta·Storage stubs；对外 SDK → openkv-client-*）
 web/             独立 Web 管控模块（HTTP 运维台 → gRPC）
 tools/skv/       C++ 运维 CLI
 docs/            全部文档（架构 / 运维 / 测试 / 流程图）
@@ -121,5 +121,5 @@ deploy/          Docker Compose + Helm chart（k8s HA，见 flows/K8S_HELM.md）
 ## 技术栈
 
 - **C++20**：Meta / Storage / Raft / skv；**gRPC C++ 强制**；RocksDB（FetchContent）；Seastar 可选未接入业务
-- **Go 1.22+**：`client/go` SDK、`compute-gateway`（对外 gRPC）
+- **Go 1.22+**：独立 `openkv-client-go`；本仓 `client/go` 仅 examples / 工具（网关为 C++）
 - 自研轻量 Multi-Raft + raftstore Ready 外提

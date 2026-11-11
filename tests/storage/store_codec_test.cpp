@@ -26,6 +26,21 @@ using openkv::storage::Command;
 using openkv::storage::decode_command;
 using openkv::storage::encode_command;
 
+TEST(StoreCodecTest, OnePcValueRoundTrip) {
+  using openkv::storage::decode_onepc_value;
+  using openkv::storage::encode_onepc_value;
+  auto bytes = encode_onepc_value(100, 200, 0, "pri", "val");
+  uint64_t start = 0, commit = 0;
+  uint8_t op = 9;
+  std::string primary, value;
+  ASSERT_TRUE(decode_onepc_value(bytes, &start, &commit, &op, &primary, &value));
+  EXPECT_EQ(start, 100u);
+  EXPECT_EQ(commit, 200u);
+  EXPECT_EQ(op, 0);
+  EXPECT_EQ(primary, "pri");
+  EXPECT_EQ(value, "val");
+}
+
 TEST(StoreCodecTest, PutRoundTrip) {
   Command in{CmdOp::kPut, "hello", "world", 1234};
   auto bytes = encode_command(in);

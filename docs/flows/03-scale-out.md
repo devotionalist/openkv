@@ -21,13 +21,15 @@ flowchart TD
   I --> J[kCompleted]
 ```
 
-## TCP
+## ExecLine / skv
 
 | 命令 | 说明 |
 |------|------|
 | `SCALE_OUT <node_id> [rid,rid…]` | 启动扩容；regions 空=全部 |
 | `GET_SCALE <task_id>` | 查进度 |
 | `LIST_SCALE` | 列出任务 |
+
+经 Meta gRPC ExecLine；运维也可用 `skv` 封装（见 [SCALE_OUT_SOP](../ops/SCALE_OUT_SOP.md)）。
 
 新节点须先 `REGISTER` → `join`（Joining→Active），且非 Offline/Draining/Tombstone。
 

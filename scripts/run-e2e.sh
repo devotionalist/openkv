@@ -43,11 +43,12 @@ cmake -B "$BUILD_DIR" \
   -DOPENKV_USE_SEASTAR=OFF -DOPENKV_USE_GRPC="${OPENKV_USE_GRPC:-ON}" \
   -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib \
   >/dev/null
-cmake --build "$BUILD_DIR" -j --target meta_server storage_node
+cmake --build "$BUILD_DIR" -j --target meta_server storage_node gateway_node
+cp -f "$BUILD_DIR/compute/gateway_node" "$RUN_DIR/gateway_node"
+ln -sfn "$RUN_DIR/gateway_node" "$RUN_DIR/compute-gateway"
 
-echo "==> build Go"
-(cd "$ROOT/client/go" && go build -o "$RUN_DIR/compute-gateway" ./cmd/compute-gateway \
-  && go build -o "$RUN_DIR/kv-example" ./examples/basic \
+echo "==> build Go client examples"
+(cd "$ROOT/client/go" && go build -o "$RUN_DIR/kv-example" ./examples/basic \
   && go build -o "$RUN_DIR/kv-e2e" ./examples/e2e)
 
 cleanup || true
@@ -88,8 +89,8 @@ wait_port 127.0.0.1 9100 storage-0
 wait_port 127.0.0.1 9101 storage-1
 wait_port 127.0.0.1 9102 storage-2
 
-echo "==> start compute-gateway"
-"$RUN_DIR/compute-gateway" \
+echo "==> start gateway_node"
+"$RUN_DIR/gateway_node" \
   -listen "0.0.0.0:${GATEWAY_PORT}" \
   -storages 127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102 \
   -metas 127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502 \

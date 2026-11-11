@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace openkv::storage {
@@ -36,6 +37,11 @@ class ExecLineHandler {
 
   /// gRPC AdminService.ExecLine 入口。
   std::string process_line(const std::string& line, AdminSession* sess = nullptr);
+
+  /// PUT/DEL/ONEPC 热路径：propose_async / one_pc_async，完成后 cb；返回 true。
+  /// 其它行返回 false（调用方 post WorkPool 再 process_line）。
+  bool try_process_line_async(const std::string& line, AdminSession* sess,
+                              std::function<void(std::string)> cb);
 
   InflightGate& inflight_gate() { return gate_; }
 

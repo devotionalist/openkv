@@ -15,17 +15,23 @@
 // @file raftstore_test.cpp
 // Store / Router / Hibernate / Apply 队列 QoS 烟雾。
 
+#include "openkv/raft/file_raft_engine.hpp"
 #include "openkv/raftstore/snap_worker.hpp"
 #include "openkv/raftstore/store.hpp"
 
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <thread>
 
+using openkv::raft::FileRaftEngine;
 using openkv::raft::RaftNode;
+using openkv::raft::Ready;
+using openkv::raft::SyncMode;
 using openkv::raftstore::SnapTask;
 using openkv::raftstore::SnapWorker;
 using openkv::raftstore::Store;
@@ -71,6 +77,76 @@ TEST(RaftstoreTest, HibernateSkipsTickUntilWake) {
   EXPECT_FALSE(n.is_leader());
   store.mark_hot(9);
   store.schedule_tick();
+}
+
+TEST(RaftstoreTest, DriveReadyCoalescesPersist) {
+  // 同批多个 drive_ready 应合并为更少 persist；persist 睡眠期间 propose 可继续入队。
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() /
+                   ("okv_ready_coalesce_" +
+                    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(dir);
+  auto engine = std::make_shared<FileRaftEngine>(dir.string(), SyncMode::kNone);
+
+  std::atomic<int> persists{0};
+  std::atomic<size_t> max_entries{0};
+
+  Store::Options opts;
+  opts.hibernate_after_ms = 0;
+  opts.batch.raft_workers = 1;
+  opts.batch.apply_workers = 1;
+  opts.batch.poll_timeout_ms = 20;
+  opts.batch.batch_size = 64;
+
+  Store store(opts, [engine](uint32_t shard) {
+    RaftNode::Options o;
+    o.shard_id = shard;
+    o.self_id = "n0";
+    o.peers = {{"n0", "a", false}};
+    o.election_timeout_ms = 80;
+    o.heartbeat_ms = 30;
+    o.external_io = true;
+    o.raft_engine = engine;
+    o.raft_group_id = shard;
+    o.persist_sync = SyncMode::kNone;
+    o.check_quorum = false;
+    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {}, [](auto&&...) {});
+  });
+  store.set_persist_fn([&](uint32_t rid, const Ready& rd) {
+    ++persists;
+    const auto nent = rd.entries.size();
+    if (nent > max_entries.load()) max_entries.store(nent);
+    // 模拟 fsync 占住 raft worker，让后续 Wake 堆积后合并。
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    if (auto* n = store.get(rid)) n->persist_ready(rd);
+  });
+  store.set_apply_fn([](uint32_t, uint64_t, const std::string&) {});
+  store.start();
+  auto& n = store.get_or_create(1);
+  for (int i = 0; i < 80 && !n.is_leader(); ++i) {
+    store.schedule_tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(n.is_leader());
+  persists.store(0);
+  max_entries.store(0);
+
+  constexpr int kN = 8;
+  for (int i = 0; i < kN; ++i) {
+    ASSERT_TRUE(n.propose("p" + std::to_string(i)));
+    store.drive_ready(1);
+  }
+  // 等到至少一次合并 Ready，或已刷完一段时间。
+  for (int i = 0; i < 200; ++i) {
+    if (max_entries.load() >= 2 || (persists.load() >= 1 && i > 40)) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  store.stop();
+  fs::remove_all(dir);
+
+  EXPECT_GE(persists.load(), 1);
+  EXPECT_LT(persists.load(), kN) << "group commit should coalesce Wake into fewer persists";
+  EXPECT_GE(max_entries.load(), 2u) << "at least one Ready should carry multiple entries";
 }
 
 TEST(RaftstoreTest, ApplyQosFlag) {

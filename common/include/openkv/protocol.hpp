@@ -50,6 +50,7 @@ inline constexpr std::string_view kOpGet = "GET";
 inline constexpr std::string_view kOpDel = "DEL";
 
 inline constexpr std::string_view kOpPrewrite = "PREWRITE";
+inline constexpr std::string_view kOpOnePc = "ONEPC";
 inline constexpr std::string_view kOpCommit = "COMMIT";
 inline constexpr std::string_view kOpRollback = "ROLLBACK";
 inline constexpr std::string_view kOpPessimisticLock = "PESSIMISTIC_LOCK";
@@ -138,6 +139,8 @@ inline constexpr const char* kMergeKeys = "SKV_MERGE_KEYS";
 inline constexpr const char* kTxnGc = "SKV_TXN_GC";
 inline constexpr const char* kStoreHbSec = "SKV_STORE_HB_SEC";
 inline constexpr const char* kMetaStoreTtlMs = "SKV_META_STORE_TTL_MS";
+inline constexpr const char* kRaftWorkers = "SKV_RAFT_WORKERS";
+inline constexpr const char* kApplyWorkers = "SKV_APPLY_WORKERS";
 }  // namespace env
 
 // ---------------------------------------------------------------------------

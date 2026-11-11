@@ -44,6 +44,9 @@ class Store {
 
   using LegacyFactory = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
   using ApplyFn = std::function<void(uint32_t region_id, uint64_t index, const std::string& data)>;
+  /// 同 Region 一批 committed entries（可合并 WriteBatch）；未设置则退回逐条 ApplyFn。
+  using ApplyBatchFn =
+      std::function<void(uint32_t region_id, const std::vector<raft::LogEntry>& entries)>;
   using PersistFn = std::function<void(uint32_t region_id, const raft::Ready& rd)>;
   using TransportFn =
       std::function<void(uint32_t region_id, const std::string& to, const std::string& type,
@@ -56,6 +59,7 @@ class Store {
   ~Store();
 
   void set_apply_fn(ApplyFn f) { apply_fn_ = std::move(f); }
+  void set_apply_batch_fn(ApplyBatchFn f) { apply_batch_fn_ = std::move(f); }
   void set_persist_fn(PersistFn f) { persist_fn_ = std::move(f); }
   void set_transport_fn(TransportFn f) { transport_fn_ = std::move(f); }
   void set_snap_provider(SnapProviderFn f) { snap_provider_ = std::move(f); }
@@ -66,6 +70,8 @@ class Store {
 
   /// StoreTicker：向所有 Peer 邮箱投递 Tick（替代 MultiRaft::tick_all）。
   void schedule_tick();
+  /// 仅驱动指定 Region 的 Ready（propose 后调用；批内多个请求合并为一次 persist/sync）。
+  void drive_ready(uint32_t region_id);
 
   raft::RaftNode* get(uint32_t region_id);
   std::shared_ptr<raft::RaftNode> get_shared(uint32_t region_id);
@@ -92,9 +98,12 @@ class Store {
  private:
   void on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs);
   void on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs);
-  void handle_tick(Peer& peer);
+  /// process_ready=false：只 tick，由调用方（如 on_raft_batch）在批末统一 process_ready。
+  void handle_tick(Peer& peer, bool process_ready);
+  /// 只 step / 唤醒；Ready 一律由 on_raft_batch 批末合并。
   void handle_raft_message(Peer& peer, const RaftMessage& msg);
-  std::string step_raft_message(Peer& peer, const RaftMessage& msg);
+  /// process_ready：入站同步路径在 step 成功后立刻 Ready；批处理路径传 false。
+  std::string step_raft_message(Peer& peer, const RaftMessage& msg, bool process_ready);
   void process_ready_legacy(Peer& peer);
   void maybe_hibernate_or_unload(Peer& peer);
   void wake_peer(Peer& peer);
@@ -104,6 +113,7 @@ class Store {
   Options opts_;
   LegacyFactory factory_;
   ApplyFn apply_fn_;
+  ApplyBatchFn apply_batch_fn_;
   PersistFn persist_fn_;
   TransportFn transport_fn_;
   SnapProviderFn snap_provider_;

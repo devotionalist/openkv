@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/devotionalist/openkv/client/go/ds"
-	"github.com/devotionalist/openkv/client/go/kv"
+	"github.com/devotionalist/openkv-client-go/ds"
+	"github.com/devotionalist/openkv-client-go/kv"
 )
 
 func fail(msg string, args ...any) {

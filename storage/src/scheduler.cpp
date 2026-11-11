@@ -51,6 +51,18 @@ void Latches::unlock(uint64_t token) {
 
 bool Scheduler::schedule_write(uint32_t region_id, const std::string& latch_key, std::string data,
                                uint64_t* assigned_index, std::string* error) {
+  uint64_t tok = 0;
+  if (!schedule_write_hold(region_id, latch_key, std::move(data), assigned_index, &tok, error)) {
+    return false;
+  }
+  unlock(tok);
+  return true;
+}
+
+bool Scheduler::schedule_write_hold(uint32_t region_id, const std::string& latch_key,
+                                    std::string data, uint64_t* assigned_index,
+                                    uint64_t* latch_token, std::string* error) {
+  if (latch_token) *latch_token = 0;
   if (!write_fn_) {
     if (error) *error = "no_write_fn";
     return false;
@@ -63,8 +75,13 @@ bool Scheduler::schedule_write(uint32_t region_id, const std::string& latch_key,
     latches_.unlock(tok);
     throw;
   }
-  latches_.unlock(tok);
-  return ok;
+  if (!ok) {
+    latches_.unlock(tok);
+    return false;
+  }
+  if (latch_token) *latch_token = tok;
+  else latches_.unlock(tok);
+  return true;
 }
 
 }  // namespace openkv::storage

@@ -17,7 +17,7 @@
 Client / skv / Web
         │  gRPC  :19000
         ▼
-Go compute-gateway          KVService / DSService
+C++ gateway_node            KVService / DSService
         │  gRPC
    ┌────┴────┐
    ▼         ▼
@@ -46,8 +46,8 @@ MetaService  StoreService + RaftService + AdminService
 
 | 组件 | 代码位置 | 监听 / 调用 |
 |------|----------|-------------|
-| **Gateway** | `client/go/cmd/compute-gateway` | 监听 `:19000`；上游调 Meta / Storage |
-| **Go SDK** | `client/go/kv`、`client/go/ds` | 客户端 → Gateway |
+| **Gateway** | `compute/` → `gateway_node` | 监听 `:19000`；上游调 Meta / Storage |
+| **Go SDK** | 独立仓 `openkv-client-go`（`kv`/`ds`） | 客户端 → Gateway |
 | **Meta** | `meta/src/grpc_server.cpp` | 主端口（如 `:8500`）`MetaService` |
 | **Storage** | `storage/src/grpc_server.cpp` | 主端口（如 `:9100`）三服务同端口 |
 | **Raft 出站** | `raft/src/grpc_transport.cpp` | Storage↔Storage：`AppendEntries` / Vote / Snapshot |

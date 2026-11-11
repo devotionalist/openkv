@@ -215,13 +215,20 @@ func Start(root, runDir, name string) error {
 		}
 		argv = []string{bin, filepath.Join(root, c.Conf)}
 	case "gateway":
-		bin := filepath.Join(runDir, "compute-gateway")
+		bin := filepath.Join(runDir, "gateway_node")
 		if !fileExists(bin) {
-			alt := filepath.Join(root, ".run", "compute-gateway")
-			if fileExists(alt) {
-				bin = alt
-			} else {
-				return fmt.Errorf("missing gateway binary: %s", bin)
+			for _, alt := range []string{
+				filepath.Join(root, "build", "compute", "gateway_node"),
+				filepath.Join(runDir, "compute-gateway"),
+				filepath.Join(root, ".run", "compute-gateway"),
+			} {
+				if fileExists(alt) {
+					bin = alt
+					break
+				}
+			}
+			if !fileExists(bin) {
+				return fmt.Errorf("missing gateway binary: gateway_node")
 			}
 		}
 		argv = []string{

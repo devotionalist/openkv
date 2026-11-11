@@ -17,12 +17,16 @@
 
 #include "openkv/storage/store_service.hpp"
 
+#include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/storage/mvcc.hpp"
 
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <future>
+#include <memory>
 #include <thread>
 
 namespace {
@@ -104,6 +108,21 @@ std::string encode_commit_value(uint64_t start_ts, uint64_t commit_ts) {
 bool decode_commit_value(std::string_view data, uint64_t* start_ts, uint64_t* commit_ts) {
   size_t off = 0;
   return read_u64(data, off, *start_ts) && read_u64(data, off, *commit_ts);
+}
+
+std::string encode_onepc_value(uint64_t start_ts, uint64_t commit_ts, uint8_t mvcc_op,
+                               std::string_view primary, std::string_view value) {
+  std::string out;
+  out.append(reinterpret_cast<const char*>(&commit_ts), sizeof(commit_ts));
+  out.append(encode_prewrite_value(start_ts, mvcc_op, primary, value));
+  return out;
+}
+
+bool decode_onepc_value(std::string_view data, uint64_t* start_ts, uint64_t* commit_ts,
+                        uint8_t* mvcc_op, std::string* primary, std::string* value) {
+  size_t off = 0;
+  if (!read_u64(data, off, *commit_ts)) return false;
+  return decode_prewrite_value(data.substr(off), start_ts, mvcc_op, primary, value);
 }
 
 std::string encode_rollback_value(uint64_t start_ts) {
@@ -248,6 +267,7 @@ bool cmd_has_user_key(const Command& cmd) {
     case CmdOp::kPut:
     case CmdOp::kDelete:
     case CmdOp::kPrewrite:
+    case CmdOp::kOnePc:
     case CmdOp::kCommit:
     case CmdOp::kRollback:
     case CmdOp::kPessimisticLock:
@@ -259,83 +279,124 @@ bool cmd_has_user_key(const Command& cmd) {
 }
 }  // namespace
 
-ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
-  ScopedRegionTimer timer{&metrics_, shard_id, true};
+namespace {
+
+void fill_cas_meta(ProposeResult& pr) {
+  if (pr.error.rfind("cas_failed", 0) != 0) return;
+  pr.cas_failed = true;
+  const auto pos = pr.error.find("current_revision=");
+  if (pos != std::string::npos) {
+    pr.current_revision = std::strtoull(pr.error.c_str() + pos + 17, nullptr, 10);
+  }
+}
+
+ProposeResult finish_propose(StorageNode& node, uint32_t shard_id, const Command& cmd, uint64_t idx,
+                             const ProposalQueue::WaitOutcome& outcome, uint64_t latch_tok) {
+  if (auto* sched = node.scheduler()) sched->unlock(latch_tok);
   ProposeResult r;
-  auto* group = node_.multi_raft().get(shard_id);
-  if (!group) {
-    r.error = "no_region";
+  if (outcome.timed_out) {
+    r.error = "apply_timeout";
     return r;
   }
-  if (!group->is_leader()) {
-    r.redirect_to = group->leader_address();
-    if (r.redirect_to.empty()) {
-      r.redirect_to = node_.peer_address(group->soft_state().leader_id);
+  r.revision = idx;
+  if (!outcome.error.empty()) {
+    r.error = outcome.error;
+    fill_cas_meta(r);
+    if (cmd.request_id != 0) {
+      node.remember_request(shard_id, cmd.request_id,
+                            StorageNode::IdempotentRecord{false, idx, r.error});
     }
-    r.error = "not_leader";
     return r;
+  }
+  r.ok = true;
+  if (cmd.request_id != 0 && !node.lookup_request(shard_id, cmd.request_id)) {
+    node.remember_request(shard_id, cmd.request_id, StorageNode::IdempotentRecord{true, idx, {}});
+  }
+  return r;
+}
+
+}  // namespace
+
+ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
+  std::promise<ProposeResult> done;
+  propose_async(shard_id, cmd, [&](ProposeResult out) { done.set_value(std::move(out)); });
+  return done.get_future().get();
+}
+
+void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
+                                std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  auto timer = std::make_shared<ScopedRegionTimer>(ScopedRegionTimer{&metrics_, shard_id, true});
+  auto fail = [&](std::string err, std::string redirect = {}) {
+    ProposeResult r;
+    r.error = std::move(err);
+    r.redirect_to = std::move(redirect);
+    cb(std::move(r));
+  };
+
+  auto* group = node_.multi_raft().get(shard_id);
+  if (!group) {
+    fail("no_region");
+    return;
+  }
+  if (!group->is_leader()) {
+    std::string redir = group->leader_address();
+    if (redir.empty()) redir = node_.peer_address(group->soft_state().leader_id);
+    fail("not_leader", std::move(redir));
+    return;
   }
   // E4：同 request_id 重试直接返回缓存，不再二次 propose
   if (cmd.request_id != 0) {
     if (auto hit = node_.lookup_request(shard_id, cmd.request_id)) {
+      ProposeResult r;
       r.ok = hit->ok;
       r.revision = hit->revision;
       r.error = hit->error;
-      return r;
+      cb(std::move(r));
+      return;
     }
   }
-  // 普通 PUT/DEL 也走分裂暂停（与事务写一致）；窗口仅覆盖 Raft apply 元数据，无物理搬迁。
-  if ((cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete) && node_.region_splitting(shard_id)) {
-    r.error = "splitting";
-    return r;
+  // PUT/DEL/ONEPC 走分裂暂停（与事务写一致）；窗口仅覆盖 Raft apply 元数据，无物理搬迁。
+  if ((cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete || cmd.op == CmdOp::kOnePc) &&
+      node_.region_splitting(shard_id)) {
+    fail("splitting");
+    return;
   }
   if (cmd_has_user_key(cmd) && !node_.key_in_region(shard_id, cmd.key)) {
-    r.error = "key_not_in_region";
-    return r;
+    fail("key_not_in_region");
+    return;
   }
+
+  // TiKV-style：用户 key latch 持到 apply；propose + 一次 flush_ready；纯 CV 等 invoke。
+  auto* sched = node_.scheduler();
+  const std::string latch_key =
+      cmd_has_user_key(cmd) ? cmd.key : (std::string("op:") + std::to_string(static_cast<int>(cmd.op)));
+  const uint64_t latch_tok = sched ? sched->lock_key(latch_key) : 0;
+
   uint64_t idx = 0;
-  if (!group->propose(encode_command(cmd), &idx)) {
-    r.error = "propose_failed";
-    return r;
+  std::string perr;
+  bool proposed = false;
+  if (auto* kv = node_.raftkv()) {
+    proposed = kv->async_write(shard_id, encode_command(cmd), &idx, &perr);
+  } else if (group->propose(encode_command(cmd), &idx)) {
+    proposed = true;
+  } else {
+    perr = "propose_failed";
   }
-  auto fill_cas_meta = [&](ProposeResult& pr) {
-    if (pr.error.rfind("cas_failed", 0) != 0) return;
-    pr.cas_failed = true;
-    const auto pos = pr.error.find("current_revision=");
-    if (pos != std::string::npos) {
-      pr.current_revision = std::strtoull(pr.error.c_str() + pos + 17, nullptr, 10);
-    }
-  };
-  for (int i = 0; i < 400; ++i) {
-    auto st = group->soft_state();
-    if (st.last_applied >= idx) {
-      auto ar = node_.take_apply_result(idx);
-      if (ar && !ar->empty()) {
-        r.error = *ar;
-        r.revision = idx;
-        fill_cas_meta(r);
-        if (cmd.request_id != 0) {
-          node_.remember_request(shard_id, cmd.request_id,
-                                 StorageNode::IdempotentRecord{false, idx, r.error});
-        }
-        return r;
-      }
-      r.ok = true;
-      r.revision = idx;
-      // apply 路径已 remember；此处兜底（竞态下 apply 尚未写入缓存）
-      if (cmd.request_id != 0 && !node_.lookup_request(shard_id, cmd.request_id)) {
-        node_.remember_request(shard_id, cmd.request_id,
-                               StorageNode::IdempotentRecord{true, idx, {}});
-      }
-      return r;
-    }
-    if (i % 10 == 9 && group->is_leader()) {
-      group->tick();
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  if (!proposed) {
+    if (sched) sched->unlock(latch_tok);
+    fail(perr.empty() ? "propose_failed" : std::move(perr));
+    return;
   }
-  r.error = "apply_timeout";
-  return r;
+
+  // 无 waiter tick：BatchSystem 经 flush_ready + tick_loop 推进；apply → invoke → Finish。
+  node_.wait_apply_async(
+      idx, std::chrono::milliseconds(5000),
+      [this, shard_id, cmd, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
+          ProposalQueue::WaitOutcome outcome) mutable {
+        cb(finish_propose(node_, shard_id, cmd, idx, outcome, latch_tok));
+        timer.reset();
+      });
 }
 
 GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool linearizable) {
@@ -433,6 +494,85 @@ ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uin
   cmd.cas = cas;
   cmd.expected_revision = expected_revision;
   return propose(shard_id, cmd);
+}
+
+ProposeResult StoreFacade::one_pc(uint32_t shard_id, std::string_view key, uint64_t start_ts,
+                                  uint64_t commit_ts, std::string_view primary, uint8_t mvcc_op,
+                                  std::string_view value, uint64_t expected_epoch, bool cas,
+                                  uint64_t expected_revision, int64_t expire_at_ms) {
+  std::promise<ProposeResult> done;
+  one_pc_async(shard_id, std::string(key), start_ts, commit_ts, std::string(primary), mvcc_op,
+               std::string(value), expected_epoch, cas, expected_revision, expire_at_ms,
+               [&](ProposeResult r) { done.set_value(std::move(r)); });
+  return done.get_future().get();
+}
+
+void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                               uint64_t commit_ts, std::string primary, uint8_t mvcc_op,
+                               std::string value, uint64_t expected_epoch, bool cas,
+                               uint64_t expected_revision, int64_t expire_at_ms,
+                               std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  ProposeResult gate = require_leader(shard_id, expected_epoch);
+  auto fail = [&](std::string err, bool cas_failed = false, uint64_t cur_rev = 0) {
+    gate.ok = false;
+    gate.error = std::move(err);
+    gate.cas_failed = cas_failed;
+    gate.current_revision = cur_rev;
+    cb(std::move(gate));
+  };
+  if (!gate.ok) {
+    cb(std::move(gate));
+    return;
+  }
+  if (commit_ts <= start_ts) {
+    fail("bad_ts");
+    return;
+  }
+  auto* eng = node_.engines().get(shard_id);
+  if (!eng) {
+    fail("no_engine");
+    return;
+  }
+  auto locked_err = [](const LockInfo& lk) {
+    return "locked primary=" + openkv::to_hex(lk.primary) + " lock_ts=" +
+           std::to_string(lk.start_ts);
+  };
+  MvccStore mvcc(*eng);
+  if (auto lk = mvcc.get_lock(key)) {
+    fail(locked_err(*lk));
+    return;
+  }
+  if (mvcc.has_write_conflict(key, start_ts)) {
+    fail("write_conflict");
+    return;
+  }
+  if (cas) {
+    bool locked = false;
+    uint64_t cur_rev = 0;
+    LockInfo blk;
+    auto vis = mvcc.txn_get(key, ~uint64_t{0}, &locked, &blk, &cur_rev);
+    if (locked) {
+      fail(locked_err(blk));
+      return;
+    }
+    const bool match = (expected_revision == 0) ? !vis.has_value() : (cur_rev == expected_revision);
+    if (!match) {
+      fail("cas_failed current_revision=" + std::to_string(cur_rev), true, cur_rev);
+      return;
+    }
+  }
+  Command cmd;
+  cmd.op = CmdOp::kOnePc;
+  cmd.key = std::move(key);
+  cmd.value = encode_onepc_value(start_ts, commit_ts, mvcc_op, primary, value);
+  cmd.ttl_ms = expire_at_ms;
+  cmd.cas = cas;
+  cmd.expected_revision = expected_revision;
+  propose_async(shard_id, cmd, [commit_ts, cb = std::move(cb)](ProposeResult r) {
+    if (r.ok) r.revision = commit_ts;
+    cb(std::move(r));
+  });
 }
 
 ProposeResult StoreFacade::commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,

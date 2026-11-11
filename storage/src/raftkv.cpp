@@ -45,9 +45,8 @@ raft::SoftState RaftKV::soft_state(uint32_t region_id) const {
 
 void RaftKV::flush_ready(uint32_t region_id) {
   if (!store_) return;
-  // 投递 Tick 让 BatchSystem/同步路径推进 Ready（Store::handle_tick → process_ready）。
-  store_->mark_hot(region_id);
-  store_->schedule_tick();
+  // 本 Region Wake；批内多个 propose 在 Store::on_raft_batch 合并一次 sync。
+  store_->drive_ready(region_id);
 }
 
 bool RaftKV::async_write(uint32_t region_id, std::string data, uint64_t* assigned_index,

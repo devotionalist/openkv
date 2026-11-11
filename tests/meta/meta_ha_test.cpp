@@ -21,7 +21,9 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
 #include <thread>
+#include <unistd.h>
 
 using openkv::ClusterBootstrap;
 using openkv::meta::MetaCommand;
@@ -92,4 +94,71 @@ TEST(MetaHaTest, SingleReplicaLeaderRegister) {
   EXPECT_NE(metrics.find("END"), std::string::npos);
 
   srv.stop();
+}
+
+TEST(MetaHaTest, FsmSnapSurvivesRestart) {
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() /
+                   ("skv_meta_fsm_" + std::to_string(::getpid()) + "_" +
+                    std::to_string(
+                        std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+
+  ClusterBootstrap boot;
+  boot.node_id = "meta-fsm";
+  boot.listen_addr = "127.0.0.1:18551";
+  boot.data_dir = dir.string();
+  boot.raft_compact_threshold = 64;
+  boot.replica_factor = 1;
+  boot.storage_peers = {{"s0", "127.0.0.1:9100"}};
+
+  uint64_t route_ver = 0;
+  size_t n_regions = 0;
+  {
+    MetaNode srv(boot);
+    ASSERT_NO_THROW(srv.start());
+    for (int i = 0; i < 40; ++i) {
+      if (srv.is_leader()) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    ASSERT_TRUE(srv.is_leader());
+
+    auto split = srv.handle_line("SPLIT_REGION 0 6d");  // hex 'm'
+    ASSERT_EQ(split.rfind("OK SPLIT", 0), 0u) << split;
+
+    // 推进 apply 并触发定期 FSM snap（每 32 条）
+    for (int i = 0; i < 40; ++i) {
+      auto ts = srv.handle_line("GET_TS 8");
+      ASSERT_EQ(ts.rfind("OK TS", 0), 0u) << ts;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    std::string err, redir;
+    auto rt = srv.routing_table(&err, &redir);
+    n_regions = rt.regions.size();
+    route_ver = rt.version;
+    EXPECT_GE(n_regions, 2u);
+    EXPECT_GT(route_ver, 1u);
+    srv.stop();
+  }
+
+  // 同 data_dir 再起：应恢复 split 后的路由，而非仅 bootstrap region-0
+  {
+    MetaNode srv2(boot);
+    ASSERT_NO_THROW(srv2.start());
+    for (int i = 0; i < 40; ++i) {
+      if (srv2.is_leader()) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    ASSERT_TRUE(srv2.is_leader());
+    std::string err, redir;
+    auto rt = srv2.routing_table(&err, &redir);
+    EXPECT_EQ(rt.regions.size(), n_regions) << "FSM snap/replay must keep split regions";
+    EXPECT_GE(rt.version, route_ver);
+    auto line = srv2.handle_line("GET_ROUTE");
+    EXPECT_EQ(line.rfind("OK ROUTE", 0), 0u);
+    srv2.stop();
+  }
+  fs::remove_all(dir);
 }

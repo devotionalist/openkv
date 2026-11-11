@@ -1,9 +1,7 @@
 # 生产级 Store（存储层）要求与路线图
 
-本文定义 OpenKV **Store** 达到工业级/生产级的能力要求。  
+本文定义 OpenKV **Store** 达到生产级的能力要求。  
 Raft 运行时见 [MULTI_RAFT_PRODUCTION.md](MULTI_RAFT_PRODUCTION.md)；本文聚焦 **数据面、Region 元数据、事务、引擎与运维**。
-
-对标：工业界 Region Store / Cockroach Store。
 
 ---
 
@@ -12,7 +10,7 @@ Raft 运行时见 [MULTI_RAFT_PRODUCTION.md](MULTI_RAFT_PRODUCTION.md)；本文�
 | 维度 | 生产目标 |
 |------|----------|
 | 正确 | 崩溃/杀进程后 Region 边界与 epoch 不丢、不乱；无静默丢写 |
-| 事务 | 单 Region Percolator 硬化；跨 Region 2PC 可演进 |
+| 事务 | 单 Region MVCC（Prewrite/Commit）硬化；跨 Region 2PC 可演进 |
 | 引擎 | RocksDB WAL/sync 与 Raft 提交语义对齐；大 Region 可快照 |
 | 安全 | Client / Raft / Admin 隔离；鉴权 |
 | 可运维 | 指标、备份、分裂/迁移可恢复 |
@@ -134,7 +132,7 @@ Epoch meta key：`\xff\xffskv/epoch`（每 Region 引擎内）。
 
 ## 6. Backlog：S4 跨 Region 2PC（暂缓）
 
-**决定**：先不做。现状：单 Region Percolator + Gateway 已有「按 key 路由 → primary 先 commit → secondary 尽力 / Resolve」雏形；完整跨 Region 2PC 另开迭代。
+**决定**：先不做。现状：单 Region MVCC + Gateway 已有「按 key 路由 → primary 先 commit → secondary 尽力 / Resolve」雏形；完整跨 Region 2PC 另开迭代。
 
 **待做清单（恢复时按序）**：
 

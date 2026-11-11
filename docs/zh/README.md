@@ -33,7 +33,7 @@
 | Java | [openkv-client-java](https://github.com/devotionalist/openkv-client-java) |
 | TypeScript | [openkv-client-typescript](https://github.com/devotionalist/openkv-client-typescript) |
 
-本仓 `client/go` 是 **Compute Gateway**（及历史内嵌路径）。说明：[flows/15-multi-client-sdk.md](../flows/15-multi-client-sdk.md)。
+本仓 `client/go` 仅 **examples / 工具**（对外 SDK 见独立仓）。说明：[flows/15-multi-client-sdk.md](../flows/15-multi-client-sdk.md)。
 
 ---
 
@@ -58,8 +58,6 @@
 | [ERROR_CODES.md](../architecture/ERROR_CODES.md) | **各节点错误码**：Storage / Meta / Gateway / DS / Raft token 与重试策略 |
 | [COMPONENT_MAP.md](../architecture/COMPONENT_MAP.md) | 组件 / Storage 内部 / 写路径 / Phase |
 | [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md) | Region 有序区间分片 |
-| [SHARDING_STRATEGIES.md](../architecture/SHARDING_STRATEGIES.md) | 分片策略对比 |
-| [TRANSACTION_SURVEY.md](../architecture/TRANSACTION_SURVEY.md) | 事务方案调研与现状 |
 | [DATA_STRUCTURES.md](../architecture/DATA_STRUCTURES.md) | Hash / Set / List / ZSet |
 | [SEASTAR_NET.md](../architecture/SEASTAR_NET.md) | Seastar 开关与阶段（业务未接入） |
 
@@ -118,7 +116,17 @@ K8s：[flows/K8S_HELM.md](../flows/K8S_HELM.md) · [flows/K8S_SCALE.md](../flows
 
 ## 6. 流程图 — `flows/`
 
-分类索引：[flows/README.md](../flows/README.md)（读写 · Raft/故障 · Region/扩缩容 · 工程变更 · K8s）。
+分类索引：[flows/README.md](../flows/README.md)：
+
+| 分区 | 内容 |
+|------|------|
+| A | KV API（Put/Get/CAS/TTL/Scan/Watch/DS/SDK） |
+| B | 一致性 / Raft / HA |
+| C | Region 生命周期与扩缩容 |
+| D | Gateway 与写路径内部（TSO / 异步 / 批写） |
+| E | 部署 / 门禁 / 工程变更 |
+
+新人建议：`01 → 02 → 08 → 06 → 07 → 09 → 18 → 22 → 23`。
 
 ---
 

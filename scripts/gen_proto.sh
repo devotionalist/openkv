@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Generate in-repo Go stubs for Meta/Storage Admin (web / line-rpc).
+# KV/DS Go stubs live in openkv-client-go — sync there:
+#   (cd ../openkv-client-go && ./scripts/sync-proto-from-openkv.sh && ./scripts/gen.sh)
+
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/client/go/gen"
@@ -20,20 +24,17 @@ mkdir -p "$OUT"
 
 protoc -I "$ROOT/proto" \
   --go_out="$OUT" --go_opt=paths=source_relative \
-  "$ROOT/proto/kv/v1/kv.proto" \
-  "$ROOT/proto/kv/v1/ds.proto" \
   "$ROOT/proto/storage/v1/storage.proto" \
   "$ROOT/proto/meta/v1/meta.proto"
 
 if command -v protoc-gen-go-grpc >/dev/null 2>&1; then
   protoc -I "$ROOT/proto" \
     --go-grpc_out="$OUT" --go-grpc_opt=paths=source_relative \
-    "$ROOT/proto/kv/v1/kv.proto" \
-    "$ROOT/proto/kv/v1/ds.proto" \
     "$ROOT/proto/storage/v1/storage.proto" \
     "$ROOT/proto/meta/v1/meta.proto" || {
       echo "warn: protoc-gen-go-grpc failed; keep hand-written *_grpc.pb.go if present" >&2
     }
 fi
 
-echo "generated under $OUT"
+echo "generated Meta/Storage stubs under $OUT"
+echo "note: kv/ds Go client stubs → openkv-client-go (see scripts/sync-proto-from-openkv.sh there)"

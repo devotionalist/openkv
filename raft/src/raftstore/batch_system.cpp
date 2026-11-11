@@ -74,16 +74,28 @@ void BatchSystem::raft_worker_loop(size_t worker_id) {
     }
     // 分片：worker_id 处理 region_id % N == worker_id
     bool did = false;
+    std::shared_ptr<Router::PeerMailbox> wait_mb;
+    uint32_t wait_rid = 0;
     for (uint32_t rid : regions) {
       if ((rid % opts_.raft_workers) != worker_id) continue;
       auto mb = router_->peer_mailbox(rid);
       if (!mb) continue;
       auto batch = mb->recv_batch(opts_.batch_size, 0);
-      if (batch.empty()) continue;
+      if (batch.empty()) {
+        if (!wait_mb) {
+          wait_mb = mb;
+          wait_rid = rid;
+        }
+        continue;
+      }
       did = true;
       if (raft_handler_) raft_handler_(rid, std::move(batch));
     }
-    if (!did) {
+    // 空闲：在某个 mailbox 上 CV 等待（替盲 sleep），有 Tick/Msg 立即醒。
+    if (!did && wait_mb) {
+      auto batch = wait_mb->recv_batch(opts_.batch_size, opts_.poll_timeout_ms);
+      if (!batch.empty() && raft_handler_) raft_handler_(wait_rid, std::move(batch));
+    } else if (!did) {
       std::this_thread::sleep_for(std::chrono::milliseconds(opts_.poll_timeout_ms));
     }
   }
@@ -97,6 +109,8 @@ void BatchSystem::apply_worker_loop(size_t worker_id) {
       continue;
     }
     bool did = false;
+    std::shared_ptr<Router::ApplyMailbox> wait_mb;
+    uint32_t wait_rid = 0;
     // 跨 Region 合并：同一 worker 一轮内收集多 region 的 ApplyMsg（WriteBatch 合并点）
     std::vector<std::pair<uint32_t, std::vector<ApplyControl>>> merged;
     for (uint32_t rid : regions) {
@@ -104,14 +118,23 @@ void BatchSystem::apply_worker_loop(size_t worker_id) {
       auto mb = router_->apply_mailbox(rid);
       if (!mb) continue;
       auto batch = mb->recv_batch(opts_.batch_size, 0);
-      if (batch.empty()) continue;
+      if (batch.empty()) {
+        if (!wait_mb) {
+          wait_mb = mb;
+          wait_rid = rid;
+        }
+        continue;
+      }
       did = true;
       merged.emplace_back(rid, std::move(batch));
     }
     if (apply_handler_) {
       for (auto& [rid, batch] : merged) apply_handler_(rid, std::move(batch));
     }
-    if (!did) {
+    if (!did && wait_mb) {
+      auto batch = wait_mb->recv_batch(opts_.batch_size, opts_.poll_timeout_ms);
+      if (!batch.empty() && apply_handler_) apply_handler_(wait_rid, std::move(batch));
+    } else if (!did) {
       std::this_thread::sleep_for(std::chrono::milliseconds(opts_.poll_timeout_ms));
     }
   }

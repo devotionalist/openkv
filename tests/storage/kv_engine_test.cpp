@@ -172,6 +172,27 @@ TEST_F(KvEngineTest, ColumnFamilyRouting) {
   EXPECT_EQ(eng2.get("plain")->value, "p");
 }
 
+TEST_F(KvEngineTest, ApproxAndPickSplitScopedToRange) {
+  KvEngine eng(dir_.string(), 0);
+  ASSERT_TRUE(eng.put("a1", "1", 1));
+  ASSERT_TRUE(eng.put("a2", "2", 2));
+  ASSERT_TRUE(eng.put("m1", "3", 3));
+  ASSERT_TRUE(eng.put("z1", "4", 4));
+  openkv::KeyRange left;
+  left.end_key = "m";
+  openkv::KeyRange right;
+  right.start_key = "m";
+  EXPECT_EQ(eng.approx_key_count(left), 2u);
+  EXPECT_EQ(eng.approx_key_count(right), 2u);
+  EXPECT_EQ(eng.approx_key_count(), 4u);
+  auto mid = eng.pick_split_key();
+  ASSERT_FALSE(mid.empty());
+  EXPECT_TRUE(openkv::KeyRange{}.can_split_at(mid));
+  auto left_mid = eng.pick_split_key(left);
+  ASSERT_FALSE(left_mid.empty());
+  EXPECT_LT(left_mid, std::string("m"));
+}
+
 TEST_F(KvEngineTest, SyncModeAligned) {
   EXPECT_EQ(openkv::raft::parse_sync_mode("none"), openkv::raft::SyncMode::kNone);
   EXPECT_EQ(openkv::raft::parse_sync_mode("all"), openkv::raft::SyncMode::kAll);

@@ -204,7 +204,15 @@ class RaftNode {
   void persist_maybe_flush(bool force);
   /// 相对 stable_* 增量 append/cut + put_raft_state（替代整窗 save）。
   void engine_flush_locked(bool sync);
+  /// 组 batch；out_first/out_last 为 consume 成功后应写入的 stable 窗。无 engine 返回 nullptr。
+  std::unique_ptr<RaftLogBatch> build_engine_batch_locked(uint64_t& out_first, uint64_t& out_last);
+  /// 推进 stable_*（并发 flush 只前进不回退）。
+  void commit_stable_locked(uint64_t first, uint64_t last);
   void load_from_disk();
+  /// compact 前落盘 FSM；本地重启在 load_from_disk 后恢复（修 Meta 路由蒸发）。
+  std::string local_fsm_snap_path() const;
+  void save_local_fsm_snapshot_locked();
+  void restore_local_fsm_snapshot();
   void mark_activity();
   void start_apply_worker();
   void stop_apply_worker();
@@ -285,6 +293,8 @@ class RaftNode {
   /// 已稳定落盘的日志窗（增量 flush 基准；0=尚未落过盘）。
   uint64_t stable_first_index_{0};
   uint64_t stable_last_index_{0};
+  /// 串行化 engine_->consume（fsync）；不持 mu_，允许 propose 与 sync 重叠。
+  std::mutex persist_io_mu_;
 
   // Ready 缓冲（external_io）
   bool ready_hs_dirty_{false};

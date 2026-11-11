@@ -2,7 +2,7 @@
 
 > Language: [English](#openkv) · [中文](#openkv-zh)
 
-Distributed KV store with compute/storage separation: **Multi-Raft + RocksDB + gRPC** (C++ Meta/Storage, Go Gateway). Keys live in ordered **Range Regions**; default replication factor **3**.
+Distributed KV store with compute/storage separation: **Multi-Raft + RocksDB + gRPC** (C++ Meta/Storage/Gateway). Keys live in ordered **Range Regions**; default replication factor **3**.
 
 **License:** [Apache License 2.0](LICENSE) · Copyright 2026 devotionalist (see [NOTICE](NOTICE))
 
@@ -31,10 +31,10 @@ go get github.com/devotionalist/openkv-client-go@latest
 npm install openkv-client-typescript
 ```
 
-API surface (v0.1): `Dial`/`connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist`.  
+API surface (v0.1): `Dial`/`connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist` · DS (Hash/Set/List/ZSet).  
 Design notes: [docs/flows/15-multi-client-sdk.md](docs/flows/15-multi-client-sdk.md).
 
-> This repo’s `client/go` hosts the **Compute Gateway** (and a legacy in-tree Go path). Prefer the repos above for applications.
+> This repo’s `client/go` is **in-tree tools only** (examples / e2e / Meta·Storage stubs). Applications must use the SDK repos above.
 
 ## Topology
 
@@ -42,7 +42,7 @@ Design notes: [docs/flows/15-multi-client-sdk.md](docs/flows/15-multi-client-sdk
 openkv-client-{go,rust,java,typescript} / skv
       │ gRPC :19000
       ▼
-Compute Gateway (Go, stateless)  ←── MetaService gRPC ──→  Meta Raft ×3 (:8500–8502)
+Compute Gateway (C++ gateway_node)  ←── MetaService gRPC ──→  Meta Raft ×3 (:8500–8502)
       │ Store / Admin gRPC
       ▼
 Storage ×N (:9100…)  · per-Region Raft (RF=3) · RocksDB
@@ -100,8 +100,8 @@ gRPC C++ is **required**; Seastar defaults **OFF**. Details: [Networking](docs/e
 ## Features
 
 - **Range Region** sharding with Multi-Raft (default RF=3)
-- Stateless **Go Gateway** + C++ **Meta** (Raft×3) / **Storage** (RocksDB)
-- Single-key **version CAS** and TiKV-style **KV TTL**
+- Stateless **C++ Gateway** + C++ **Meta** (Raft×3) / **Storage** (RocksDB)
+- Single-key **version CAS** and **KV TTL**
 - Multi-language clients (Go / Rust / Java / TypeScript) in sibling repos
 - Online split / merge / place / scale-out SOPs
 - Web console (`:19100`) and `skv` ops CLI
@@ -124,7 +124,8 @@ common/    config, Region, logging
 raft/      Multi-Raft + GrpcRaftTransport
 storage/   RocksDB + Storage node (gRPC)
 meta/      cluster state + scaler (gRPC)
-client/go/ Compute Gateway (+ legacy in-tree Go helpers)
+compute/   C++ Gateway (gateway_node)
+client/go/ in-tree Go tools (examples/e2e) — SDK → openkv-client-go
 tools/skv/ ops CLI
 web/       admin console
 docs/      documentation (en + zh)
@@ -144,7 +145,7 @@ Licensed under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2
 
 # OpenKV（中文）
 
-基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV（C++ Meta/Storage + Go Gateway）。分片为 **Range Region**，默认副本因子 3。
+基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV（C++ Meta/Storage/Gateway）。分片为 **Range Region**，默认副本因子 3。
 
 ## 客户端（独立仓库）
 

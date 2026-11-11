@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file scheduler.hpp
-// Scheduler：按 key latch，串行冲突写。
+// Scheduler：按 key latch，串行冲突写；latch 可持到 apply（TiKV-style）。
 
 #pragma once
 
@@ -52,9 +52,21 @@ class Scheduler {
 
   void set_write_fn(WriteFn fn) { write_fn_ = std::move(fn); }
 
-  /// 对 command key 占 latch 后写。
+  /// 占 latch → 写 → **立即**放 latch（旧语义；单测冲突串行仍用此）。
   bool schedule_write(uint32_t region_id, const std::string& latch_key, std::string data,
                       uint64_t* assigned_index, std::string* error);
+
+  /// 占 latch → 写；成功时 *latch_token 非 0，调用方须在 apply 后 unlock。
+  /// 写失败自动 unlock 并返回 false。
+  bool schedule_write_hold(uint32_t region_id, const std::string& latch_key, std::string data,
+                           uint64_t* assigned_index, uint64_t* latch_token, std::string* error);
+
+  void unlock(uint64_t latch_token) {
+    if (latch_token != 0) latches_.unlock(latch_token);
+  }
+
+  /// 直接占/放（Facade ONEPC 等）。
+  uint64_t lock_key(const std::string& latch_key) { return latches_.lock({latch_key}); }
 
  private:
   Latches latches_;

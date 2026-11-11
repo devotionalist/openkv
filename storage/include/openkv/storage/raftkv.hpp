@@ -46,7 +46,7 @@ class RaftKV {
   raft::RaftNode* node(uint32_t region_id);
   raft::RawNode* raw(uint32_t region_id);
 
-  /// propose / step 后立刻处理 Ready。
+  /// propose 后驱动 Ready（经 Store::drive_ready；批内合并 group commit）。
   void flush_ready(uint32_t region_id);
 
  private:

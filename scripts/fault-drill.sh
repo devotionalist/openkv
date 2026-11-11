@@ -88,9 +88,11 @@ ensure_cluster() {
     return
   fi
   log "starting cluster..."
-  test -x build/meta/meta_server || cmake --build build -j --target meta_server storage_node
-  (cd client/go && go build -o "$RUN/compute-gateway" ./cmd/compute-gateway \
-    && go build -o "$RUN/kv-example" ./examples/basic)
+  test -x build/meta/meta_server || cmake --build build -j --target meta_server storage_node gateway_node
+  cmake --build build -j --target gateway_node
+  cp -f build/compute/gateway_node "$RUN/gateway_node"
+  ln -sfn "$RUN/gateway_node" "$RUN/compute-gateway"
+  (cd client/go && go build -o "$RUN/kv-example" ./examples/basic)
   # 高 term / 脏 WAL 会导致选主困难、成功率卡在 ~50%；默认 fresh 演练
   if [[ "${FAULT_DRILL_FRESH:-1}" == "1" ]]; then
     log "FAULT_DRILL_FRESH=1: wipe data/ for clean raft state"
@@ -188,7 +190,7 @@ restart_gateway() {
   done
   sleep 0.3
   # 与 daemon_cluster 一致：6 Store
-  "$RUN/compute-gateway" -listen "0.0.0.0:${GW_PORT}" \
+  "${RUN}/gateway_node" -listen "0.0.0.0:${GW_PORT}" \
     -storages "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105" \
     -metas 127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502 \
     >"$RUN/gateway.log" 2>&1 &

@@ -22,6 +22,7 @@
 #include "openkv/storage/storage_node.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -41,6 +42,8 @@ enum class CmdOp : uint8_t {
   kAdminSplit = 9,         // key=split_key, value=right_region u32
   kAdminMerge = 10,        // value=right_region u32
   kAdminSetEpoch = 11,     // value=epoch u64
+  /// 单 key 1PC：一次 propose 写 data+write（无残留 lock），对齐 TiKV 1PC。
+  kOnePc = 12,
 };
 
 /// Region epoch 持久化 key（引擎内 meta）。
@@ -76,6 +79,12 @@ bool decode_prewrite_value(std::string_view data, uint64_t* start_ts, uint8_t* m
 
 std::string encode_commit_value(uint64_t start_ts, uint64_t commit_ts);
 bool decode_commit_value(std::string_view data, uint64_t* start_ts, uint64_t* commit_ts);
+
+/// ONEPC value：commit_ts | prewrite payload（start_ts|op|primary|value）
+std::string encode_onepc_value(uint64_t start_ts, uint64_t commit_ts, uint8_t mvcc_op,
+                               std::string_view primary, std::string_view value);
+bool decode_onepc_value(std::string_view data, uint64_t* start_ts, uint64_t* commit_ts,
+                        uint8_t* mvcc_op, std::string* primary, std::string* value);
 
 std::string encode_rollback_value(uint64_t start_ts);
 bool decode_rollback_value(std::string_view data, uint64_t* start_ts);
@@ -155,6 +164,9 @@ class StoreFacade {
   explicit StoreFacade(StorageNode& node);
 
   ProposeResult propose(uint32_t shard_id, const Command& cmd);
+  /// 异步 propose：gRPC Callback 路径；完成回调可能在 apply / 超时线程。
+  void propose_async(uint32_t shard_id, const Command& cmd,
+                     std::function<void(ProposeResult)> cb);
   GetResult get(uint32_t shard_id, std::string_view key, bool linearizable);
 
   /// expected_epoch==0 跳过校验。cas=true 时 apply 校验最新 commit_ts == expected_revision（0=create-only）。
@@ -162,6 +174,16 @@ class StoreFacade {
                          std::string_view primary, uint8_t mvcc_op, std::string_view value,
                          uint64_t expected_epoch = 0, bool cas = false,
                          uint64_t expected_revision = 0, int64_t expire_at_ms = 0);
+  /// 单 key 原子写（Put/Delete）；revision 返回 commit_ts。
+  ProposeResult one_pc(uint32_t shard_id, std::string_view key, uint64_t start_ts,
+                       uint64_t commit_ts, std::string_view primary, uint8_t mvcc_op,
+                       std::string_view value, uint64_t expected_epoch = 0, bool cas = false,
+                       uint64_t expected_revision = 0, int64_t expire_at_ms = 0);
+  /// 异步 ONEPC：预检失败同步回调；成功走 propose_async（不占调用线程等 apply）。
+  void one_pc_async(uint32_t shard_id, std::string key, uint64_t start_ts, uint64_t commit_ts,
+                    std::string primary, uint8_t mvcc_op, std::string value,
+                    uint64_t expected_epoch, bool cas, uint64_t expected_revision,
+                    int64_t expire_at_ms, std::function<void(ProposeResult)> cb);
   ProposeResult commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        uint64_t commit_ts, uint64_t expected_epoch = 0);
   ProposeResult rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,

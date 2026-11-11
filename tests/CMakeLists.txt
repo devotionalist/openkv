@@ -52,14 +52,17 @@ set(OPENKV_TEST_SOURCES
   storage/watch_log_test.cpp
   storage/inflight_gate_test.cpp
   storage/scheduler_cop_test.cpp
+  storage/proposal_queue_test.cpp
   # meta：集群状态、扩容编排、HA FSM
   meta/cluster_state_test.cpp
   meta/scaler_test.cpp
   meta/meta_ha_test.cpp
   meta/region_scheduler_test.cpp
-  # compute：路由与 Proxy 重试
+  # compute：路由、Proxy、Gateway 出站客户端
   compute/router_test.cpp
   compute/kv_proxy_test.cpp
+  compute/ds_encode_test.cpp
+  compute/meta_client_test.cpp
 )
 
 add_executable(openkv_unit_tests ${OPENKV_TEST_SOURCES})
