@@ -195,13 +195,16 @@ struct KvEngine::RocksHandle {
 
 void KvEngine::refresh_write_options() {
   rocks_->wo = rocksdb::WriteOptions();
-  rocks_->wo.sync = (sync_ != raft::SyncMode::kNone);
+  // kData：耐久靠 Raft log，apply 异步；仅 kAll 对 RocksDB sync。
+  rocks_->wo.sync = raft::kv_apply_sync(sync_);
 }
 
 void KvEngine::set_sync_mode(raft::SyncMode m) {
   sync_ = m;
   refresh_write_options();
 }
+
+bool KvEngine::rocks_write_sync() const { return rocks_ && rocks_->wo.sync; }
 
 void KvEngine::migrate_legacy_default_cf() {
   rocksdb::WriteBatch put_batch;
@@ -288,7 +291,9 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
   migrate_legacy_default_cf();
   SKV_INFO << "rocksdb opened shard=" << shard_id_ << " path=" << path
            << " store_level=" << (store_level_ ? 1 : 0)
-           << " sync=" << raft::sync_mode_name(sync_) << " cfs=default,lock,data,write";
+           << " sync=" << raft::sync_mode_name(sync_)
+           << " kv_write_sync=" << (raft::kv_apply_sync(sync_) ? 1 : 0)
+           << " cfs=default,lock,data,write";
 }
 
 KvEngine::~KvEngine() {
@@ -824,6 +829,8 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
 KvEngine::~KvEngine() = default;
 
 void KvEngine::set_sync_mode(raft::SyncMode m) { sync_ = m; }
+
+bool KvEngine::rocks_write_sync() const { return false; }
 
 // ---------------------------------------------------------------------------
 // put：覆盖写；持锁，保证与 get/del/snapshot 互斥

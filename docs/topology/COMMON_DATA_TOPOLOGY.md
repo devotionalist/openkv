@@ -22,7 +22,7 @@ classDiagram
     +shard_count : 历史分片提示
     +raft_election_timeout_ms / raft_heartbeat_ms
     +rocksdb_write_buffer_mb
-    +persist_sync : none|data|all — Raft+RocksDB 同步级
+    +persist_sync : none|data|all — data=Raft sync / KV 异步
     +raft_peers : 多副本同伴
     +bootstrap_regions : 启动预建 Region
   }

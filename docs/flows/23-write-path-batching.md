@@ -7,12 +7,14 @@
 
 ## 问题
 
-单 Region + `persist_sync=data` 下 Put 吞吐受限：
+单 Region 下 Put 吞吐曾受限于：
 
-1. 每条 propose 后立刻全表 Tick / 多次 `process_ready` → **约 1 Put / 1 sync**  
+1. 每条 propose 后立刻全表 Tick / 多次 `process_ready` → **约 1 Put / 1 Raft sync**  
 2. `persist_ready` 持 Raft 锁做 fsync → 堵住后续 propose，Ready 批难长大  
-3. apply 逐条 `Put` → 固定开销摊不开  
+3. apply 逐条 `Put`，且旧默认对 RocksDB 也 sync → **双 fsync**  
 4. 压测若不拆 Region，永远测单管道  
+
+**默认耐久（2026-11-11）**：`persist_sync=data` = Raft log sync + **KV apply 异步**（不再双 sync）。需要 KV 也 sync 时用 `all`。
 
 ---
 
@@ -27,8 +29,8 @@
 | `RaftKV::flush_ready` | 调 `drive_ready`，不再 `broadcast_tick` |
 | `RaftNode::persist_ready` | 持锁组 batch；`persist_io_mu_` 下 consume/sync；再推进 `stable_*`（只前进） |
 
-耐久不变：`persist_sync=data` 仍 sync；目标是 **多数派 + sync 摊销**，不是弱化落盘。  
-Group commit **不在** sync 前 ACK；客户端仍等 apply。
+`data` 下 Raft Ready 仍 sync；KV 不 sync。目标是 **多数派 + Raft sync 摊销**，崩溃用日志重放，而不是每笔 apply 再 fsync。  
+Group commit **不在** Raft sync 前 ACK；客户端仍等 apply（内存可见）。
 
 ```mermaid
 flowchart TD

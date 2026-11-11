@@ -118,6 +118,8 @@ class KvEngine {
   bool store_level() const { return store_level_; }
   raft::SyncMode sync_mode() const { return sync_; }
   void set_sync_mode(raft::SyncMode m);
+  /// RocksDB WriteOptions.sync 是否开启（仅 kAll；供单测）。
+  bool rocks_write_sync() const;
   /// E2：按物理 key 归类的 CF 名（default|lock|data|write）；供单测。
   static const char* cf_name_for_key(std::string_view key);
   /// DB 根路径（store_level 时即 data_dir，否则 data_dir/shard_id）。

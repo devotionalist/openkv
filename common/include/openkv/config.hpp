@@ -43,7 +43,8 @@ struct NodeConfig {
   uint32_t raft_election_timeout_ms{1000};
   uint32_t raft_heartbeat_ms{100};
   uint32_t rocksdb_write_buffer_mb{64};
-  /// E1：Raft 日志 + RocksDB WAL 同步级别：none|data|all（可用 SKV_PERSIST_SYNC 覆盖）。
+  /// E1：耐久级别 none|data|all（SKV_PERSIST_SYNC 可覆盖）。
+  /// 默认 data：Raft log sync；RocksDB apply 异步（崩溃靠日志重放）。
   std::string persist_sync{"data"};
   /// 多副本：id@host:port,... ；空则单节点（仅自己）。
   std::vector<PeerConfig> raft_peers;

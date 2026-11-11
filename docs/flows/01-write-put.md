@@ -62,7 +62,7 @@ TSO 批缓存说明：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。
 |----|-------------|
 | Raft WAL | `{data_dir}/raft_shard_<id>/`（hard.state + log） |
 | KV | `{data_dir}/shard_<id>/` RocksDB（或单 Store 引擎按 Region 区间） |
-| 耐久 | `persist_sync=data` 时 Ready 组 batch 后 sync；ACK 仍在 apply 后 |
+| 耐久 | 默认 `persist_sync=data`：**Raft log sync**，KV apply 异步；ACK 仍在 apply 后（可见性），崩溃靠日志重放 |
 
 批写与 fsync 摊销：[23-write-path-batching.md](23-write-path-batching.md)。
 

@@ -197,16 +197,30 @@ TEST_F(KvEngineTest, SyncModeAligned) {
   EXPECT_EQ(openkv::raft::parse_sync_mode("none"), openkv::raft::SyncMode::kNone);
   EXPECT_EQ(openkv::raft::parse_sync_mode("all"), openkv::raft::SyncMode::kAll);
   EXPECT_EQ(openkv::raft::parse_sync_mode("bogus"), openkv::raft::SyncMode::kData);
+  EXPECT_TRUE(openkv::raft::raft_log_sync(openkv::raft::SyncMode::kData));
+  EXPECT_FALSE(openkv::raft::kv_apply_sync(openkv::raft::SyncMode::kData));
+  EXPECT_TRUE(openkv::raft::kv_apply_sync(openkv::raft::SyncMode::kAll));
 
   KvEngine eng(dir_.string(), 0, openkv::raft::SyncMode::kNone);
   EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kNone);
+  EXPECT_FALSE(eng.rocks_write_sync());
   ASSERT_TRUE(eng.put("k", "v", 1));
+
+  // 默认 data：Raft sync，KV apply 异步
+  eng.set_sync_mode(openkv::raft::SyncMode::kData);
+  EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kData);
+  EXPECT_FALSE(eng.rocks_write_sync());
+
   eng.set_sync_mode(openkv::raft::SyncMode::kAll);
   EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kAll);
+#if defined(OPENKV_HAS_ROCKSDB) && OPENKV_HAS_ROCKSDB
+  EXPECT_TRUE(eng.rocks_write_sync());
+#endif
   ASSERT_TRUE(eng.put("k2", "v2", 2));
   EXPECT_TRUE(eng.get("k2").has_value());
 
   ShardEngineManager mgr(dir_.string(), openkv::raft::SyncMode::kData);
   EXPECT_EQ(mgr.sync_mode(), openkv::raft::SyncMode::kData);
   EXPECT_EQ(mgr.get_or_create(7).sync_mode(), openkv::raft::SyncMode::kData);
+  EXPECT_FALSE(mgr.get_or_create(7).rocks_write_sync());
 }

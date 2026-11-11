@@ -361,9 +361,9 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 日期: 2026-11-11
 执行人: agent
 改动:
-  删除 flows/23-oxia-tikv-write-path-compare、architecture/SHARDING_STRATEGIES、TRANSACTION_SURVEY
+  删除对比类文档（含写路径对照 / 分片策略调研 / 事务调研）
   新增 flows/23-write-path-batching（仅 OpenKV）
-  清洗 META/STORE/MULTI_RAFT_PRODUCTION 与索引中的第三方对照
+  清洗 META/STORE/MULTI_RAFT_PRODUCTION 与索引中的外部对照
 结果: PASS（索引可导航；无对比类正文）
 ```
 
@@ -383,6 +383,70 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 结果: PASS（文档；无新代码）
 ```
 
+### 2026-11-11（k8s 集群内压测一轮）
+
+```text
+日期: 2026-11-11
+执行人: agent
+拓扑: openkv ns · gateway×1 · meta×1 · storage×1（RF=1）· regions=4 · persist_sync=data
+命令: 集群内 pod okv-bench 跑 .run/kv-bench-linux -addr gateway:19000
+结果:
+  put  w8  8s  117.4 ops/s  p50=38.8ms p95=209.9ms  ok=939  fail=0
+  get  w8  8s 1241.4 ops/s  p50=4.3ms  p95=9.9ms    ok=9933 fail=0
+  put  w4  8s   35.4 ops/s  fail=0
+  put  w16 8s   34.1 ops/s  p50=438ms（高并发排队）fail=0
+  put  w8 10s   80.8 ops/s  p50=93.8ms p95=239ms   ok=808  fail=0（复跑）
+  get  w8 10s 1844.5 ops/s  p50=2.9ms  p95=5.7ms   ok=18445 fail=0
+  put_cas w8 5s 30.8 ops/s ok=154 fail=20（并发 CAS 冲突，预期）
+  delete / scan / ttl / batch_put / batch_get：fail=0
+    delete 57.6 · scan 57.4 · ttl 956.7 · batch_put 20.6 · batch_get 471.2
+结论: PASS（写 fail=0；读千级 ops/s；w8 写峰值约 80–117 ops/s，相对此前单 Region ~56 有提升）
+```
+
+### 2026-11-11（双 sync data 下 Put/Get 复跑）
+
+```text
+日期: 2026-11-11
+执行人: agent
+拓扑: k8s RF=1 regions=4；当时 persist_sync=data 仍对 RocksDB sync（改默认前）
+同参: workers=8 duration=8s vsize=64
+结果:
+  put  175.6 ops/s  p50=25.0ms p95=140.8ms  ok=1405 fail=0
+  get 2158.4 ops/s  p50=2.5ms  p95=5.1ms    ok=17268 fail=0
+结论: PASS（fail=0；写仍受双 sync 限制）
+```
+
+### 2026-11-11（验证：persist_sync none vs data）
+
+```text
+日期: 2026-11-11
+执行人: agent
+假设: 写慢主因是 SKV_PERSIST_SYNC=data 下 Raft+RocksDB 双 sync，而非 TSO/MVCC
+方法: 同集群只改 storage SKV_PERSIST_SYNC，重启后 put w8 8s keys=200 vsize=64
+结果:
+  none → 491.5 ops/s  p50=11.1ms p95=34.8ms  ok=3932 fail=0
+  data →  49.6 ops/s  p50=128.3ms p95=374ms   ok=397  fail=0（同会话复跑；磁盘/重启后偏慢）
+结论: PASS — none/data ≈9.9×；假设成立（主因是持久化 sync）。
+收尾: storage 已恢复 SKV_PERSIST_SYNC=data
+```
+
+### 2026-11-11（默认改为 Raft sync + KV apply 异步）
+
+```text
+日期: 2026-11-11
+执行人: agent
+改动:
+  SyncMode kData：Raft log 仍 sync；RocksDB WriteOptions.sync 仅 kAll
+  文档 flows/24-persist-raft-vs-kv；Helm persistSync=data
+  单测 KvEngineTest.SyncModeAligned → rocks_write_sync false under data
+验收:
+  P1 gtest SyncModeAligned PASS（日志 kv_write_sync=0 under data）
+  P2 重建 openkv:dev 导入 k3s 后 put w8 8s：
+       put 394.3 ops/s p50=8.95ms fail=0；get 3042 ops/s fail=0
+       （对照旧双 sync ~50–176）
+  P3 文档索引挂 24
+结果: PASS（P1–P3）；默认 data 写吞吐相对旧双 sync 明显提升
+```
 ### 2026-11-11（async Put 去掉双 GetTs）
 
 ```text

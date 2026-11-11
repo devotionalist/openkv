@@ -126,7 +126,7 @@
 |------|------|------|
 | `leader_lease_ms` | `500` | Leader lease；0=禁用，线性读总走 ReadIndex |
 | `enable_lease_read` | `true` | 允许 lease 本地确认 |
-| `persist_sync` | `kData` | `kNone` / `kData` / `kAll` |
+| `persist_sync` | `kData` | `none`：都不 sync；**`data`（默认）**：Raft log sync，KV apply 异步；`all`：Raft+RocksDB 都 sync |
 | `persist_batch_n` | `1` | 累积 N 次 dirty 再落盘；tick 强制 flush |
 | （原 `TcpTransport::set_binary_rpc`） | — | 已删除；出站仅 `GrpcRaftTransport` |
 | ~~`SKV_RAWNODE_STORE`~~ | — | **已移除**；Storage 仅 raftstore Ready |

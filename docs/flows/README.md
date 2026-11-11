@@ -116,6 +116,7 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | 异步线程模型 | [22-async-threading-model.md](22-async-threading-model.md) | 接收线程 vs WorkPool vs apply 回调 |
 | 架构硬化 | [19-architecture-hardening.md](19-architecture-hardening.md) | CV 等 apply、latch 持到 apply、approx split、Meta CV |
 | 写路径批处理 | [23-write-path-batching.md](23-write-path-batching.md) | Ready group commit、apply WriteBatch、多 Region |
+| 耐久：Raft vs KV | [24-persist-raft-vs-kv.md](24-persist-raft-vs-kv.md) | 默认 data=Raft sync / KV 异步 |
 | 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、ONEPC WriteBatch、BatchSystem CV |
 | 全接口压测 | [17-gateway-api-bench.md](17-gateway-api-bench.md) | `examples/bench`；基线记 TEST_CASES |
 

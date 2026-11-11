@@ -257,7 +257,7 @@ void RaftNode::persist_maybe_flush(bool force) {
   if (!engine_) return;
   if (!persist_dirty_) return;
   if (!force && persist_pending_ < opts_.persist_batch_n) return;
-  const bool sync = opts_.persist_sync != SyncMode::kNone;
+  const bool sync = raft_log_sync(opts_.persist_sync);
   engine_flush_locked(sync);
   persist_dirty_ = false;
   persist_pending_ = 0;
@@ -701,7 +701,7 @@ void RaftNode::persist_ready(const Ready& rd) {
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (!opts_.external_io || !engine_) return;
-    sync = rd.must_sync || opts_.persist_sync != SyncMode::kNone || ready_hs_dirty_;
+    sync = rd.must_sync || raft_log_sync(opts_.persist_sync) || ready_hs_dirty_;
     batch = build_engine_batch_locked(first, last);
     ready_hs_dirty_ = false;
     persist_dirty_ = false;

@@ -39,12 +39,17 @@ struct PersistedHardState {
   uint64_t snapshot_term{0};
 };
 
-/// P2 / Store E1：落盘同步级别（Raft 日志与 RocksDB WAL 共用语义）。
+/// Store E1：耐久级别。默认 kData = **耐久靠 Raft log**；KV apply 异步。
 enum class SyncMode {
-  kNone = 0,  // 只写缓冲，不 fsync（最快，崩溃可丢尾部）
-  kData = 1,  // fdatasync / RocksDB sync + fdatasync
-  kAll = 2,   // 元数据+数据 fsync（最稳）
+  kNone = 0,  // Raft/KV 都不 sync（最快；崩溃可丢未 sync 的 Raft 尾部）
+  kData = 1,  // Raft log fdatasync；RocksDB apply **异步**（崩溃用日志重放补齐）
+  kAll = 2,   // Raft + RocksDB 都 sync（最稳，吞吐最低）
 };
+
+/// Raft 日志是否要求 sync（none 除外）。
+inline bool raft_log_sync(SyncMode m) { return m != SyncMode::kNone; }
+/// RocksDB WriteOptions.sync：仅 kAll；kData 靠 Raft 耐久。
+inline bool kv_apply_sync(SyncMode m) { return m == SyncMode::kAll; }
 
 inline SyncMode parse_sync_mode(std::string_view s, SyncMode def = SyncMode::kData) {
   if (s == "none" || s == "None" || s == "0") return SyncMode::kNone;

@@ -57,6 +57,8 @@ spec:
               value: {{ .Values.split.keys | default "256000" | quote }}
             - name: SKV_SPLIT_BYTES
               value: {{ .Values.split.bytes | default "100663296" | quote }}
+            - name: SKV_PERSIST_SYNC
+              value: {{ .Values.persistSync | default "data" | quote }}
             {{- if .Values.adminToken }}
             - name: SKV_ADMIN_TOKEN
               valueFrom:

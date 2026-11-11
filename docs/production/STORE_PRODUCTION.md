@@ -74,7 +74,10 @@ Raft 运行时见 [MULTI_RAFT_PRODUCTION.md](MULTI_RAFT_PRODUCTION.md)；本文�
 ### Store Phase S3
 
 - [x] E4 Propose 幂等：`Command.request_id` 尾部编码；Leader 缓存短路；apply 跳过重复  
-- [x] E1：`persist_sync` / `SKV_PERSIST_SYNC` → Raft `persist_sync` + RocksDB `WriteOptions.sync` / `use_fsync`  
+- [x] E1：`persist_sync` / `SKV_PERSIST_SYNC`  
+  - **默认 `data`**：耐久靠 **Raft log sync**；RocksDB apply **异步**（崩溃用 `recover_apply` 重放）  
+  - `all`：Raft + RocksDB `WriteOptions.sync` / `use_fsync`  
+  - `none`：都不 sync（仅压测/开发）
 - [x] E2：RocksDB CF `default|lock|data|write`；按 `user\0{L|D|W}` 路由；启动迁移 default 遗留  
 - [x] E3：`create_checkpoint` / `restore_from_checkpoint`；`ADMIN_CHECKPOINT`；Raft 导出前 Flush  
 - [x] O2：每 Region propose/get 延迟直方图；`METRICS`（Prometheus 文本）；`ADMIN_REGION_STATS` 含 p50/p99  

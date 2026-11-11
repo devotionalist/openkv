@@ -34,11 +34,14 @@ cluster:
   replicaFactor: 3
   domain: cluster.local
 
-# TiKV-style Region auto-split（Storage 进程环境变量）
-# keys/bytes：任一超阈值即分裂；设 0 关闭该项。默认对齐 TiKV ~96MiB / 256k keys。
+# Region auto-split（Storage 进程环境变量）
+# keys/bytes：任一超阈值即分裂；设 0 关闭该项。默认 ~96MiB / 256k keys。
 split:
   keys: "256000"
   bytes: "100663296"  # 96MiB
+
+# 耐久：data=Raft log sync + KV apply 异步（默认）；all=双 sync；none=都不 sync
+persistSync: "data"
 
 persistence:
   enabled: true
