@@ -9,9 +9,8 @@
 | [CLI11](https://github.com/CLIUtils/CLI11) | `FetchCLI11.cmake` | `skv` 子命令解析 |
 | [toml11](https://github.com/ToruNiina/toml11) | `FetchToml11.cmake` | `.toml` 配置（`.conf` 仍可用） |
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | `FetchHttplib.cmake` | `SKV_METRICS_ADDR` → `GET /metrics` |
-| [scylladb/seastar](https://github.com/scylladb/seastar) | `FetchSeastar.cmake` | 可选；**默认 OFF，业务未接入** |
 
-协议与开关说明：[docs/NETWORKING.md](../NETWORKING.md)。
+协议说明：[docs/NETWORKING.md](../NETWORKING.md)。
 
 公共编解码：`common/include/openkv/codec.hpp`（hex，无额外依赖）。
 

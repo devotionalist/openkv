@@ -20,7 +20,7 @@
 | 刀 | 改动 | 配置 |
 |----|------|------|
 | 1 Ready group commit | `RaftKV::async_write` → `Store::request_ready`；按条数/时限再 `drive_ready` | `SKV_READY_COALESCE_N`（默认 32，≤1 关计数）、`SKV_READY_COALESCE_MS`（默认 1） |
-| 2 二进制 ONEPC | `ProposeRequest.op=ONEPC`；Gateway `store_propose_onepc_async`；Storage `StoreFacade::one_pc_async` | 无开关；Admin ExecLine ONEPC 仍保留给运维/兼容 |
+| 2 二进制 ONEPC | `ProposeRequest.op=ONEPC`；Gateway `store_propose_onepc_async`；Storage `StoreFacade::one_pc_async` | 无开关；公开 ExecLine 已删除 |
 | 3 workers | BatchSystem / MultiRaft 默认 **8/8**；Helm 可配 | `SKV_RAFT_WORKERS` / `SKV_APPLY_WORKERS` |
 
 ```mermaid
@@ -37,13 +37,13 @@ flowchart LR
 - `flush_ready` / 显式 `drive_ready` **不走攒批**（强制冲刷；stop 时冲残留）。  
 - 攒批只推迟 Ready，**不推迟客户端 ACK** 语义之外的可见性：ACK 仍在 apply 后。  
 - `ready_coalesce_n≤1` 且 `ready_coalesce_ms=0` → 立即 `drive_ready`（单测 / 低延迟）。  
-- 多 key Txn / DS 仍可用 ExecLine；短 Put/Delete 热路径用二进制 Propose。
+- 多 key Txn / DS 走 StoreService 类型化 RPC；短 Put/Delete 热路径用二进制 Propose。
 
 ### 失败与回滚
 
 - 关闭攒批：`SKV_READY_COALESCE_N=1 SKV_READY_COALESCE_MS=0`  
 - workers 调回：`SKV_RAFT_WORKERS=2 SKV_APPLY_WORKERS=2`  
-- 二进制 ONEPC 异常时可临时改 Gateway 回 ExecLine（源码路径仍保留 Admin ONEPC）
+- 公开 ExecLine 已删除；勿回退行协议桥
 
 ---
 

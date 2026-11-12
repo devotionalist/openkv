@@ -3,7 +3,7 @@
 无状态计算层：缓存 Meta 路由 + 代理 Storage RPC。  
 图例：`字段 — 含义 / 作用`  
 代码：`compute/include/openkv/compute/*.hpp`  
-（生产 Gateway 为 C++ `gateway_node`；见 [flows/18-cpp-gateway.md](../flows/18-cpp-gateway.md)。）
+生产入口：C++ `gateway_node` → `GatewayServer`（见 [flows/18-cpp-gateway.md](../flows/18-cpp-gateway.md) · [flows/29-compute-code-map.md](../flows/29-compute-code-map.md)）。
 
 ---
 
@@ -13,12 +13,15 @@
 classDiagram
   direction TB
 
-  class ComputeNode {
-    +cfg_ : NodeConfig — meta_addr / 本机参数
-    +router_ : 路由缓存 — Key→Region→Leader
-    +proxy_ : KvProxy — get/put 重定向
-    +backend_storage_addr_ : demo 默认 Storage
-    +watch_thread_ : 拉 Meta 路由
+  class GatewayServer {
+    +meta_addrs_ : Meta 端点
+    +storage_addrs_ : boot Storage 地址
+    +ts_ : TSOracle — 批缓存 TSO
+    +routes_ : Router — Key→Region→Leader
+    +active_ts_ : 活跃 start_ts
+    +pool_ : WorkPool — 本地短任务
+    +leader_hint_ : not_leader 记忆
+    +bg_thread_ : route_watch_loop
   }
 
   class Router {
@@ -44,18 +47,24 @@ classDiagram
     +is_leader : 是否打写到此
   }
 
-  class KvProxy {
-    +router_ : 查 Leader
-    +get_fn_ / put_fn_ : Storage RPC 回调
-    +max_redirects_ : not_leader 重试次数
+  class store_rpc {
+    +cached stubs : Store/Admin
+    +Propose/Get/Scan/... : StoreService
+    +Ping/SetEpoch : AdminService
   }
 
-  ComputeNode *-- Router
-  ComputeNode *-- KvProxy
+  class meta_client {
+    +GetTs / GetRoutingTable
+    +WatchRoutingTable / ReportMinStartTs
+  }
+
+  GatewayServer *-- Router : routes_
+  GatewayServer --> store_rpc : 出站 Storage
+  GatewayServer --> meta_client : 出站 Meta
+  GatewayServer *-- TSOracle : ts_
   Router *-- RoutingTable : table_
   RoutingTable *-- RegionRoute : regions
   RegionRoute *-- ReplicaEndpoint : replicas
-  KvProxy --> Router
 ```
 
 ---
@@ -64,15 +73,15 @@ classDiagram
 
 ```mermaid
 flowchart TB
-  CN["ComputeNode<br/>────────────────────────<br/>cfg_ — 连哪个 Meta<br/>router_ — 本地路由镜像<br/>proxy_ — 业务入口<br/>watch_thread_ — 周期性/长轮询刷路由"]
+  GW["GatewayServer<br/>────────────────────────<br/>routes_ — 本地路由镜像<br/>ts_ — TSO 批缓存<br/>storage_addrs_ — boot 地址<br/>pool_ — WorkPool（本地）<br/>bg_thread_ — 刷路由 + report_min_start_ts"]
 
-  CN --> RT["Router.table_<br/>────────────────────────<br/>version — 落后则更新<br/>regions — RegionRoute 字典<br/>sorted_ — start_key 有序便于二分"]
+  GW --> RT["Router.table_<br/>────────────────────────<br/>version — 落后则更新<br/>regions — RegionRoute 字典<br/>sorted_ — start_key 有序便于二分"]
 
   RT --> RR["RegionRoute<br/>────────────────────────<br/>region_id — 与 Storage shard 一致<br/>range — locate(key)<br/>replicas — 可试的地址列表"]
 
   RR --> RE["ReplicaEndpoint<br/>────────────────────────<br/>node_id / address — 连谁<br/>is_leader — put 优先 Leader"]
 
-  CN --> KP["KvProxy<br/>────────────────────────<br/>get/put/del<br/>leader 失败→换副本重试<br/>max_redirects_=3"]
+  GW --> SR["store_rpc / meta_client<br/>────────────────────────<br/>StoreService / AdminService / MetaService<br/>进程级 Channel+Stub 缓存"]
 ```
 
 ---
@@ -101,23 +110,16 @@ flowchart TB
 | `sorted_` | 有序 RegionMeta | 二分定位 key |
 | `mu_` | 锁 | 并发 update/读 |
 
-### `KvProxy` / 结果结构
+### `GatewayServer`（核心成员）
 
 | 字段 | 含义 | 作用 |
 |------|------|------|
-| `get_fn_` / `put_fn_` | 传输回调 | 注入 TCP/gRPC |
-| `max_redirects_` | 最大重定向 | 防环 |
-| `ProxyGetResult.ok/found/value/revision/error` | 读结果 | 上层业务 |
-| `ProxyPutResult.ok/revision/error` | 写结果 | 上层业务 |
-
-### `ComputeNode`
-
-| 字段 | 含义 | 作用 |
-|------|------|------|
-| `cfg_` | 节点配置 | meta 地址等 |
-| `router_` / `proxy_` | 核心组件 | 对外 API |
-| `running_` / `watch_thread_` | 生命周期 | 后台刷路由 |
-| `backend_storage_addr_` | 默认后端 | 单机 demo |
+| `routes_` | Router | key → region / leader |
+| `ts_` | TSOracle | 事务时间戳 |
+| `storage_addrs_` | boot 地址串 | try_order 回退 |
+| `pool_` | WorkPool | Watch 间隔等本地任务 |
+| `leader_hint_` | region→addr | not_leader 后优先打 |
+| `bg_thread_` | 后台 | WatchRoutingTable + active_ts 上报 |
 
 ---
 
@@ -126,10 +128,12 @@ flowchart TB
 ```mermaid
 flowchart LR
   K["key"] --> R["Router.region_of<br/>用 range"]
-  R --> L["leader_addr<br/>用 is_leader/address"]
-  L --> P["KvProxy → Storage<br/>带 region_id"]
-  P -->|not_leader| RETRY["换 replicas 重试<br/>max_redirects_"]
+  R --> L["leader_addr / leader_hint_<br/>用 is_leader/address"]
+  L --> P["store_rpc<br/>带 region_id"]
+  P -->|not_leader| RETRY["换 replicas / 刷路由"]
 ```
+
+出站一律类型化 gRPC（StoreService / AdminService / MetaService）。详见 [29-compute-code-map](../flows/29-compute-code-map.md)。
 
 ---
 

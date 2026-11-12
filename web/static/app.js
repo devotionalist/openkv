@@ -1805,62 +1805,6 @@ ${formatScaleLine(t)}`);
       opsLog().textContent = JSON.stringify(r, null, 2);
       await refresh();
     });
-    bindForm("#form-kv-get", async (fd) => {
-      const key = encodeURIComponent(String(fd.get("key")));
-      const stale = fd.get("stale") ? "&stale=1" : "";
-      const r = await api(`/api/kv/get?key=${key}${stale}`);
-      $("#console-log").textContent = JSON.stringify(r, null, 2);
-    });
-    bindForm("#form-kv-put", async (fd) => {
-      const r = await postJSON("/api/kv/put", {
-        key: String(fd.get("key")),
-        value: String(fd.get("value"))
-      });
-      $("#console-log").textContent = JSON.stringify(r, null, 2);
-    });
-    bindForm("#form-locate", async (fd) => {
-      const key = encodeURIComponent(String(fd.get("key")));
-      const r = await api(`/api/locate?key=${key}`);
-      $("#console-log").textContent = JSON.stringify(r, null, 2);
-    });
-    const runDS = async (body) => {
-      const r = await postJSON("/api/ds", body);
-      $("#console-log").textContent = JSON.stringify(r, null, 2);
-    };
-    bindForm("#form-ds-hash", async (fd) => {
-      await runDS({
-        op: String(fd.get("op") || "hgetall"),
-        key: String(fd.get("key")),
-        field: String(fd.get("field") || ""),
-        value: String(fd.get("value") || "")
-      });
-    });
-    bindForm("#form-ds-set", async (fd) => {
-      await runDS({
-        op: String(fd.get("op") || "smembers"),
-        key: String(fd.get("key")),
-        member: String(fd.get("member") || "")
-      });
-    });
-    bindForm("#form-ds-list", async (fd) => {
-      await runDS({
-        op: String(fd.get("op") || "lrange"),
-        key: String(fd.get("key")),
-        value: String(fd.get("value") || ""),
-        start: Number(fd.get("start") || 0),
-        stop: Number(fd.get("stop") ?? -1)
-      });
-    });
-    bindForm("#form-ds-zset", async (fd) => {
-      await runDS({
-        op: String(fd.get("op") || "zrange"),
-        key: String(fd.get("key")),
-        member: String(fd.get("member") || ""),
-        score: Number(fd.get("score") || 0),
-        start: Number(fd.get("start") || 0),
-        stop: Number(fd.get("stop") ?? -1)
-      });
-    });
     void refresh();
     window.setInterval(() => void refresh(), 8e3);
   }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file tcp_line.hpp
-// 运维 CLI：gRPC ExecLine（MetaService / AdminService）。
+// 运维 CLI：类型化 MetaService / AdminService（兼容历史行命令字符串）。
 #pragma once
 
 #include <arpa/inet.h>
@@ -22,8 +22,9 @@
 #include <unistd.h>
 
 #include "openkv/admin_acl.hpp"
+#include "openkv/admin_rpc.hpp"
 #include "openkv/codec.hpp"
-#include "openkv/grpc_auth.hpp"
+#include "openkv/meta_rpc.hpp"
 #include "openkv/protocol.hpp"
 
 #include <chrono>
@@ -33,12 +34,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <grpcpp/grpcpp.h>
-#include "meta/v1/meta.grpc.pb.h"
-#include "meta/v1/meta.pb.h"
-#include "storage/v1/storage.grpc.pb.h"
-#include "storage/v1/storage.pb.h"
 
 namespace skv {
 
@@ -94,30 +89,15 @@ inline bool looks_meta_req(std::string_view req) {
 }
 
 inline std::string tcp_line(std::string_view addr, std::string_view req, int timeout_ms = 3000) {
-  auto ch = grpc::CreateChannel(std::string(addr), grpc::InsecureChannelCredentials());
-  grpc::ClientContext ctx;
-  ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
-  openkv::grpc_attach_admin_token(&ctx, openkv::admin_token_from_env());
   std::string host;
   uint16_t port = 0;
   parse_host_port(addr, &host, &port);
   const bool meta = looks_meta_req(req) || (port >= 8500 && port < 8600);
+  const auto token = openkv::admin_token_from_env();
   if (meta) {
-    auto stub = ::meta::v1::MetaService::NewStub(ch);
-    ::meta::v1::ExecLineRequest er;
-    er.set_line(std::string(req));
-    ::meta::v1::ExecLineResponse eres;
-    auto st = stub->ExecLine(&ctx, er, &eres);
-    if (!st.ok()) throw std::runtime_error("meta ExecLine: " + st.error_message());
-    return eres.body();
+    return openkv::meta_typed_call(addr, req, token, timeout_ms);
   }
-  auto stub = ::storage::v1::AdminService::NewStub(ch);
-  ::storage::v1::ExecLineRequest er;
-  er.set_line(std::string(req));
-  ::storage::v1::ExecLineResponse eres;
-  auto st = stub->ExecLine(&ctx, er, &eres);
-  if (!st.ok()) throw std::runtime_error("storage ExecLine: " + st.error_message());
-  return eres.body();
+  return openkv::admin_typed_call(addr, req, token, timeout_ms);
 }
 
 inline std::optional<std::string> redirect_of(std::string_view resp) {

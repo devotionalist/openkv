@@ -1,7 +1,7 @@
 # OpenKV 待做计划（Backlog）
 
-依据：`COMPONENT_MAP` / `META_PRODUCTION` / `STORE_PRODUCTION` / `MULTI_RAFT_PRODUCTION` / `SEASTAR_NET` 与近期缺口。  
-文档总目录（默认英文）：[English](./en/README.md) · [中文](./zh/README.md)。更新：2026-11-10。
+依据：`COMPONENT_MAP` / `META_PRODUCTION` / `STORE_PRODUCTION` / `MULTI_RAFT_PRODUCTION` 与近期缺口。  
+文档总目录（默认英文）：[English](./en/README.md) · [中文](./zh/README.md)。更新：2026-11-12。
 
 近期已交付（勿重复）：ProposalQueue · ONEPC · Region auto-split · recover_local_regions · 架构硬化见 [flows/19-architecture-hardening.md](flows/19-architecture-hardening.md)。
 
@@ -12,14 +12,14 @@
 | 优先级 | 项 | 理由 |
 |--------|----|------|
 | P1 | §2 Meta 调度加深（热点 / balance / 备份） | 控制面 |
-| P2 | §4 跨 Region 2PC、§5 Seastar 真正接入 reactor | 能力加深 |
-| 暂缓 | §7 改名、联邦/多租户 | 无硬依赖 |
+| P2 | §4 跨 Region 2PC | 能力加深 |
+| 暂缓 | §6 联邦/多租户等 | 无硬依赖 |
 
 ---
 
 ## 1. 文档 / 工程卫生
 
-~~D1–D3~~ → 见 §8：公开 [docs/NETWORKING.md](NETWORKING.md)；README / ARCHITECTURE / META A4 已对齐 gRPC 强制、Seastar 未接入业务。
+~~D1–D3~~ → 见 §7：公开 [docs/NETWORKING.md](NETWORKING.md)；README / ARCHITECTURE / META A4 已对齐 gRPC 强制。
 
 ---
 
@@ -27,19 +27,19 @@
 
 | ID | 内容 | 状态 / 出处 |
 |----|------|-------------|
-| ~~M1~~ | ~~A4~~ | → §8 已闭环 |
+| ~~M1~~ | ~~A4~~ | → §7 已闭环 |
 | M3 | PD 级调度加深：热点、跨 DC、完整 Operator | `COMPONENT_MAP` Meta 弱/无 |
 | M4 | 主动 balance 产品化策略 | `SKV_PD_AUTO_BALANCE` 默认关（避与 SCALE_OUT 打架） |
 | M5 | Meta 备份 / bootstrap Runbook 补全 | O3 **部分**（见 `FAULT_DRILL`） |
 | — | 多租户 catalog、跨机房 PD 联邦、独立 TSO 进程 | **暂缓**（`META_PRODUCTION` M3） |
 
-~~M2 S4 Store 接入~~ → 见 §8。
+~~M2 S4 Store 接入~~ → 见 §7。
 
 ---
 
 ## 3. 数据面 / Raftstore / Store
 
-~~R1–R5~~ → 见 §8 与 [flows/DATA_PLANE_HARDENING.md](flows/DATA_PLANE_HARDENING.md)。
+~~R1–R5~~ → 见 §7 与 [flows/DATA_PLANE_HARDENING.md](flows/DATA_PLANE_HARDENING.md)。
 
 后续可选（非本轮）：完整 Coprocessor DAG、Snap 跨节点断点续传协议增强、Scheduler 进程级拆库。
 
@@ -60,21 +60,7 @@ MVCC 事务 **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve
 
 ---
 
-## 5. 网络 / 性能（Seastar）
-
-见 [SEASTAR_NET.md](architecture/SEASTAR_NET.md)。
-
-| ID | 阶段 | 内容 |
-|----|------|------|
-| N0 | P0 | FetchSeastar 可开关 — **已有** |
-| N1 | P2 | Raft / gRPC 出站与 Seastar reactor 集成 — **待做** |
-| N2 | P3 | `app_template` 入口；Linux CI `USE_SEASTAR=ON` smoke — **待做** |
-
-约束：协议面仍只 gRPC；RocksDB/fsync 不进 reactor 阻塞路径。
-
----
-
-## 6. 运维 / 安全 / 测试
+## 5. 运维 / 安全 / 测试
 
 | ID | 内容 | 说明 |
 |----|------|------|
@@ -86,15 +72,13 @@ MVCC 事务 **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve
 
 ---
 
-## 7. 曾提起未做
+## 6. 曾提起未做
 
-| ID | 内容 | 说明 |
-|----|------|------|
-| X1 | 项目改名 **SeastarKV** | 对话中断；未改代码 / 仓库 / remote |
+（暂无登记项。历史讨论过的改名 / 联邦等已取消或并入上文「暂缓」。）
 
 ---
 
-## 8. 已完成（勿重复开坑）
+## 7. 已完成（勿重复开坑）
 
 便于对照，避免把已交付当待办：
 
@@ -111,7 +95,7 @@ MVCC 事务 **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve
 
 ---
 
-## 9. 相关文档
+## 8. 相关文档
 
 分类总目录：[README.md](README.md)。
 
@@ -123,5 +107,5 @@ MVCC 事务 **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve
 | [STORE_PRODUCTION.md](production/STORE_PRODUCTION.md) | Store + 跨 Region 2PC backlog |
 | [MULTI_RAFT_PRODUCTION.md](production/MULTI_RAFT_PRODUCTION.md) | Raft 运行时 |
 | [flows/13-version-cas.md](flows/13-version-cas.md) | 版本 CAS / 事务相关 |
-| [SEASTAR_NET.md](architecture/SEASTAR_NET.md) | Seastar 落地阶段 |
+| [NETWORKING.md](NETWORKING.md) | gRPC 网络栈 |
 | [flows/README.md](flows/README.md) | 流程图分类索引 |

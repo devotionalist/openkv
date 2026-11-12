@@ -10,7 +10,7 @@ web/                     # 独立 Go module
   frontend/              # TypeScript（esbuild → static/）
   static/                # 构建产物，Go embed
   internal/api/          # REST
-  internal/cluster/      # Meta/Storage gRPC ExecLine
+  internal/cluster/      # Meta/Storage 类型化 gRPC
 ```
 
 ## 启动
@@ -43,9 +43,9 @@ SKV_ADMIN=1 make cluster-up
 
 Gateway 热路径须对每次出站调用 `note_to_store(addr)` / `note_to_meta(addr)`，否则 `to_*_peers` 为空，总览只剩 `client→gateway`。
 | 运维 | Region 主表（行内 Split/Merge/Place，展开看副本）+ 待加入 Store + Balance |
-| Console | Gateway Put/Get、Meta Locate，以及 Hash / Set / List / ZSet（`POST /api/ds`） |
 
-节点上下线需 `-run-dir` + `-root`（`make admin-run` 已带）。API：`POST /api/node/{start,stop,restart}` body `{"name":"storage-1"}`。
+节点上下线需 `-run-dir` + `-root`（`make admin-run` 已带）。API：`POST /api/node/{start,stop,restart}` body `{"name":"storage-1"}`。  
+KV / DS 调试走 SDK / `skv` / `POST /api/kv/*`、`POST /api/ds`（Web 已去掉 Console 页）。
 
 Store 生命周期：`REGISTER` → **Joining（待加入）** → `join`/`JOIN_NODE` → **Active** → `scale-in` → Draining → Tombstone → `remove-tombstone`；已 Active 用 `balance` 做 RF 恒定 Replace。
 

@@ -49,7 +49,14 @@ flowchart LR
 | Follower `next_index < log.first_index()` | 无法 AE 对齐 → `InstallSnapshot` |
 | AE 失败 | Leader 递减 `next_index`，可能最终落入快照窗口 |
 
+## Split 后重启：`recover_local_regions_from_meta`
+
+REGISTER 成功后 Storage 拉 `GET_ROUTE`，对本机副本 `ADMIN_ENSURE_REGION`，恢复 split 出的兄弟 Region（不仅 bootstrap 的 region-0）。
+
+线格式须为 `rid:startHex:endHex:epoch:nrep,id@addr*L,...`（与 `MetaNode::format_route` 一致）。typed 回退 `format_routing_table_line` 若漏掉 `nrep,`，RF=1 无逗号会导致 `ensured=0`，Gateway 按路由打到未装载 Region → `no_region`。
+
 ## 验证
 
-- 单测：`RaftPersistTest.SaveAndRecoverApplied` / `InstallSnapshotCompactsAndApplies`
-- 冒烟：杀 `storage-1` 再启，日志出现 `recovered term=`
+- 单测：`RaftPersistTest.SaveAndRecoverApplied` / `InstallSnapshotCompactsAndApplies` / `MetaRpcTest.FormatRoutingTableLineIncludesNrepComma`
+- 冒烟：杀 `storage-1` 再启，日志出现 `recovered term=`；split 后重启日志 `recover_local_regions_from_meta ensured=N`（N=本机 Region 数）
+- 验收：`ctest -R MetaRpcTest`；k8s 杀 `storage-0` 再启后 `go run ./examples/basic` 对任意 key 不再 `no_region`

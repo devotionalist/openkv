@@ -22,7 +22,6 @@
 #
 # 常用配置示例：
 #   cmake -B build \
-#     -DOPENKV_USE_SEASTAR=OFF \
 #     -DOPENKV_USE_JEMALLOC=ON \
 #     -DOPENKV_ENABLE_ASAN=ON
 #   # gRPC 强制开启（系统包优先，否则 FetchContent）；RocksDB/jemalloc 同理
@@ -50,8 +49,6 @@ endif()
 
 # ---- 功能开关 --------------------------------------------------------------
 option(OPENKV_BUILD_TESTS "是否编译单元测试（GoogleTest）" ON)
-option(OPENKV_USE_SEASTAR
-  "FetchContent 引入 scylladb/seastar（cmake/FetchSeastar.cmake）" OFF)
 # gRPC 为硬依赖；不再提供 OFF / 行协议双栈。旧 cache 的 OFF 自动抬升为 ON。
 if(DEFINED CACHE{OPENKV_USE_GRPC} AND NOT OPENKV_USE_GRPC)
   message(WARNING
@@ -113,21 +110,6 @@ target_include_directories(openkv_proto PUBLIC ${PROTO_GEN_DIR})
 target_link_libraries(openkv_proto PUBLIC protobuf::libprotobuf gRPC::grpc++)
 target_compile_definitions(openkv_proto PUBLIC OPENKV_USE_GRPC=1)
 set(OPENKV_HAS_PROTO_LIB TRUE)
-
-# ---- 可选第三方：ScyllaDB Seastar（FetchContent，同 RocksDB）---------------
-# 源码：https://github.com/scylladb/seastar → cmake/FetchSeastar.cmake
-# OFF 时 Meta/Storage/Raft 走 common/net POSIX（macOS / 无系统依赖时默认）。
-if(OPENKV_USE_SEASTAR)
-  if(APPLE)
-    message(WARNING
-      "OPENKV_USE_SEASTAR=ON on macOS: scylladb/seastar 以 Linux 为主，"
-      "配置/编译可能失败；本地开发请保持 OFF。")
-  endif()
-  include(FetchSeastar)  # 产出 Seastar::seastar
-  message(STATUS "OpenKV: OPENKV_USE_SEASTAR=ON (bundled scylladb/seastar)")
-else()
-  message(STATUS "OpenKV: OPENKV_USE_SEASTAR=OFF (POSIX thread-per-conn)")
-endif()
 
 # ---- 业务子目录（顺序：被依赖方在前） --------------------------------------
 add_subdirectory(common)   # 哈希、配置、日志

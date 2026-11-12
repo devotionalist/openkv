@@ -2,7 +2,7 @@
 
 # Quick start
 
-Build locally, start a cluster, put/get a key. Defaults: **gRPC C++ required**; Seastar **OFF**; RocksDB + jemalloc bundled via FetchContent.
+Build locally, start a cluster, put/get a key. Defaults: **gRPC C++ required**; RocksDB + jemalloc bundled via FetchContent.
 
 ## Build & one-shot E2E
 

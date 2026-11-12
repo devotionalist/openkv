@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package cluster：Web 管控台访问 Meta / Storage（gRPC ExecLine）。
+// Package cluster：Web 管控台访问 Meta / Storage（类型化 gRPC）。
 package cluster
 
 import (
@@ -40,40 +40,250 @@ func withAdminToken(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "x-skv-admin-token", tok)
 }
 
+func dial(addr string) (*grpc.ClientConn, error) {
+	return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+func followRedirect(body string) (string, bool) {
+	if !strings.Contains(body, "not_leader") {
+		return "", false
+	}
+	i := strings.Index(body, "redirect=")
+	if i < 0 {
+		return "", false
+	}
+	cur := strings.TrimSpace(body[i+9:])
+	if j := strings.IndexAny(cur, " \t"); j >= 0 {
+		cur = cur[:j]
+	}
+	return cur, cur != ""
+}
+
+func simpleMsg(ok bool, msg, err string) string {
+	if msg != "" {
+		return msg
+	}
+	if err != "" {
+		return err
+	}
+	if ok {
+		return "OK"
+	}
+	return "ERR"
+}
+
+// TCPLine / StorageRPC：运维行命令 → AdminService 类型化 RPC（兼容历史调用方）。
 func TCPLine(addr, req string, timeout time.Duration) (string, error) {
-	return storageExecLine(addr, req, timeout)
+	return storageTyped(addr, req, timeout)
 }
 
-func storageExecLine(addr, req string, timeout time.Duration) (string, error) {
+func storageTyped(addr, req string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	ctx = withAdminToken(ctx)
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := dial(addr)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
-	resp, err := storagev1.NewAdminServiceClient(conn).ExecLine(ctx, &storagev1.ExecLineRequest{Line: req})
-	if err != nil {
-		return "", err
+	cli := storagev1.NewAdminServiceClient(conn)
+	parts := strings.Fields(req)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty")
 	}
-	return resp.GetBody(), nil
+	op := parts[0]
+	switch op {
+	case "PING":
+		_, err := cli.Ping(ctx, &storagev1.PingRequest{})
+		if err != nil {
+			return "", err
+		}
+		return "OK PONG", nil
+	case "STATS":
+		resp, err := cli.Stats(ctx, &storagev1.StatsRequest{})
+		if err != nil {
+			return "", err
+		}
+		return formatStorageStats(resp), nil
+	case "ADMIN_CAMPAIGN":
+		if len(parts) < 2 {
+			return "", fmt.Errorf("usage")
+		}
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.Campaign(ctx, &storagev1.CampaignRequest{RegionId: uint32(rid)})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_DESTROY_REGION":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.DestroyRegion(ctx, &storagev1.DestroyRegionRequest{RegionId: uint32(rid)})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_PROMOTE":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.Promote(ctx, &storagev1.PeerOpRequest{RegionId: uint32(rid), NodeId: parts[2]})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_REMOVE_PEER":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.RemovePeer(ctx, &storagev1.PeerOpRequest{RegionId: uint32(rid), NodeId: parts[2]})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_PEER_PROGRESS":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.PeerProgress(ctx, &storagev1.PeerOpRequest{RegionId: uint32(rid), NodeId: parts[2]})
+		if err != nil {
+			return "", err
+		}
+		if resp.Message != "" {
+			return resp.Message, nil
+		}
+		caught, learner := 0, 0
+		if resp.CaughtUp {
+			caught = 1
+		}
+		if resp.IsLearner {
+			learner = 1
+		}
+		return fmt.Sprintf("OK PROGRESS %d %d %d %d %d", resp.MatchIndex, resp.CommitIndex, resp.LastIndex, caught, learner), nil
+	case "ADMIN_TRANSFER_LEADER":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.TransferLeader(ctx, &storagev1.TransferRequest{ShardId: uint32(rid), TargetPeer: parts[2]})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_ADD_LEARNER":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		tok := parts[2]
+		at := strings.Index(tok, "@")
+		if at < 0 {
+			return "", fmt.Errorf("bad peer")
+		}
+		resp, err := cli.AddLearner(ctx, &storagev1.PeerOpRequest{
+			RegionId: uint32(rid), NodeId: tok[:at], Address: tok[at+1:],
+		})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_ENSURE_REGION":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		r := &storagev1.EnsureRegionRequest{RegionId: uint32(rid)}
+		if len(parts) >= 3 {
+			for _, item := range strings.Split(parts[2], ",") {
+				if item == "" {
+					continue
+				}
+				learner := strings.Contains(item, "*N")
+				item = strings.ReplaceAll(strings.ReplaceAll(item, "*N", ""), "*L", "")
+				at := strings.Index(item, "@")
+				if at < 0 {
+					continue
+				}
+				r.Peers = append(r.Peers, &storagev1.RaftPeer{
+					NodeId: item[:at], Address: item[at+1:], Learner: learner,
+				})
+			}
+		}
+		resp, err := cli.EnsureRegion(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_PLACE_REGION":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		r := &storagev1.PlaceRegionRequest{RegionId: uint32(rid)}
+		for _, id := range strings.Split(parts[2], ",") {
+			if id != "" {
+				r.DesiredPeers = append(r.DesiredPeers, id)
+			}
+		}
+		resp, err := cli.PlaceRegion(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_PREPARE_SPLIT":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		key, _ := hex.DecodeString(parts[2])
+		resp, err := cli.PrepareSplit(ctx, &storagev1.PrepareSplitRequest{LeftRegion: uint32(rid), SplitKey: key})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_SPLIT":
+		left, _ := strconv.ParseUint(parts[1], 10, 32)
+		right, _ := strconv.ParseUint(parts[2], 10, 32)
+		key, _ := hex.DecodeString(parts[3])
+		resp, err := cli.Split(ctx, &storagev1.SplitRequest{LeftRegion: uint32(left), RightRegion: uint32(right), SplitKey: key})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_MERGE":
+		left, _ := strconv.ParseUint(parts[1], 10, 32)
+		right, _ := strconv.ParseUint(parts[2], 10, 32)
+		resp, err := cli.Merge(ctx, &storagev1.MergeRequest{LeftRegion: uint32(left), RightRegion: uint32(right)})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, redirectErr(resp.RedirectTo)), nil
+	case "ADMIN_REGION_STATS":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.RegionStats(ctx, &storagev1.RegionStatsRequest{RegionId: uint32(rid)})
+		if err != nil {
+			return "", err
+		}
+		if resp.Message != "" && resp.Message != "OK" {
+			return resp.Message, nil
+		}
+		return fmt.Sprintf("OK REGION_STATS %d %d %d", resp.KeyCount, resp.ApproxBytes, resp.Epoch), nil
+	default:
+		return "", fmt.Errorf("unsupported storage op %s", op)
+	}
 }
 
-func metaExecLine(addr, req string, timeout time.Duration) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	ctx = withAdminToken(ctx)
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return "", err
+func redirectErr(redir string) string {
+	if redir == "" {
+		return ""
 	}
-	defer conn.Close()
-	resp, err := metav1.NewMetaServiceClient(conn).ExecLine(ctx, &metav1.ExecLineRequest{Line: req})
-	if err != nil {
-		return "", err
+	return "ERR not_leader redirect=" + redir
+}
+
+func formatStorageStats(s *storagev1.StatsResponse) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "OK STATS requests=%d gw=%d raft=%d sync=%d admin=%d meta_out=%d client=%d qdepth=%d qdrop=%d",
+		s.Requests, s.Gw, s.Raft, s.Sync, s.Admin, s.MetaOut, s.Client, s.Qdepth, s.Qdrop)
+	emit := func(key string, m map[string]uint64) {
+		if len(m) == 0 {
+			return
+		}
+		b.WriteByte(' ')
+		b.WriteString(key)
+		b.WriteByte('=')
+		first := true
+		for k, v := range m {
+			if !first {
+				b.WriteByte(',')
+			}
+			first = false
+			fmt.Fprintf(&b, "%s:%d", k, v)
+		}
 	}
-	return resp.GetBody(), nil
+	emit("peer_raft", s.PeerRaft)
+	emit("peer_sync", s.PeerSync)
+	emit("peer_raft_out", s.PeerRaftOut)
+	emit("peer_sync_out", s.PeerSyncOut)
+	emit("meta_out_peers", s.MetaOutPeers)
+	return b.String()
 }
 
 // StorageRPC 向 seed 发命令；遇 not_leader redirect= 则跟到 Leader（最多 6 跳）。
@@ -95,16 +305,9 @@ func StorageRPC(seedAddrs []string, req string, timeout time.Duration) (string, 
 				last = err
 				break
 			}
-			if strings.Contains(resp, "not_leader") {
-				if j := strings.Index(resp, "redirect="); j >= 0 {
-					cur = strings.TrimSpace(resp[j+9:])
-					if i := strings.IndexAny(cur, " \t"); i >= 0 {
-						cur = cur[:i]
-					}
-					continue
-				}
-				last = fmt.Errorf("%s", resp)
-				break
+			if next, ok := followRedirect(resp); ok {
+				cur = next
+				continue
 			}
 			return resp, nil
 		}
@@ -124,24 +327,20 @@ func TCPUp(addr string, ms int) bool {
 	return true
 }
 
-// MetaRPC 跟随 not_leader redirect。
+// MetaRPC 跟随 not_leader redirect（行命令 → MetaService 类型化）。
 func MetaRPC(metaAddrs []string, req string) (string, error) {
 	var last error
 	for _, addr := range metaAddrs {
 		cur := addr
 		for i := 0; i < 4; i++ {
-			resp, e := metaExecLine(cur, req, 3*time.Second)
+			resp, e := metaTyped(cur, req, 3*time.Second)
 			if e != nil {
 				last = e
 				break
 			}
-			if strings.Contains(resp, "not_leader") {
-				if j := strings.Index(resp, "redirect="); j >= 0 {
-					cur = strings.TrimSpace(resp[j+9:])
-					continue
-				}
-				last = fmt.Errorf("%s", resp)
-				break
+			if next, ok := followRedirect(resp); ok {
+				cur = next
+				continue
 			}
 			return resp, nil
 		}
@@ -150,6 +349,327 @@ func MetaRPC(metaAddrs []string, req string) (string, error) {
 		last = fmt.Errorf("no meta")
 	}
 	return "", last
+}
+
+func metaTyped(addr, req string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ctx = withAdminToken(ctx)
+	conn, err := dial(addr)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	cli := metav1.NewMetaServiceClient(conn)
+	parts := strings.Fields(req)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty")
+	}
+	op := parts[0]
+	switch op {
+	case "PING":
+		resp, err := cli.Ping(ctx, &metav1.PingRequest{})
+		if err != nil {
+			return "", err
+		}
+		if resp.Message != "" {
+			return resp.Message, nil
+		}
+		return "OK PONG", nil
+	case "WHO_LEADER":
+		resp, err := cli.WhoLeader(ctx, &metav1.WhoLeaderRequest{})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("OK LEADER %s %s", resp.LeaderId, resp.Address), nil
+	case "GET_ROUTE":
+		resp, err := cli.GetRoutingTable(ctx, &metav1.GetRoutingTableRequest{})
+		if err != nil {
+			return "", err
+		}
+		return formatRouteLine(resp), nil
+	case "GET_SAFE_POINT", "GET_SAFE":
+		resp, err := cli.GetSafePoint(ctx, &metav1.GetSafePointRequest{})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("OK SAFE %d %d %d", resp.SafePoint, resp.NextTs, resp.MinStartHint), nil
+	case "STATS":
+		resp, err := cli.Stats(ctx, &metav1.StatsRequest{})
+		if err != nil {
+			return "", err
+		}
+		return formatMetaStats(resp), nil
+	case "LIST_NODES":
+		r := &metav1.ListNodesRequest{}
+		if len(parts) >= 2 {
+			if parts[1] == "storage" {
+				r.Role = metav1.NodeRole_STORAGE
+			} else if parts[1] == "compute" {
+				r.Role = metav1.NodeRole_COMPUTE
+			}
+		}
+		resp, err := cli.ListNodes(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "OK NODES %d", len(resp.Nodes))
+		for _, n := range resp.Nodes {
+			role := "C"
+			if n.Role == metav1.NodeRole_STORAGE {
+				role = "S"
+			}
+			state := int(n.State)
+			// proto: JOINING=1 ACTIVE=2 …；行协议 0=Joining
+			if state > 0 {
+				state--
+			}
+			fmt.Fprintf(&b, " %s@%s:%s:%d", n.NodeId, n.Address, role, state)
+		}
+		return b.String(), nil
+	case "JOIN_NODE", "KICK_NODE", "STORE_DELETE", "DRAIN_NODE", "ACTIVATE_NODE", "OFFLINE_NODE", "REMOVE_TOMBSTONE":
+		if len(parts) < 2 {
+			return "", fmt.Errorf("usage")
+		}
+		r := &metav1.NodeIdRequest{NodeId: parts[1]}
+		var resp *metav1.SimpleResponse
+		var err error
+		switch op {
+		case "JOIN_NODE":
+			resp, err = cli.JoinNode(ctx, r)
+		case "KICK_NODE":
+			resp, err = cli.KickNode(ctx, r)
+		case "STORE_DELETE":
+			resp, err = cli.StoreDelete(ctx, r)
+		case "DRAIN_NODE":
+			resp, err = cli.DrainNode(ctx, r)
+		case "ACTIVATE_NODE":
+			resp, err = cli.ActivateNode(ctx, r)
+		case "OFFLINE_NODE":
+			resp, err = cli.OfflineNode(ctx, r)
+		case "REMOVE_TOMBSTONE":
+			resp, err = cli.RemoveTombstone(ctx, r)
+		}
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, resp.Error), nil
+	case "BALANCE":
+		r := &metav1.BalanceRequest{}
+		if len(parts) >= 2 {
+			n, _ := strconv.ParseUint(parts[1], 10, 32)
+			r.Count = uint32(n)
+		}
+		resp, err := cli.Balance(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, resp.Error), nil
+	case "SPLIT_REGION":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		key, _ := hex.DecodeString(parts[2])
+		resp, err := cli.SplitRegion(ctx, &metav1.SplitRegionRequest{RegionId: uint32(rid), SplitKey: key})
+		if err != nil {
+			return "", err
+		}
+		if !resp.Ok {
+			return simpleMsg(false, "", resp.Error), nil
+		}
+		return fmt.Sprintf("OK SPLIT %d %d", rid, resp.RightRegionId), nil
+	case "MERGE_REGIONS":
+		left, _ := strconv.ParseUint(parts[1], 10, 32)
+		right, _ := strconv.ParseUint(parts[2], 10, 32)
+		resp, err := cli.MergeRegions(ctx, &metav1.MergeRegionsRequest{LeftRegionId: uint32(left), RightRegionId: uint32(right)})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, resp.Error), nil
+	case "PLACE_REGION":
+		rid, _ := strconv.ParseUint(parts[1], 10, 32)
+		r := &metav1.PlaceRegionRequest{RegionId: uint32(rid)}
+		for _, id := range strings.Split(parts[2], ",") {
+			if id != "" {
+				r.PeerNodeIds = append(r.PeerNodeIds, id)
+			}
+		}
+		resp, err := cli.PlaceRegion(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, resp.Error), nil
+	case "FIND_MERGE_RIGHT":
+		left, _ := strconv.ParseUint(parts[1], 10, 32)
+		resp, err := cli.FindMergeRight(ctx, &metav1.FindMergeRightRequest{LeftRegionId: uint32(left)})
+		if err != nil {
+			return "", err
+		}
+		if !resp.Ok {
+			return simpleMsg(false, "", resp.Error), nil
+		}
+		return fmt.Sprintf("OK MERGE_RIGHT %d %d", left, resp.RightRegionId), nil
+	case "STORE_STATUS":
+		resp, err := cli.StoreStatus(ctx, &metav1.StoreStatusRequest{NodeId: parts[1]})
+		if err != nil {
+			return "", err
+		}
+		if !resp.Ok {
+			return simpleMsg(false, "", resp.Error), nil
+		}
+		if resp.Status != "" {
+			return resp.Status, nil
+		}
+		return "OK STORE " + parts[1], nil
+	case "LOCATE":
+		key, err := hex.DecodeString(parts[1])
+		if err != nil {
+			key = []byte(parts[1])
+		}
+		resp, err := cli.Locate(ctx, &metav1.LocateRequest{Key: key})
+		if err != nil {
+			return "", err
+		}
+		if !resp.Ok {
+			return simpleMsg(false, "", resp.Error), nil
+		}
+		sh := resp.Shard
+		return fmt.Sprintf("OK LOCATE %d %s %s %d", sh.ShardId, hex.EncodeToString(sh.StartKey), hex.EncodeToString(sh.EndKey), sh.Epoch), nil
+	case "ADVANCE_SAFE_POINT":
+		r := &metav1.AdvanceSafePointRequest{}
+		if len(parts) >= 2 {
+			sp, _ := strconv.ParseUint(parts[1], 10, 64)
+			r.SafePoint = sp
+		}
+		resp, err := cli.AdvanceSafePoint(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, resp.Error), nil
+	case "SCALE_OUT":
+		r := &metav1.ScaleOutRequest{NewStorageNodeId: parts[1]}
+		if len(parts) >= 3 {
+			for _, s := range strings.Split(parts[2], ",") {
+				if s == "" {
+					continue
+				}
+				id, _ := strconv.ParseUint(s, 10, 32)
+				r.ShardIds = append(r.ShardIds, uint32(id))
+			}
+		}
+		resp, err := cli.ScaleOut(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		if resp.Message != "" {
+			return resp.Message, nil
+		}
+		if resp.Accepted {
+			return "OK SCALE", nil
+		}
+		return "ERR", nil
+	case "CANCEL_SCALE":
+		r := &metav1.CancelScaleRequest{NodeId: parts[1]}
+		if len(parts) >= 3 {
+			rid, _ := strconv.ParseUint(parts[2], 10, 32)
+			r.RegionId = uint32(rid)
+		}
+		resp, err := cli.CancelScale(ctx, r)
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, resp.Error), nil
+	case "GET_SCALE":
+		resp, err := cli.GetScaleTask(ctx, &metav1.GetScaleTaskRequest{TaskId: parts[1]})
+		if err != nil {
+			return "", err
+		}
+		var shards []string
+		for _, id := range resp.ShardIds {
+			shards = append(shards, strconv.FormatUint(uint64(id), 10))
+		}
+		out := fmt.Sprintf("OK SCALE %s %d %g node=%s shards=%s", resp.TaskId, int(resp.State), resp.Progress, resp.NewNodeId, strings.Join(shards, ","))
+		if resp.Error != "" {
+			out += " error=" + resp.Error
+		}
+		return out, nil
+	case "LIST_SCALE":
+		resp, err := cli.ListScaleTasks(ctx, &metav1.ListScaleTasksRequest{})
+		if err != nil {
+			return "", err
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "OK SCALE_LIST %d", len(resp.Tasks))
+		for _, t := range resp.Tasks {
+			fmt.Fprintf(&b, " %s:%s:%d:%g", t.TaskId, t.NewNodeId, int(t.State), t.Progress)
+			if len(t.ShardIds) > 0 {
+				b.WriteByte(':')
+				for i, id := range t.ShardIds {
+					if i > 0 {
+						b.WriteByte(',')
+					}
+					b.WriteString(strconv.FormatUint(uint64(id), 10))
+				}
+			}
+		}
+		return b.String(), nil
+	case "BUMP_ROUTE":
+		resp, err := cli.BumpRoute(ctx, &metav1.BumpRouteRequest{})
+		if err != nil {
+			return "", err
+		}
+		return simpleMsg(resp.Ok, resp.Message, resp.Error), nil
+	default:
+		return "", fmt.Errorf("unsupported meta op %s", op)
+	}
+}
+
+func formatRouteLine(rt *metav1.RoutingTable) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "OK ROUTE %d %d 0", rt.Version, len(rt.Shards))
+	for _, sh := range rt.Shards {
+		fmt.Fprintf(&b, " %d:%s:%s:%d:", sh.ShardId, hex.EncodeToString(sh.StartKey), hex.EncodeToString(sh.EndKey), sh.Epoch)
+		for i, r := range sh.Replicas {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, "%s@%s", r.NodeId, r.Address)
+			if r.IsLeader {
+				b.WriteString("*L")
+			}
+			if r.IsLearner {
+				b.WriteString("*N")
+			}
+		}
+	}
+	return b.String()
+}
+
+func formatMetaStats(s *metav1.StatsResponse) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "OK STATS requests=%d gw=%d store=%d raft=%d sync=%d admin=%d client=%d route_ver=%d next_ts=%d tso_alloc=%d watch_waits=%d migrates=%d",
+		s.Requests, s.Gw, s.Store, s.Raft, s.Sync, s.Admin, s.Client, s.RouteVer, s.NextTs, s.TsoAlloc, s.WatchWaits, s.Migrates)
+	emit := func(key string, m map[string]uint64) {
+		if len(m) == 0 {
+			return
+		}
+		b.WriteByte(' ')
+		b.WriteString(key)
+		b.WriteByte('=')
+		first := true
+		for k, v := range m {
+			if !first {
+				b.WriteByte(',')
+			}
+			first = false
+			fmt.Fprintf(&b, "%s:%d", k, v)
+		}
+	}
+	emit("peer_raft", s.PeerRaft)
+	emit("peer_sync", s.PeerSync)
+	emit("peer_raft_out", s.PeerRaftOut)
+	emit("peer_sync_out", s.PeerSyncOut)
+	emit("peer_store", s.PeerStore)
+	return b.String()
 }
 
 type Replica struct {
@@ -175,66 +695,50 @@ type RouteTable struct {
 }
 
 func FetchRoute(metaAddrs []string) (*RouteTable, error) {
-	resp, err := MetaRPC(metaAddrs, "GET_ROUTE")
-	if err != nil {
-		return nil, err
-	}
-	return parseRoute(resp)
-}
-
-func parseRoute(resp string) (*RouteTable, error) {
-	parts := strings.Fields(resp)
-	if len(parts) < 4 || parts[0] != "OK" || parts[1] != "ROUTE" {
-		return nil, fmt.Errorf("bad route: %s", resp)
-	}
-	ver, _ := strconv.ParseUint(parts[2], 10, 64)
-	n, _ := strconv.Atoi(parts[3])
-	t := &RouteTable{Version: ver}
-	for _, tok := range parts[5:] {
-		colon := strings.SplitN(tok, ":", 5)
-		if len(colon) < 4 {
+	var last error
+	for _, addr := range metaAddrs {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx = withAdminToken(ctx)
+		conn, err := dial(addr)
+		if err != nil {
+			cancel()
+			last = err
 			continue
 		}
-		id64, _ := strconv.ParseUint(colon[0], 10, 32)
-		start, _ := hex.DecodeString(colon[1])
-		end, _ := hex.DecodeString(colon[2])
-		var epoch uint64 = 1
-		var rest string
-		if len(colon) == 5 {
-			epoch, _ = strconv.ParseUint(colon[3], 10, 64)
-			rest = colon[4]
-		} else {
-			rest = colon[3]
+		resp, err := metav1.NewMetaServiceClient(conn).GetRoutingTable(ctx, &metav1.GetRoutingTableRequest{})
+		conn.Close()
+		cancel()
+		if err != nil {
+			last = err
+			continue
 		}
-		rp := strings.Split(rest, ",")
+		return routingFromPB(resp), nil
+	}
+	if last == nil {
+		last = fmt.Errorf("no meta")
+	}
+	return nil, last
+}
+
+func routingFromPB(rt *metav1.RoutingTable) *RouteTable {
+	t := &RouteTable{Version: rt.Version}
+	for _, sh := range rt.Shards {
 		reg := Region{
-			ID: uint32(id64), Epoch: epoch,
-			StartKey: displayKey(start), EndKey: displayKey(end),
-			StartHex: hex.EncodeToString(start), EndHex: hex.EncodeToString(end),
+			ID: sh.ShardId, Epoch: sh.Epoch,
+			StartKey: displayKey(sh.StartKey), EndKey: displayKey(sh.EndKey),
+			StartHex: hex.EncodeToString(sh.StartKey), EndHex: hex.EncodeToString(sh.EndKey),
 		}
-		for i := 1; i < len(rp); i++ {
-			item := rp[i]
-			leader := strings.Contains(item, "*L")
-			learner := strings.Contains(item, "*N")
-			item = strings.ReplaceAll(item, "*L", "")
-			item = strings.ReplaceAll(item, "*N", "")
-			at := strings.Index(item, "@")
-			if at < 0 {
-				continue
-			}
+		for _, r := range sh.Replicas {
 			reg.Replicas = append(reg.Replicas, Replica{
-				NodeID: item[:at], Address: item[at+1:], IsLeader: leader, IsLearner: learner,
+				NodeID: r.NodeId, Address: r.Address, IsLeader: r.IsLeader, IsLearner: r.IsLearner,
 			})
 		}
 		t.Regions = append(t.Regions, reg)
-		if len(t.Regions) >= n {
-			break
-		}
 	}
 	if len(t.Regions) == 0 {
 		t.Regions = []Region{{ID: 0, StartKey: "−∞", EndKey: "+∞", Epoch: 1}}
 	}
-	return t, nil
+	return t
 }
 
 func displayKey(b []byte) string {
@@ -250,34 +754,45 @@ func displayKey(b []byte) string {
 }
 
 func GetSafePoint(metaAddrs []string) (safe, next, minHint uint64, err error) {
-	resp, err := MetaRPC(metaAddrs, "GET_SAFE_POINT")
-	if err != nil {
-		return 0, 0, 0, err
+	var last error
+	for _, addr := range metaAddrs {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx = withAdminToken(ctx)
+		conn, e := dial(addr)
+		if e != nil {
+			cancel()
+			last = e
+			continue
+		}
+		resp, e := metav1.NewMetaServiceClient(conn).GetSafePoint(ctx, &metav1.GetSafePointRequest{})
+		conn.Close()
+		cancel()
+		if e != nil {
+			last = e
+			continue
+		}
+		return resp.SafePoint, resp.NextTs, resp.MinStartHint, nil
 	}
-	parts := strings.Fields(resp)
-	if len(parts) < 5 || parts[0] != "OK" || parts[1] != "SAFE" {
-		return 0, 0, 0, fmt.Errorf("bad safe point: %s", resp)
+	if last == nil {
+		last = fmt.Errorf("no meta")
 	}
-	safe, _ = strconv.ParseUint(parts[2], 10, 64)
-	next, _ = strconv.ParseUint(parts[3], 10, 64)
-	minHint, _ = strconv.ParseUint(parts[4], 10, 64)
-	return safe, next, minHint, nil
+	return 0, 0, 0, last
 }
 
 type NodeInfo struct {
-	ID             string   `json:"id"`
-	Address        string   `json:"address"`
-	Role           string   `json:"role"`
-	State          string   `json:"state"`
-	StateCode      int      `json:"state_code"`
-	Up             bool     `json:"up"`
-	Regions        *int     `json:"regions,omitempty"`
-	Leaders        *int     `json:"leaders,omitempty"`
-	RegionIDs      []uint32 `json:"region_ids,omitempty"`       // 本节点承载的 Region
-	LeaderRegionIDs []uint32 `json:"leader_region_ids,omitempty"` // 本节点任 Leader 的 Region
+	ID              string   `json:"id"`
+	Address         string   `json:"address"`
+	Role            string   `json:"role"`
+	State           string   `json:"state"`
+	StateCode       int      `json:"state_code"`
+	Up              bool     `json:"up"`
+	Regions         *int     `json:"regions,omitempty"`
+	Leaders         *int     `json:"leaders,omitempty"`
+	RegionIDs       []uint32 `json:"region_ids,omitempty"`
+	LeaderRegionIDs []uint32 `json:"leader_region_ids,omitempty"`
 }
 
-// NodeStateName 对齐 Meta NodeState 枚举。
+// NodeStateName 对齐 Meta NodeState 枚举（行协议 0-based）。
 func NodeStateName(code int) string {
 	names := []string{"Joining", "Active", "Draining", "Offline", "Tombstone"}
 	if code >= 0 && code < len(names) {
@@ -372,7 +887,7 @@ func EnrichStorageStatus(metaAddrs []string, nodes []NodeInfo) {
 	EnrichNodeRegions(metaAddrs, nodes)
 }
 
-// EnrichNodeRegions 按 GET_ROUTE 填充每个 Store 上的 Region / Leader Region 列表。
+// EnrichNodeRegions 按路由填充每个 Store 上的 Region / Leader Region 列表。
 func EnrichNodeRegions(metaAddrs []string, nodes []NodeInfo) {
 	table, err := FetchRoute(metaAddrs)
 	if err != nil || table == nil {

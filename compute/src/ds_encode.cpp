@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file ds_encode.cpp
-// DS blob 编解码实现。
+// DS blob 编解码：Hash/Set/List/ZSet 的 SKVD 封装、meta_key 后缀、区间归一化。
 
 #include "openkv/compute/ds_encode.hpp"
 
@@ -26,12 +26,14 @@ namespace {
 constexpr unsigned char kMarker[] = {0x00, 0x01, 'd', 's', 0x00};
 constexpr char kMagic[] = {'S', 'K', 'V', 'D'};
 
+/// 追加 4 字节大端 uint32。
 void put_u32_be(std::string* buf, uint32_t v) {
   const char n[4] = {static_cast<char>((v >> 24) & 0xff), static_cast<char>((v >> 16) & 0xff),
                      static_cast<char>((v >> 8) & 0xff), static_cast<char>(v & 0xff)};
   buf->append(n, 4);
 }
 
+/// 消费 4 字节大端 uint32；不足则 CorruptError。
 uint32_t get_u32_be(std::string_view& r) {
   if (r.size() < 4) throw CorruptError();
   const uint32_t v = (static_cast<uint32_t>(static_cast<unsigned char>(r[0])) << 24) |
@@ -42,11 +44,13 @@ uint32_t get_u32_be(std::string_view& r) {
   return v;
 }
 
+/// 长度前缀 + 原始字节写入。
 void put_bytes(std::string* buf, std::string_view b) {
   put_u32_be(buf, static_cast<uint32_t>(b.size()));
   buf->append(b.data(), b.size());
 }
 
+/// 读长度前缀字节串；超 64MiB 或截断则 CorruptError。
 std::string get_bytes(std::string_view& r) {
   const uint32_t ln = get_u32_be(r);
   if (ln > (64u << 20) || r.size() < ln) throw CorruptError();
@@ -55,6 +59,7 @@ std::string get_bytes(std::string_view& r) {
   return out;
 }
 
+/// SKVD magic + typ + payload 组装完整 blob。
 std::string wrap(char typ, std::string_view payload) {
   std::string out;
   out.reserve(5 + payload.size());
@@ -64,6 +69,7 @@ std::string wrap(char typ, std::string_view payload) {
   return out;
 }
 
+/// 校验 magic，拆出类型字节与 payload 视图。
 std::pair<char, std::string_view> unwrap(std::string_view blob) {
   if (blob.size() < 5 || std::memcmp(blob.data(), kMagic, 4) != 0) throw CorruptError();
   return {blob[4], blob.substr(5)};
@@ -77,6 +83,7 @@ std::string_view check_type(std::string_view blob, char want) {
   return payload;
 }
 
+/// 追加 IEEE754 double 大端 8 字节。
 void put_f64_be(std::string* buf, double v) {
   static_assert(sizeof(double) == 8, "need IEEE754 double");
   uint64_t bits = 0;
@@ -88,6 +95,7 @@ void put_f64_be(std::string* buf, double v) {
   buf->append(n, 8);
 }
 
+/// 消费大端 double；不足 8 字节则 CorruptError。
 double get_f64_be(std::string_view& r) {
   if (r.size() < 8) throw CorruptError();
   uint64_t bits = 0;
@@ -102,6 +110,7 @@ double get_f64_be(std::string_view& r) {
 
 }  // namespace
 
+/// 用户 key 追加 DS meta marker，得到元数据键。
 std::string meta_key(std::string_view ukey) {
   std::string out;
   out.reserve(ukey.size() + sizeof(kMarker));
@@ -110,6 +119,7 @@ std::string meta_key(std::string_view ukey) {
   return out;
 }
 
+/// Hash → count + (field,value)* 再 wrap 为 Hash 类型 blob。
 std::string encode_hash(const Hash& h) {
   std::string payload;
   put_u32_be(&payload, static_cast<uint32_t>(h.size()));
@@ -120,6 +130,7 @@ std::string encode_hash(const Hash& h) {
   return wrap(kTypeHash, payload);
 }
 
+/// 解 Hash blob；空输入得空表，否则按 count 读字段对。
 Hash decode_hash(std::string_view blob) {
   auto payload = check_type(blob, kTypeHash);
   if (payload.empty() && blob.empty()) return {};
@@ -134,6 +145,7 @@ Hash decode_hash(std::string_view blob) {
   return h;
 }
 
+/// Set → count + member* 再 wrap。
 std::string encode_set(const Set& s) {
   std::string payload;
   put_u32_be(&payload, static_cast<uint32_t>(s.size()));
@@ -141,6 +153,7 @@ std::string encode_set(const Set& s) {
   return wrap(kTypeSet, payload);
 }
 
+/// 解 Set blob；空输入得空集。
 Set decode_set(std::string_view blob) {
   auto payload = check_type(blob, kTypeSet);
   if (blob.empty()) return {};
@@ -150,6 +163,7 @@ Set decode_set(std::string_view blob) {
   return s;
 }
 
+/// List → count + elem* 再 wrap。
 std::string encode_list(const List& l) {
   std::string payload;
   put_u32_be(&payload, static_cast<uint32_t>(l.size()));
@@ -157,6 +171,7 @@ std::string encode_list(const List& l) {
   return wrap(kTypeList, payload);
 }
 
+/// 解 List blob；空输入得空列表。
 List decode_list(std::string_view blob) {
   auto payload = check_type(blob, kTypeList);
   if (blob.empty()) return {};
@@ -167,6 +182,7 @@ List decode_list(std::string_view blob) {
   return l;
 }
 
+/// 负下标相对长度归一到半开 [start,stop)；非法则 nullopt。
 std::optional<std::pair<size_t, size_t>> normalize_range(int64_t n, int64_t start, int64_t stop) {
   if (n <= 0) return std::nullopt;
   if (start < 0) start = n + start;
@@ -179,6 +195,7 @@ std::optional<std::pair<size_t, size_t>> normalize_range(int64_t n, int64_t star
   return std::make_pair(static_cast<size_t>(start), static_cast<size_t>(stop) + 1);
 }
 
+/// ZSet 展成条目并按 score、member 排序。
 std::vector<ZEntry> z_sorted(const ZSet& z) {
   std::vector<ZEntry> ents;
   ents.reserve(z.size());
@@ -190,6 +207,7 @@ std::vector<ZEntry> z_sorted(const ZSet& z) {
   return ents;
 }
 
+/// 排序后写 count+(member,score)*，wrap 为 ZSet blob。
 std::string encode_zset(const ZSet& z) {
   auto ents = z_sorted(z);
   std::string payload;
@@ -201,6 +219,7 @@ std::string encode_zset(const ZSet& z) {
   return wrap(kTypeZSet, payload);
 }
 
+/// 解 ZSet blob；空输入得空表。
 ZSet decode_zset(std::string_view blob) {
   auto payload = check_type(blob, kTypeZSet);
   if (blob.empty()) return {};

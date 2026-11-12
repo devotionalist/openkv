@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file grpc_server.cpp
-// Meta gRPC：CallbackService + WorkPool；GetTs/ExecLine(GET_TS) 走 alloc_ts_async。
+// Meta gRPC：CallbackService + WorkPool；GetTs 走 alloc_ts_async。
 
 #include "openkv/meta/grpc_server.hpp"
 
@@ -21,6 +21,7 @@
 #include "openkv/codec.hpp"
 #include "openkv/grpc_auth.hpp"
 #include "openkv/logging.hpp"
+#include "openkv/peer_counter.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/raft/raft_node.hpp"
 #include "openkv/work_pool.hpp"
@@ -53,25 +54,14 @@ void fill_ts_response(pb::GetTsResponse* resp, std::string_view line) {
   std::istringstream iss{std::string(line)};
   std::string ok, tag;
   uint64_t ts = 0;
-  if (iss >> ok >> tag >> ts) resp->set_ts(ts);
-}
-
-bool line_is_get_ts(std::string_view line) {
-  return line == "GET_TS" || line.rfind("GET_TS ", 0) == 0;
-}
-
-uint32_t parse_get_ts_count(std::string_view line) {
-  if (line == "GET_TS") return 1;
-  std::istringstream iss{std::string(line)};
-  std::string op;
   uint32_t count = 1;
-  if (iss >> op >> count) {
-    if (count == 0) count = 1;
-    if (count > 10000) count = 10000;
-    return count;
+  if (iss >> ok >> tag >> ts) {
+    resp->set_ts(ts);
+    if (iss >> count) resp->set_count(count);
+    else resp->set_count(1);
   }
-  return 1;
 }
+
 
 class MetaServiceImpl final : public pb::MetaService::CallbackService {
  public:
@@ -111,8 +101,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                                    pb::RegisterNodeResponse* resp) override {
     return defer(ctx, false, [this, req, resp] {
       const auto& n = req->node();
+      const char* role = n.role() == pb::COMPUTE ? "compute" : "storage";
       std::ostringstream oss;
-      oss << "REGISTER " << n.node_id() << " " << n.address() << " STORAGE";
+      oss << "REGISTER " << role << " " << n.node_id() << " " << n.address();
       auto line = meta_.handle_line(oss.str());
       resp->set_ok(line_ok(line));
       resp->set_assigned_id(n.node_id());
@@ -124,8 +115,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                                 pb::HeartbeatResponse* resp) override {
     return defer(ctx, false, [this, req, resp] {
       std::ostringstream oss;
-      oss << "HEARTBEAT " << req->node_id();
+      oss << "HEARTBEAT " << req->node_id() << " " << req->leader_shards_size();
       for (uint32_t s : req->leader_shards()) oss << " " << s;
+      for (const auto& kv : req->metrics()) oss << " " << kv.first << "=" << kv.second;
       auto line = meta_.handle_line(oss.str());
       resp->set_ok(line_ok(line));
       if (!resp->ok()) resp->set_error(line);
@@ -219,11 +211,45 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return defer(ctx, false, [this] { meta_.handle_line("LIST_SCALE"); });
   }
 
-  ServerUnaryReactor* ListNodes(CallbackServerContext* ctx, const pb::ListNodesRequest*,
+  ServerUnaryReactor* ListNodes(CallbackServerContext* ctx, const pb::ListNodesRequest* req,
                                 pb::ListNodesResponse* resp) override {
-    return defer(ctx, false, [this, resp] {
-      meta_.handle_line("LIST_NODES");
-      (void)resp;
+    return defer(ctx, false, [this, req, resp] {
+      std::string line = "LIST_NODES";
+      if (req->role() == pb::STORAGE) line += " storage";
+      else if (req->role() == pb::COMPUTE) line += " compute";
+      auto body = meta_.handle_line(line);
+      std::istringstream iss(body);
+      std::string ok, tag;
+      size_t n = 0;
+      if (!(iss >> ok >> tag >> n) || ok != "OK") return;
+      for (size_t i = 0; i < n; ++i) {
+        std::string tok;
+        if (!(iss >> tok)) break;
+        auto at = tok.find('@');
+        if (at == std::string::npos) continue;
+        auto r1 = tok.rfind(':');
+        if (r1 == std::string::npos || r1 == 0) continue;
+        auto r2 = tok.rfind(':', r1 - 1);
+        if (r2 == std::string::npos || r2 <= at) continue;
+        auto* ninfo = resp->add_nodes();
+        ninfo->set_node_id(tok.substr(0, at));
+        ninfo->set_address(tok.substr(at + 1, r2 - at - 1));
+        const char role = tok[r2 + 1];
+        ninfo->set_role(role == 'S' ? pb::STORAGE : pb::COMPUTE);
+        int state = 0;
+        try {
+          state = std::stoi(tok.substr(r1 + 1));
+        } catch (...) {
+        }
+        // 行协议 0-based → proto 枚举（JOINING=1 …）
+        switch (state) {
+          case 0: ninfo->set_state(pb::JOINING); break;
+          case 1: ninfo->set_state(pb::ACTIVE); break;
+          case 2: ninfo->set_state(pb::DRAINING); break;
+          case 3: ninfo->set_state(pb::OFFLINE); break;
+          default: ninfo->set_state(pb::OFFLINE); break;
+        }
+      }
     });
   }
 
@@ -254,7 +280,14 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       oss << "SPLIT_REGION " << req->region_id() << " " << openkv::to_hex(req->split_key());
       auto line = meta_.handle_line(oss.str());
       resp->set_ok(line_ok(line));
-      if (!resp->ok()) resp->set_error(line);
+      if (!resp->ok()) {
+        resp->set_error(line);
+        return;
+      }
+      std::istringstream iss(line);
+      std::string ok, tag;
+      uint32_t left = 0, right = 0;
+      if (iss >> ok >> tag >> left >> right) resp->set_right_region_id(right);
     });
   }
 
@@ -311,10 +344,11 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return defer(ctx, false, [this] { meta_.handle_line("LIST_MIGRATE"); });
   }
 
-  ServerUnaryReactor* Balance(CallbackServerContext* ctx, const pb::BalanceRequest*,
+  ServerUnaryReactor* Balance(CallbackServerContext* ctx, const pb::BalanceRequest* req,
                               pb::SimpleResponse* resp) override {
-    return defer(ctx, true, [this, resp] {
-      auto line = meta_.handle_line("BALANCE");
+    return defer(ctx, true, [this, req, resp] {
+      uint32_t n = req->count() == 0 ? 1 : req->count();
+      auto line = meta_.handle_line("BALANCE " + std::to_string(n));
       resp->set_ok(line_ok(line));
       resp->set_message(line);
     });
@@ -323,9 +357,65 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
   ServerUnaryReactor* SuggestPlace(CallbackServerContext* ctx, const pb::SuggestPlaceRequest* req,
                                    pb::SuggestPlaceResponse* resp) override {
     return defer(ctx, false, [this, req, resp] {
-      auto line = meta_.handle_line("SUGGEST_PLACE " + std::to_string(req->count()));
-      (void)line;
-      (void)resp;
+      std::ostringstream oss;
+      oss << "SUGGEST_PLACE";
+      if (!req->avoid_node_ids().empty()) {
+        oss << " avoid=";
+        for (int i = 0; i < req->avoid_node_ids_size(); ++i) {
+          if (i) oss << ',';
+          oss << req->avoid_node_ids(i);
+        }
+      }
+      auto line = meta_.handle_line(oss.str());
+      std::istringstream iss(line);
+      std::string ok, tag;
+      size_t n = 0;
+      if (iss >> ok >> tag >> n) {
+        for (size_t i = 0; i < n; ++i) {
+          std::string id;
+          if (!(iss >> id)) break;
+          resp->add_node_ids(id);
+        }
+      }
+    });
+  }
+
+  ServerUnaryReactor* CancelScale(CallbackServerContext* ctx, const pb::CancelScaleRequest* req,
+                                  pb::SimpleResponse* resp) override {
+    return defer(ctx, true, [this, req, resp] {
+      std::ostringstream oss;
+      oss << "CANCEL_SCALE " << req->node_id();
+      if (req->region_id() != 0) oss << " " << req->region_id();
+      auto line = meta_.handle_line(oss.str());
+      resp->set_ok(line_ok(line));
+      resp->set_message(line);
+    });
+  }
+
+  ServerUnaryReactor* Stats(CallbackServerContext* ctx, const pb::StatsRequest*,
+                            pb::StatsResponse* resp) override {
+    return defer(ctx, false, [this, resp] {
+      const auto snap = meta_.stats_snapshot();
+      resp->set_requests(snap.requests);
+      resp->set_gw(snap.gw);
+      resp->set_store(snap.store);
+      resp->set_raft(snap.raft);
+      resp->set_sync(snap.sync);
+      resp->set_admin(snap.admin);
+      resp->set_client(snap.client);
+      resp->set_route_ver(snap.route_ver);
+      resp->set_next_ts(snap.next_ts);
+      resp->set_tso_alloc(snap.tso_alloc);
+      resp->set_watch_waits(snap.watch_waits);
+      resp->set_migrates(snap.migrates);
+      auto fill = [](auto* dst, const auto& src) {
+        for (const auto& kv : src) (*dst)[kv.first] = kv.second;
+      };
+      fill(resp->mutable_peer_raft(), snap.peer_raft);
+      fill(resp->mutable_peer_sync(), snap.peer_sync);
+      fill(resp->mutable_peer_raft_out(), snap.peer_raft_out);
+      fill(resp->mutable_peer_sync_out(), snap.peer_sync_out);
+      fill(resp->mutable_peer_store(), snap.peer_store);
     });
   }
 
@@ -339,10 +429,12 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
   }
 
   // 热路径：接收线程只发起 alloc_ts_async，apply 回调里 Finish。
-  ServerUnaryReactor* GetTs(CallbackServerContext* ctx, const pb::GetTsRequest*,
+  ServerUnaryReactor* GetTs(CallbackServerContext* ctx, const pb::GetTsRequest* req,
                             pb::GetTsResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
-    meta_.alloc_ts_async(1, [reactor, resp](std::string line) {
+    uint32_t count = req->count() == 0 ? 1 : req->count();
+    if (count > 10000) count = 10000;
+    meta_.alloc_ts_async(count, [reactor, resp](std::string line) {
       fill_ts_response(resp, line);
       reactor->Finish(Status::OK);
     });
@@ -355,8 +447,12 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       auto line = meta_.handle_line("GET_SAFE_POINT");
       std::istringstream iss(line);
       std::string ok, tag;
-      uint64_t sp = 0;
-      if (iss >> ok >> tag >> sp) resp->set_safe_point(sp);
+      uint64_t sp = 0, next = 0, hint = 0;
+      if (iss >> ok >> tag >> sp) {
+        resp->set_safe_point(sp);
+        if (iss >> next) resp->set_next_ts(next);
+        if (iss >> hint) resp->set_min_start_hint(hint);
+      }
     });
   }
 
@@ -415,43 +511,14 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return defer(ctx, false, [this, req, resp] {
       auto line = meta_.handle_line("FIND_MERGE_RIGHT " + std::to_string(req->left_region_id()));
       resp->set_ok(line_ok(line));
-      if (!resp->ok()) resp->set_error(line);
-    });
-  }
-
-  ServerUnaryReactor* ExecLine(CallbackServerContext* ctx, const pb::ExecLineRequest* req,
-                               pb::ExecLineResponse* resp) override {
-    const auto& line = req->line();
-    const bool need_auth =
-        line.rfind("AUTH ", 0) == 0 || line.rfind("SCALE_", 0) == 0 ||
-        line.rfind("DRAIN_", 0) == 0 || line.rfind("ACTIVATE_", 0) == 0 ||
-        line.rfind("OFFLINE_", 0) == 0 || line.rfind("JOIN_", 0) == 0 ||
-        line.rfind("KICK_", 0) == 0 || line.rfind("SPLIT_", 0) == 0 ||
-        line.rfind("MERGE_", 0) == 0 || line.rfind("PLACE_", 0) == 0 ||
-        line.rfind("SCHEDULE_", 0) == 0 || line.rfind("CANCEL_", 0) == 0 ||
-        line.rfind("BALANCE", 0) == 0 || line.rfind("BUMP_", 0) == 0 ||
-        line.rfind("ADVANCE_", 0) == 0 || line.rfind("REMOVE_", 0) == 0 ||
-        line.rfind("STORE_DELETE", 0) == 0;
-    if (need_auth) {
-      if (auto st = auth_write(ctx); !st.ok()) {
-        auto* reactor = ctx->DefaultReactor();
-        reactor->Finish(st);
-        return reactor;
+      if (!resp->ok()) {
+        resp->set_error(line);
+        return;
       }
-    }
-    // GET_TS 热路径：接收线程只发起 alloc_ts_async。
-    if (line_is_get_ts(line)) {
-      auto* reactor = ctx->DefaultReactor();
-      meta_.alloc_ts_async(parse_get_ts_count(line), [reactor, resp](std::string body) {
-        resp->set_body(std::move(body));
-        reactor->Finish(Status::OK);
-      });
-      return reactor;
-    }
-    AdminSession sess;
-    if (need_auth) sess.authenticated = true;
-    return defer(ctx, false, [this, line = std::string(line), sess, resp]() mutable {
-      resp->set_body(meta_.handle_line(line, &sess));
+      std::istringstream iss(line);
+      std::string ok, tag;
+      uint32_t left = 0, right = 0;
+      if (iss >> ok >> tag >> left >> right) resp->set_right_region_id(right);
     });
   }
 

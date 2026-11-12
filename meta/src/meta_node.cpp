@@ -23,6 +23,7 @@
 #include "openkv/meta/meta_node.hpp"
 
 #include "openkv/admin_acl.hpp"
+#include "openkv/admin_rpc.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/codec.hpp"
 #include "openkv/grpc_auth.hpp"
@@ -30,9 +31,6 @@
 #include "openkv/meta/grpc_server.hpp"
 #include "openkv/net/tcp_line_client.hpp"
 
-#include <grpcpp/grpcpp.h>
-#include "storage/v1/storage.grpc.pb.h"
-#include "storage/v1/storage.pb.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -547,9 +545,10 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       const bool known_same =
           existing && existing->address == n.address && existing->role == n.role;
       if (known_same) {
-        // Offline 须走 Raft register_node（→ Joining），禁止本地 touch_lease 升成 Active，
-        // 否则 JOIN_NODE 会 ERR not_pending，且 Follower 仍见 Offline。
-        if (existing->state == NodeState::kOffline) {
+        // Offline / 误标 Joining（但已持副本）：须走 Raft register_node 升 Active，
+        // 禁止本地 touch_lease，否则 Follower 状态不一致。
+        if (existing->state == NodeState::kOffline ||
+            existing->state == NodeState::kJoining) {
           if (!replicate(cmd, &err, &redir)) {
             return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
           }
@@ -745,7 +744,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
           return "ERR not_pending";  // 仅待加入 / Offline 可加入
         }
         if (cur->address.empty()) return "ERR no_address";
-        // 可用性：gRPC Admin ExecLine PING
+        // 可用性：gRPC AdminService.Ping
         try {
           auto pong = storage_rpc(cur->address, "PING");
           if (!proto::starts_with_ok(pong)) {
@@ -1367,7 +1366,6 @@ std::optional<std::string> MetaNode::region_leader_addr(uint32_t region_id) cons
   return std::nullopt;
 }
 
-// gRPC AdminService.ExecLine。
 // ConfChange / 快照相关 ADMIN 可能 >3s，超时会导致管控台「增加副本」在 add_learner 阶段失败。
 std::string MetaNode::storage_rpc(std::string addr, const std::string& req) const {
   int timeout_ms = proto::timeout_ms::kStorageRpcDefault;
@@ -1375,33 +1373,36 @@ std::string MetaNode::storage_rpc(std::string addr, const std::string& req) cons
       req.rfind(proto::kOpAdminRemovePeer, 0) == 0 ||
       req.rfind(proto::kAdminEnsurePrefix, 0) == 0 ||
       req.rfind(proto::kAdminTransferPrefix, 0) == 0 ||
-      req.rfind(proto::kOpAdminPeerProgress, 0) == 0) {
+      req.rfind(proto::kOpAdminPeerProgress, 0) == 0 ||
+      req.rfind(proto::kOpAdminPlaceRegion, 0) == 0) {
     timeout_ms = proto::timeout_ms::kStorageRpcAdmin;
   }
-  for (int hop = 0; hop < 6; ++hop) {
-    if (addr.rfind("0.0.0.0", 0) == 0) addr.replace(0, 7, "127.0.0.1");
-    auto ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
-    auto stub = ::storage::v1::AdminService::NewStub(ch);
-    ::storage::v1::ExecLineRequest er;
-    er.set_line(req);
-    ::storage::v1::ExecLineResponse eres;
-    grpc::ClientContext ctx;
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
-    grpc_attach_admin_token(&ctx, admin_token_);
-    auto st = stub->ExecLine(&ctx, er, &eres);
-    if (!st.ok()) throw std::runtime_error("storage_rpc grpc: " + st.error_message());
-    std::string buf = eres.body();
-    if (buf.find("not_leader") != std::string::npos) {
-      auto p = buf.find("redirect=");
-      if (p == std::string::npos) throw std::runtime_error(buf);
-      addr = buf.substr(p + 9);
-      auto sp = addr.find_first_of(" \t\r\n");
-      if (sp != std::string::npos) addr = addr.substr(0, sp);
-      continue;
-    }
-    return buf;
-  }
-  throw std::runtime_error("storage_rpc redirect loop");
+  return openkv::admin_typed_rpc(std::move(addr), req, admin_token_, timeout_ms);
+}
+
+MetaNode::StatsSnapshot MetaNode::stats_snapshot() const {
+  StatsSnapshot s;
+  const auto raft_all = req_raft_.load() + transport_.out_raft_total();
+  const auto sync_all = req_sync_.load() + transport_.out_sync_total();
+  auto rt = state_->routing_table();
+  s.requests = req_total_.load() + transport_.out_raft_total() + transport_.out_sync_total();
+  s.gw = req_gw_.load();
+  s.store = req_store_.load();
+  s.raft = raft_all;
+  s.sync = sync_all;
+  s.admin = req_admin_.load();
+  s.client = req_gw_.load() + req_store_.load();
+  s.route_ver = rt.version;
+  s.next_ts = state_->next_ts();
+  s.tso_alloc = tso_alloc_total_.load();
+  s.watch_waits = route_watch_waits_.load();
+  s.migrates = state_->list_migrates().size();
+  s.peer_raft = peer_raft_.snapshot();
+  s.peer_sync = peer_sync_.snapshot();
+  s.peer_store = peer_store_.snapshot();
+  s.peer_raft_out = transport_.snapshot_out_raft();
+  s.peer_sync_out = transport_.snapshot_out_sync();
+  return s;
 }
 
 void MetaNode::stop() {

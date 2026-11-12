@@ -12,7 +12,6 @@
 |------|------|
 | 网络协议 | **全链路强制 gRPC**（见 [NETWORKING.md](../NETWORKING.md)、[flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md)） |
 | 异步网络 | gRPC **Callback 接收线程** + **WorkPool**；热路径 `propose_async` / async stub；Raft Transport worker（见 [flows/22-async-threading-model.md](../flows/22-async-threading-model.md)） |
-| 高性能异步 IO | Seastar **可选**（默认 OFF；业务路径未接入，见 [SEASTAR_NET.md](SEASTAR_NET.md)） |
 | 持久化存储 | RocksDB（单 Store 一份 KV；Region 靠 KeyRange） |
 | 强一致 | Multi-Raft（每 Region 一个 Raft Group，默认 RF=3）；生产要求见 [MULTI_RAFT_PRODUCTION.md](../production/MULTI_RAFT_PRODUCTION.md) |
 | 对外 API | gRPC → C++ Compute Gateway（`KVService` + `DSService`，见 [DATA_STRUCTURES.md](DATA_STRUCTURES.md)） |
@@ -21,7 +20,7 @@
 
 ## 逻辑架构（当前实现）
 
-本地默认可运行形态：**C++ Gateway + C++ Meta/Storage（gRPC）+ RocksDB**；Seastar 默认不编。
+本地默认可运行形态：**C++ Gateway + C++ Meta/Storage（gRPC）+ RocksDB**。
 
 ```
 ┌─────────────┐
@@ -48,7 +47,7 @@
 └───────────────┘
 ```
 
-默认网络为 **gRPC**（强制）：KV / Meta / Admin / 节点间 Raft 同端口多路复用。`OPENKV_USE_SEASTAR=ON` 仅链接库与占位头文件，**尚不**把 Meta/Storage IO 迁到 reactor。详见 [NETWORKING.md](../NETWORKING.md)、[SEASTAR_NET.md](SEASTAR_NET.md)、[flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md)。
+默认网络为 **gRPC**（强制）：KV / Meta / Admin / 节点间 Raft 同端口多路复用。详见 [NETWORKING.md](../NETWORKING.md)、[flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md)、[flows/22-async-threading-model.md](../flows/22-async-threading-model.md)。
 
 ## 本地默认拓扑
 
@@ -120,6 +119,6 @@ deploy/          Docker Compose + Helm chart（k8s HA，见 flows/K8S_HELM.md）
 
 ## 技术栈
 
-- **C++20**：Meta / Storage / Raft / skv；**gRPC C++ 强制**；RocksDB（FetchContent）；Seastar 可选未接入业务
+- **C++20**：Meta / Storage / Raft / skv；**gRPC C++ 强制**；RocksDB（FetchContent）
 - **Go 1.22+**：独立 `openkv-client-go`；本仓 `client/go` 仅 examples / 工具（网关为 C++）
 - 自研轻量 Multi-Raft + raftstore Ready 外提

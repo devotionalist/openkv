@@ -13,7 +13,7 @@ OpenKV 是基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV：M
 | Meta ×3 | 路由、拓扑、调度 | 8500 | gRPC `MetaService` |
 | Storage ×N | 数据 + Multi-Raft | 9100（集群内同端口、不同 Pod） | gRPC Store / Raft / Admin |
 | Gateway | 无状态计算入口（客户端连这里） | 19000 | gRPC `KVService` / `DSService` |
-| Web 管控台 | 拓扑 / 运维 / Console | 19100 | HTTP（后端再调 gRPC） |
+| Web 管控台 | 拓扑 / 运维 | 19100 | HTTP（后端再调 gRPC） |
 
 ```
 Client / skv / Web Console
@@ -25,7 +25,7 @@ Client / skv / Web Console
    Storage ×N（RF=3；节点间 Raft 亦为 gRPC）
 ```
 
-编译默认**不需要** Seastar；**必须**能编过 gRPC C++（系统库或 CMake FetchContent）。
+**必须**能编过 gRPC C++（系统库或 CMake FetchContent）。
 
 ---
 
@@ -72,9 +72,8 @@ go run ./examples/basic 127.0.0.1:19000
 |------|------|
 | **总览** | 集群拓扑、节点在线状态、流量 |
 | **运维** | Region 分裂/合并、**待加入节点**、Balance |
-| **Console** | 经 Gateway 的 Put/Get/Locate 与 Hash/Set/List/ZSet |
 
-本地进程启停需要 Web 带 `-run-dir`（`make admin-run` 已配置）。Kubernetes 部署一般**不**配 `-run-dir`，进程由集群管理。
+KV / 数据结构调试用 SDK 或 `skv`（Web 已去掉 Console 页）。本地进程启停需要 Web 带 `-run-dir`（`make admin-run` 已配置）。Kubernetes 部署一般**不**配 `-run-dir`，进程由集群管理。
 
 ---
 

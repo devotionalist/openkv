@@ -72,7 +72,7 @@ TSO 批缓存说明：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。
 
 ## 时序要点
 
-1. Gateway 热路径在 **Callback 接收线程** 取本地 TS，再 `store_exec_line_async`；不在 handler 里 sleep 等 apply（见 [22](22-async-threading-model.md)）。
+1. Gateway 热路径在 **Callback 接收线程** 取本地 TS，再 `store_propose_onepc_async`；不在 handler 里 sleep 等 apply（见 [22](22-async-threading-model.md)）。
 2. `propose` 后按 index 挂 **ProposalQueue**；apply `invoke`（或 `wait_async` 回调）唤醒。
 3. 仅当前 term 日志可 commit；空心跳 / 写触发的 AE 都会推进复制。
 4. 撞 `locked` → Lock Resolver 后重试；`splitting` / `epoch_not_match` → 刷路由重试。

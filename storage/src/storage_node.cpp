@@ -18,14 +18,12 @@
 #include "openkv/storage/storage_node.hpp"
 
 #include "openkv/admin_acl.hpp"
+#include "openkv/admin_rpc.hpp"
 #include "openkv/codec.hpp"
 #include "openkv/grpc_auth.hpp"
 #include "openkv/logging.hpp"
+#include "openkv/meta_rpc.hpp"
 #include "openkv/protocol.hpp"
-#include <grpcpp/grpcpp.h>
-#include "meta/v1/meta.grpc.pb.h"
-#include "meta/v1/meta.pb.h"
-#include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 #include "openkv/raft/file_raft_engine.hpp"
 #include "openkv/raft/raft_engine.hpp"
@@ -90,31 +88,11 @@ bool peel_snap_range(std::string_view data, openkv::KeyRange* range, std::string
 }
 
 std::string tcp_line(const std::string& addr, const std::string& req, int timeout_ms = 8000) {
-  auto ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
-  auto stub = ::storage::v1::AdminService::NewStub(ch);
-  ::storage::v1::ExecLineRequest er;
-  er.set_line(req);
-  ::storage::v1::ExecLineResponse eres;
-  grpc::ClientContext ctx;
-  ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
-  grpc_attach_admin_token(&ctx, admin_token_from_env());
-  auto st = stub->ExecLine(&ctx, er, &eres);
-  if (!st.ok()) throw std::runtime_error(std::string("storage ExecLine: ") + st.error_message());
-  return eres.body();
+  return openkv::admin_typed_rpc(addr, req, admin_token_from_env(), timeout_ms);
 }
 
 std::string meta_exec_line(const std::string& addr, const std::string& req, int timeout_ms = 8000) {
-  auto ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
-  auto stub = ::meta::v1::MetaService::NewStub(ch);
-  ::meta::v1::ExecLineRequest er;
-  er.set_line(req);
-  ::meta::v1::ExecLineResponse eres;
-  grpc::ClientContext ctx;
-  ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
-  grpc_attach_admin_token(&ctx, admin_token_from_env());
-  auto st = stub->ExecLine(&ctx, er, &eres);
-  if (!st.ok()) throw std::runtime_error(std::string("meta ExecLine: ") + st.error_message());
-  return eres.body();
+  return openkv::meta_typed_call(addr, req, admin_token_from_env(), timeout_ms);
 }
 
 }  // namespace
@@ -1824,44 +1802,27 @@ void StorageNode::maybe_auto_merge(uint32_t region_id) {
   SKV_INFO << "auto_merge left=" << region_id << " right=" << right;
 }
 
+StorageNode::StatsSnapshot StorageNode::stats_snapshot() const {
+  StatsSnapshot s;
+  s.raft = transport_.out_raft_total();
+  s.sync = transport_.out_sync_total();
+  s.meta_out = meta_out_.load(std::memory_order_relaxed);
+  s.requests = s.raft + s.sync + s.meta_out;
+  s.qdepth = transport_.queue_depth();
+  s.qdrop = transport_.dropped_jobs();
+  s.peer_raft_out = transport_.snapshot_out_raft();
+  s.peer_sync_out = transport_.snapshot_out_sync();
+  s.meta_out_peers = meta_out_peers_.snapshot();
+  return s;
+}
+
 std::string StorageNode::meta_rpc(const std::string& req) {
   if (cfg_.meta_addr.empty()) throw std::runtime_error("no meta_addr");
   meta_out_.fetch_add(1, std::memory_order_relaxed);
   std::string addr = cfg_.meta_addr;
   if (addr.find("0.0.0.0") == 0) addr.replace(0, 7, "127.0.0.1");
-  // 无 redirect 时：本机开发轮询 8500–8502；K8s/DNS 勿回落 127.0.0.1（会心跳失败→Offline）
-  static const char* kMetaFallbacks[] = {"127.0.0.1:8500", "127.0.0.1:8501", "127.0.0.1:8502"};
-  const bool local_meta =
-      addr.rfind("127.0.0.1", 0) == 0 || addr.rfind("localhost", 0) == 0;
-  int fb = 0;
-  for (int i = 0; i < 12; ++i) {
-    meta_out_peers_.add(addr);
-    // Meta 同步写（首注 REGISTER / TSO）在负载下可能 >3s；与 replicate 等待对齐。
-    auto resp = meta_exec_line(addr, req, 8000);
-    if (resp.find("not_leader") != std::string::npos) {
-      auto p = resp.find("redirect=");
-      if (p != std::string::npos) {
-        std::string next = resp.substr(p + 9);
-        const auto sp = next.find_first_of(" \t\r\n");
-        if (sp != std::string::npos) next = next.substr(0, sp);
-        if (!next.empty() && next != addr) {
-          addr = std::move(next);
-          continue;
-        }
-      }
-      if (local_meta) {
-        addr = kMetaFallbacks[static_cast<size_t>(fb++ % 3)];
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-      continue;
-    }
-    if (resp.rfind("ERR", 0) == 0 && resp.find("not_leader") == std::string::npos) {
-      // 业务错误原样返回（unknown_node / heartbeat_stale 等）
-      return resp;
-    }
-    return resp;
-  }
-  throw std::runtime_error("meta_rpc failed");
+  meta_out_peers_.add(addr);
+  return openkv::meta_typed_rpc(addr, req, admin_token_from_env(), 8000);
 }
 
 bool StorageNode::meta_list_storage(std::unordered_map<std::string, std::string>* id_to_addr) {
@@ -2635,14 +2596,28 @@ void StorageNode::recover_local_regions_from_meta() {
     if (!colon[2].empty() && !from_hex(colon[2], &range.end_key)) continue;
     const uint64_t epoch = std::stoull(colon[3]);
     std::string rest = colon[4];
-    auto comma = rest.find(',');
-    if (comma == std::string::npos) continue;
+    // 兼容两种线格式：
+    //   epoch:nrep,id@addr,...（MetaNode::format_route / format_routing_table_line）
+    //   epoch:id@addr,...（旧 typed 漏 nrep 时）
     std::vector<raft::Peer> peers;
     bool mine = false;
-    std::stringstream ss(rest.substr(comma + 1));
+    std::stringstream ss(rest);
     std::string item;
+    bool first = true;
     while (std::getline(ss, item, ',')) {
       if (item.empty()) continue;
+      if (first) {
+        first = false;
+        // nrep 纯数字段跳过；否则整段即首个 peer
+        bool digits = !item.empty();
+        for (char c : item) {
+          if (c < '0' || c > '9') {
+            digits = false;
+            break;
+          }
+        }
+        if (digits) continue;
+      }
       bool learner = item.find("*N") != std::string::npos;
       while (!item.empty() && (item.back() == 'L' || item.back() == 'N') && item.size() >= 2 &&
              item[item.size() - 2] == '*') {

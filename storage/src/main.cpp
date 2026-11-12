@@ -13,14 +13,13 @@
 // limitations under the License.
 
 // @file main.cpp
-// Storage 进程入口：主端口 gRPC（Store/Raft/Admin）。行协议仅作进程内 ExecLine 适配，不 listen。
+// Storage 进程入口：主端口 gRPC（Store/Raft/Admin）。
 
 #include "openkv/logging.hpp"
 #include "openkv/metrics_http.hpp"
 #include "openkv/storage/grpc_server.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/store_service.hpp"
-#include "openkv/storage/exec_line_handler.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -59,9 +58,7 @@ int main(int argc, char** argv) {
   storage::StoreFacade facade(node);
   node.start();
 
-  // ExecLineHandler：行协议解析；gRPC AdminService.ExecLine 复用。
-  storage::ExecLineHandler line_server(facade);
-  storage::StorageGrpcServer grpc_server(facade, cfg.listen_addr, &line_server);
+  storage::StorageGrpcServer grpc_server(facade, cfg.listen_addr);
   try {
     grpc_server.start();
   } catch (const std::exception& e) {

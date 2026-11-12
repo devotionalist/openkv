@@ -12,7 +12,7 @@
 |-------|-----|
 | **接客户端（Go/Rust/Java/TS）** | [独立 SDK 仓](#0-客户端独立仓库) · [15-multi-client-sdk](../flows/15-multi-client-sdk.md) |
 | 本地 / Helm 怎么用 | [USER_GUIDE.md](../USER_GUIDE.md) · 英文 [user-guide](../en/user-guide.md) |
-| gRPC / Seastar | [NETWORKING.md](../NETWORKING.md) · 英文 [networking](../en/networking.md) |
+| gRPC 网络 | [NETWORKING.md](../NETWORKING.md) · 英文 [networking](../en/networking.md) |
 | 架构长什么样 | [architecture/](#1-架构与模型) · 英文摘要 [architecture](../en/architecture.md) |
 | 某条读写/扩容流程 | [flows/](#6-流程图-flows) |
 | 扩缩容怎么操作 | [ops/](#4-运维--sop) |
@@ -42,7 +42,7 @@
 | 文档 | 说明 |
 |------|------|
 | [USER_GUIDE.md](../USER_GUIDE.md) | 用户使用手册：安装、读写、管控台、Helm、扩容 |
-| [NETWORKING.md](../NETWORKING.md) | gRPC 强制 / Seastar 可选；组件与端口 |
+| [NETWORKING.md](../NETWORKING.md) | gRPC 强制；组件与端口 |
 | [images/console-overview.png](../images/console-overview.png) | Web 管控台截图（`:19100`） |
 
 ---
@@ -59,7 +59,6 @@
 | [COMPONENT_MAP.md](../architecture/COMPONENT_MAP.md) | 组件 / Storage 内部 / 写路径 / Phase |
 | [RANGE_SHARDING.md](../architecture/RANGE_SHARDING.md) | Region 有序区间分片 |
 | [DATA_STRUCTURES.md](../architecture/DATA_STRUCTURES.md) | Hash / Set / List / ZSet |
-| [SEASTAR_NET.md](../architecture/SEASTAR_NET.md) | Seastar 开关与阶段（业务未接入） |
 
 ---
 

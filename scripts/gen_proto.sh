@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Generate in-repo Go stubs for Meta/Storage Admin (web / line-rpc).
+# Generate in-repo Go stubs for Meta/Storage typed Admin (web / line-rpc).
 # KV/DS Go stubs live in openkv-client-go — sync there:
 #   (cd ../openkv-client-go && ./scripts/sync-proto-from-openkv.sh && ./scripts/gen.sh)
 

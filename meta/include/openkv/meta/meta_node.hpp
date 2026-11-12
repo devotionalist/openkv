@@ -43,6 +43,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace openkv::meta {
@@ -111,6 +112,16 @@ class MetaNode {
 
   /// 异步 AllocTs（GET_TS）：propose 后不占调用线程；回调在 apply / 超时路径。
   void alloc_ts_async(uint32_t count, std::function<void(std::string)> cb);
+
+  /// MetaService.Stats 快照（避免 header 依赖 meta.v1 pb 与 openkv::meta 歧义）。
+  struct StatsSnapshot {
+    uint64_t requests{0}, gw{0}, store{0}, raft{0}, sync{0}, admin{0}, client{0};
+    uint64_t meta_out{0}, to_store{0}, to_meta{0};
+    uint64_t route_ver{0}, next_ts{0}, tso_alloc{0}, watch_waits{0}, migrates{0};
+    std::vector<std::pair<std::string, uint64_t>> peer_raft, peer_sync, peer_raft_out, peer_sync_out,
+        peer_store;
+  };
+  StatsSnapshot stats_snapshot() const;
 
   /// 只读 bootstrap 配置。
   const ClusterBootstrap& bootstrap() const { return bootstrap_; }

@@ -203,7 +203,35 @@ TEST(ClusterStateTest, SweepStaleExcludesPlacement) {
   }
 }
 
-TEST(ClusterStateTest, OfflineReregisterBecomesJoining) {
+TEST(ClusterStateTest, OfflineReregisterBecomesActive) {
+  ClusterState st;
+  st.bootstrap_range(3, three_storages());
+  // s0 已是 Active（bootstrap）；模拟租约过期 → Offline 后重启 REGISTER
+  ASSERT_EQ(st.get_node("s0")->state, NodeState::kActive);
+  ASSERT_TRUE(st.set_node_state("s0", NodeState::kOffline));
+  NodeInfo n;
+  n.node_id = "s0";
+  n.address = "127.0.0.1:9100";
+  n.role = NodeRole::kStorage;
+  // Offline 仅来自曾 Active：再 REGISTER 恢复 Active，不必人工 JOIN
+  EXPECT_EQ(st.register_node(n), "s0");
+  EXPECT_EQ(st.get_node("s0")->state, NodeState::kActive);
+}
+
+TEST(ClusterStateTest, JoiningWithReplicaReregisterBecomesActive) {
+  ClusterState st;
+  st.bootstrap_range(3, three_storages());
+  // 误标 Joining，但 Region 0 仍挂着 s0 副本 → REGISTER 应升 Active
+  ASSERT_TRUE(st.set_node_state("s0", NodeState::kJoining));
+  NodeInfo n;
+  n.node_id = "s0";
+  n.address = "127.0.0.1:9100";
+  n.role = NodeRole::kStorage;
+  EXPECT_EQ(st.register_node(n), "s0");
+  EXPECT_EQ(st.get_node("s0")->state, NodeState::kActive);
+}
+
+TEST(ClusterStateTest, JoiningWithoutReplicaStaysJoining) {
   ClusterState st;
   st.bootstrap_range(3, three_storages());
   NodeInfo n;
@@ -212,8 +240,6 @@ TEST(ClusterStateTest, OfflineReregisterBecomesJoining) {
   n.role = NodeRole::kStorage;
   ASSERT_EQ(st.register_node(n), "s3");
   EXPECT_EQ(st.get_node("s3")->state, NodeState::kJoining);
-  ASSERT_TRUE(st.set_node_state("s3", NodeState::kOffline));
-  // 再 REGISTER：Offline → Joining（待运维 JOIN），不得直接 Active
   EXPECT_EQ(st.register_node(n), "s3");
   EXPECT_EQ(st.get_node("s3")->state, NodeState::kJoining);
 }

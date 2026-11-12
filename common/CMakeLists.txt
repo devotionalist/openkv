@@ -29,8 +29,3 @@ target_link_libraries(openkv_common
     toml11::toml11
     httplib::httplib
 )
-
-if(OPENKV_USE_SEASTAR)
-  target_compile_definitions(openkv_common PUBLIC OPENKV_HAS_SEASTAR=1)
-  target_link_libraries(openkv_common PUBLIC Seastar::seastar)
-endif()

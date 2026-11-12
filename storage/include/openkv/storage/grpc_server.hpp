@@ -18,7 +18,6 @@
 #pragma once
 
 #include "openkv/storage/store_service.hpp"
-#include "openkv/storage/exec_line_handler.hpp"
 
 #include <atomic>
 #include <memory>
@@ -30,8 +29,7 @@ namespace openkv::storage {
 /// 在 listen_addr 上启动 gRPC（同端口多路复用三类服务）。
 class StorageGrpcServer {
  public:
-  /// @param line_server 提供则注册 AdminService.ExecLine（复用行协议解析）。
-  StorageGrpcServer(StoreFacade& facade, std::string listen_addr, ExecLineHandler* line_server = nullptr);
+  StorageGrpcServer(StoreFacade& facade, std::string listen_addr);
   ~StorageGrpcServer();
 
   void start();
@@ -40,7 +38,6 @@ class StorageGrpcServer {
 
  private:
   StoreFacade& facade_;
-  ExecLineHandler* line_server_{nullptr};
   std::string listen_addr_;
   std::string admin_token_;
   std::atomic<bool> running_{false};

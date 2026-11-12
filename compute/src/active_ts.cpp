@@ -13,27 +13,31 @@
 // limitations under the License.
 
 // @file active_ts.cpp
-// 活跃 start_ts 跟踪器。
+// 活跃 start_ts 跟踪器实现。
 
 #include "openkv/compute/active_ts.hpp"
 
 namespace openkv::compute {
 
+/// 非法/非正 ttl 回落到 60s，避免永不过期挡 GC。
 ActiveTsTracker::ActiveTsTracker(std::chrono::milliseconds ttl) : ttl_(ttl) {
   if (ttl_.count() <= 0) ttl_ = std::chrono::seconds(60);
 }
 
+/// 记录 ts→now；ts==0 忽略（无效时间戳）。
 void ActiveTsTracker::add(uint64_t ts) {
   if (ts == 0) return;
   std::lock_guard<std::mutex> lock(mu_);
   m_[ts] = std::chrono::steady_clock::now();
 }
 
+/// 事务/Put 结束后摘掉该 ts。
 void ActiveTsTracker::remove(uint64_t ts) {
   std::lock_guard<std::mutex> lock(mu_);
   m_.erase(ts);
 }
 
+/// 边扫边剔过期条目，返回仍活跃的最小 ts（空则 UINT64_MAX）。
 uint64_t ActiveTsTracker::min() {
   std::lock_guard<std::mutex> lock(mu_);
   const auto now = std::chrono::steady_clock::now();

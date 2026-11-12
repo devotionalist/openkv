@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file gateway_watch.cpp
-// Watch：Callback ServerWriteReactor；轮询逻辑跑在 WorkPool。
+// Watch：ServerWriteReactor + store_watch_*_async；间隔 sleep 走 WorkPool。
 
 #include "openkv/compute/gateway_server.hpp"
 
@@ -21,6 +21,7 @@
 #include <condition_variable>
 #include <deque>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -40,7 +41,7 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
   void enqueue_or_finish(kv::v1::WatchEvent ev) {
     {
       std::lock_guard<std::mutex> lock(mu_);
-      if (cancelled_) return;
+      if (cancelled_ || finished_) return;
       q_.push_back(std::move(ev));
     }
     try_write();
@@ -61,41 +62,74 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
   }
 
   void OnWriteDone(bool ok) override {
+    bool need_finish = false;
+    grpc::Status finish_st = grpc::Status::OK;
     {
       std::lock_guard<std::mutex> lock(mu_);
       writing_ = false;
       if (!ok) cancelled_ = true;
+      if (!ok || cancelled_) {
+        if (!finished_) {
+          finished_ = true;
+          need_finish = true;
+          finish_st = grpc::Status(grpc::StatusCode::CANCELLED,
+                                   ok ? "cancelled" : "watch write failed");
+        }
+      }
     }
     cv_.notify_all();
-    if (!ok) {
-      Finish(grpc::Status(grpc::StatusCode::CANCELLED, "watch write failed"));
+    if (need_finish) {
+      Finish(finish_st);
       return;
     }
     try_write();
   }
 
   void OnCancel() override {
+    bool need_finish = false;
     {
       std::lock_guard<std::mutex> lock(mu_);
       cancelled_ = true;
+      done_ = true;
+      // 写进行中交给 OnWriteDone Finish；否则此处 Finish，避免泄漏。
+      if (!writing_ && !finished_) {
+        finished_ = true;
+        need_finish = true;
+      }
     }
     cv_.notify_all();
+    if (need_finish) {
+      Finish(grpc::Status(grpc::StatusCode::CANCELLED, "cancelled"));
+    }
   }
 
   void OnDone() override { delete this; }
 
  private:
   void try_write() {
-    std::lock_guard<std::mutex> lock(mu_);
-    if (writing_ || cancelled_) return;
-    if (q_.empty()) {
-      if (done_) Finish(grpc::Status::OK);
-      return;
+    bool need_finish = false;
+    grpc::Status finish_st = grpc::Status::OK;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      if (writing_ || finished_) return;
+      if (cancelled_) {
+        finished_ = true;
+        need_finish = true;
+        finish_st = grpc::Status(grpc::StatusCode::CANCELLED, "cancelled");
+      } else if (q_.empty()) {
+        if (!done_) return;
+        finished_ = true;
+        need_finish = true;
+        finish_st = grpc::Status::OK;
+      } else {
+        pending_ = std::move(q_.front());
+        q_.pop_front();
+        writing_ = true;
+        StartWrite(&pending_);
+        return;
+      }
     }
-    pending_ = std::move(q_.front());
-    q_.pop_front();
-    writing_ = true;
-    StartWrite(&pending_);
+    if (need_finish) Finish(finish_st);
   }
 
   std::mutex mu_;
@@ -105,6 +139,7 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
   bool writing_{false};
   bool done_{false};
   bool cancelled_{false};
+  bool finished_{false};
 };
 
 }  // namespace
@@ -125,70 +160,176 @@ std::vector<uint32_t> GatewayServer::regions_for_watch(const kv::v1::WatchReques
   return ids;
 }
 
-void GatewayServer::WatchBody(grpc::CallbackServerContext* ctx, const kv::v1::WatchRequest& req,
-                              const std::function<bool(const kv::v1::WatchEvent&)>& write_ev) {
-  uint64_t since = req.start_revision();
-  if (since == 0) {
-    for (uint32_t rid : regions_for_watch(req)) {
-      try {
-        with_leader(rid, [&](StoreClient& c) {
-          const uint64_t head = c.watch_head(rid);
-          if (head > since) since = head;
+void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchRequest req,
+                                const std::function<bool(const kv::v1::WatchEvent&)>& write_ev,
+                                std::function<void()> on_done) {
+  struct State {
+    GatewayServer* self;
+    grpc::CallbackServerContext* ctx;
+    kv::v1::WatchRequest req;
+    std::function<bool(const kv::v1::WatchEvent&)> write_ev;
+    std::function<void()> on_done;
+    uint64_t since{0};
+    std::vector<uint32_t> regions;
+    size_t head_idx{0};
+    size_t poll_idx{0};
+    std::shared_ptr<std::function<void()>> after_heads;
+    std::shared_ptr<std::function<void()>> poll_round;
+  };
+  auto st = std::make_shared<State>();
+  st->self = this;
+  st->ctx = ctx;
+  st->req = std::move(req);
+  st->write_ev = write_ev;
+  st->on_done = std::move(on_done);
+  st->since = st->req.start_revision();
+  st->regions = regions_for_watch(st->req);
+  st->after_heads = std::make_shared<std::function<void()>>();
+  st->poll_round = std::make_shared<std::function<void()>>();
+
+  *st->poll_round = [st]() {
+    if (!st->ctx || st->ctx->IsCancelled()) {
+      st->on_done();
+      return;
+    }
+    if (st->poll_idx >= st->regions.size()) {
+      st->poll_idx = 0;
+      if (st->self->pool_) {
+        st->self->pool_->post([st]() {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          (*st->poll_round)();
         });
-      } catch (...) {
+      } else {
+        std::thread([st]() {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          (*st->poll_round)();
+        }).detach();
       }
+      return;
     }
-  }
-
-  if (!req.key().empty()) {
-    kv::v1::TxnGetRequest tg_req;
-    tg_req.set_key(req.key());
-    tg_req.set_start_ts(std::numeric_limits<uint64_t>::max());
-    kv::v1::TxnGetResponse tg;
-    auto st = TxnGetBody(&tg_req, &tg);
-    if (st.ok() && tg.found() && !tg.locked()) {
-      uint64_t rev = since;
-      if (rev == 0) rev = 1;
-      kv::v1::WatchEvent ev;
-      ev.set_type(kv::v1::WatchEvent::PUT);
-      ev.set_key(req.key());
-      ev.set_value(tg.value());
-      ev.set_revision(rev);
-      if (!write_ev(ev)) return;
+    const uint32_t rid = st->regions[st->poll_idx++];
+    auto addr_opt = st->self->pick_leader_addr(rid);
+    if (!addr_opt) {
+      (*st->poll_round)();
+      return;
     }
-  }
-
-  while (ctx && !ctx->IsCancelled()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    if (ctx->IsCancelled()) break;
-    for (uint32_t rid : regions_for_watch(req)) {
-      std::vector<WatchEvent> batch;
-      uint64_t next = 0;
-      try {
-        with_leader(rid, [&](StoreClient& c) {
-          auto r = c.watch_poll(rid, since, 64);
-          batch = std::move(r.first);
-          next = r.second;
+    st->self->note_to_store(*addr_opt);
+    store_watch_poll_async(
+        *addr_opt, rid, st->since, 64, 15000,
+        [st, rid](grpc::Status sst, StoreWatchPollResult out) {
+          auto handle = [st, rid, sst, out = std::move(out)]() mutable {
+            if (!sst.ok()) {
+              (*st->poll_round)();
+              return;
+            }
+            if (!out.redirect_to.empty() || contains(out.error, "splitting") ||
+                contains(out.error, "not_leader")) {
+              if (!out.redirect_to.empty() && out.redirect_to != "no_region") {
+                st->self->remember_leader(rid, out.redirect_to);
+              }
+              st->self->refresh_routes();
+              (*st->poll_round)();
+              return;
+            }
+            for (const auto& ev : out.events) {
+              if (!st->self->match_watch(st->req, ev.key)) continue;
+              if (st->req.start_revision() > 0 && ev.revision <= st->req.start_revision()) continue;
+              kv::v1::WatchEvent o;
+              o.set_type(ev.deleted ? kv::v1::WatchEvent::DELETE : kv::v1::WatchEvent::PUT);
+              o.set_key(ev.key);
+              o.set_value(ev.value);
+              o.set_revision(ev.revision);
+              if (!st->write_ev(o)) {
+                st->on_done();
+                return;
+              }
+            }
+            if (out.max_revision > st->since) st->since = out.max_revision;
+            (*st->poll_round)();
+          };
+          // write_ev 可能阻塞等 OnWriteDone；放到 WorkPool，勿堵 gRPC CQ。
+          if (st->self->pool_) {
+            st->self->pool_->post(std::move(handle));
+          } else {
+            handle();
+          }
         });
-      } catch (const std::exception& e) {
-        if (contains(e.what(), "splitting") || contains(e.what(), "not_leader")) {
-          refresh_routes();
+  };
+
+  auto start_poll = [st]() {
+    if (!st->req.key().empty()) {
+      auto tg_req = std::make_shared<kv::v1::TxnGetRequest>();
+      tg_req->set_key(st->req.key());
+      tg_req->set_start_ts(std::numeric_limits<uint64_t>::max());
+      auto tg = std::make_shared<kv::v1::TxnGetResponse>();
+      st->self->txn_get_async(tg_req.get(), tg.get(), 0, [st, tg_req, tg](grpc::Status) {
+        if (tg->found() && !tg->locked()) {
+          uint64_t rev = st->since;
+          if (rev == 0) rev = 1;
+          kv::v1::WatchEvent ev;
+          ev.set_type(kv::v1::WatchEvent::PUT);
+          ev.set_key(st->req.key());
+          ev.set_value(tg->value());
+          ev.set_revision(rev);
+          if (!st->write_ev(ev)) {
+            st->on_done();
+            return;
+          }
         }
-        continue;
-      }
-      for (const auto& ev : batch) {
-        if (!match_watch(req, ev.key)) continue;
-        if (req.start_revision() > 0 && ev.revision <= req.start_revision()) continue;
-        kv::v1::WatchEvent out;
-        out.set_type(ev.deleted ? kv::v1::WatchEvent::DELETE : kv::v1::WatchEvent::PUT);
-        out.set_key(ev.key);
-        out.set_value(ev.value);
-        out.set_revision(ev.revision);
-        if (!write_ev(out)) return;
-      }
-      if (next > since) since = next;
+        (*st->poll_round)();
+      });
+      return;
     }
+    (*st->poll_round)();
+  };
+
+  *st->after_heads = [st, start_poll]() {
+    if (st->head_idx >= st->regions.size() || st->req.start_revision() != 0) {
+      start_poll();
+      return;
+    }
+    // start_revision==0 path already handled heads below
+    start_poll();
+  };
+
+  if (st->since != 0) {
+    start_poll();
+    return;
   }
+
+  // Lift since to max watch_head across regions.
+  struct HeadState {
+    std::shared_ptr<State> st;
+    size_t idx{0};
+    std::shared_ptr<std::function<void()>> step;
+  };
+  auto hs = std::make_shared<HeadState>();
+  hs->st = st;
+  hs->step = std::make_shared<std::function<void()>>();
+  *hs->step = [hs, start_poll]() {
+    if (hs->idx >= hs->st->regions.size()) {
+      start_poll();
+      return;
+    }
+    const uint32_t rid = hs->st->regions[hs->idx++];
+    auto addr_opt = hs->st->self->pick_leader_addr(rid);
+    if (!addr_opt) {
+      (*hs->step)();
+      return;
+    }
+    hs->st->self->note_to_store(*addr_opt);
+    store_watch_head_async(*addr_opt, rid, 5000,
+                           [hs](grpc::Status sst, StoreWatchHeadResult out) {
+                             if (sst.ok() && out.error.empty() && out.redirect_to.empty()) {
+                               if (out.revision > hs->st->since) hs->st->since = out.revision;
+                             } else if (!out.redirect_to.empty()) {
+                               hs->st->self->remember_leader(hs->st->regions[hs->idx - 1],
+                                                             out.redirect_to);
+                             }
+                             (*hs->step)();
+                           });
+  };
+  (*hs->step)();
 }
 
 grpc::ServerWriteReactor<kv::v1::WatchEvent>* GatewayServer::Watch(
@@ -196,13 +337,12 @@ grpc::ServerWriteReactor<kv::v1::WatchEvent>* GatewayServer::Watch(
   auto* reactor = new WatchReactor();
   note_client_rpc();
   kv::v1::WatchRequest req_copy = *req;
-  pool_->post([this, ctx, reactor, req = std::move(req_copy)]() mutable {
-    WatchBody(ctx, req, [reactor](const kv::v1::WatchEvent& ev) {
-      reactor->enqueue_or_finish(ev);
-      return reactor->wait_drain();
-    });
-    reactor->mark_done();
-  });
+  watch_async(ctx, std::move(req_copy),
+              [reactor](const kv::v1::WatchEvent& ev) {
+                reactor->enqueue_or_finish(ev);
+                return reactor->wait_drain();
+              },
+              [reactor]() { reactor->mark_done(); });
   return reactor;
 }
 

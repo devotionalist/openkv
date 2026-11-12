@@ -34,13 +34,16 @@ inline constexpr char kTypeSet = 's';
 inline constexpr char kTypeList = 'l';
 inline constexpr char kTypeZSet = 'z';
 
+/// blob 类型与期望不符（WRONGTYPE）。
 class WrongTypeError : public std::runtime_error {
  public:
   WrongTypeError(char have, char want)
       : std::runtime_error(std::string("wrong_type: have=") + have + " want=" + want),
         have_(have),
         want_(want) {}
+  /// 实际类型标记。
   char have() const { return have_; }
+  /// 期望类型标记。
   char want() const { return want_; }
 
  private:
@@ -48,12 +51,13 @@ class WrongTypeError : public std::runtime_error {
   char want_;
 };
 
+/// blob 损坏 / 无法解码。
 class CorruptError : public std::runtime_error {
  public:
   CorruptError() : std::runtime_error("corrupt_ds_blob") {}
 };
 
-/// MetaKey = ukey + marker（类型只在 blob 内）。
+/// 用户 key → 物理 MetaKey（ukey + marker；类型只在 blob 内）。
 std::string meta_key(std::string_view ukey);
 
 using Hash = std::map<std::string, std::string>;  // sorted encode
@@ -61,25 +65,35 @@ using Set = std::set<std::string>;
 using List = std::vector<std::string>;
 using ZSet = std::map<std::string, double>;
 
+/// ZSet 排序后的 (member, score) 项。
 struct ZEntry {
   std::string member;
   double score{0};
 };
 
+/// Hash → 带类型头的二进制 blob。
 std::string encode_hash(const Hash& h);
+/// blob → Hash；类型不符抛 WrongTypeError，损坏抛 CorruptError。
 Hash decode_hash(std::string_view blob);
 
+/// Set → blob。
 std::string encode_set(const Set& s);
+/// blob → Set。
 Set decode_set(std::string_view blob);
 
+/// List → blob。
 std::string encode_list(const List& l);
+/// blob → List。
 List decode_list(std::string_view blob);
 
-/// Redis 风格 [start,stop] → [lo, hi) 切片下标；失败 ok=false。
+/// Redis 风格 [start,stop]（可负下标）→ [lo, hi) 切片；非法返回 nullopt。
 std::optional<std::pair<size_t, size_t>> normalize_range(int64_t n, int64_t start, int64_t stop);
 
+/// ZSet → blob。
 std::string encode_zset(const ZSet& z);
+/// blob → ZSet。
 ZSet decode_zset(std::string_view blob);
+/// 按 score 升序、同分按 member 得到有序列表（ZRange 用）。
 std::vector<ZEntry> z_sorted(const ZSet& z);
 
 }  // namespace openkv::compute::ds

@@ -50,6 +50,8 @@ service MetaService {
   rpc Balance(BalanceRequest) returns (SimpleResponse);
   rpc SuggestPlace(SuggestPlaceRequest) returns (SuggestPlaceResponse);
   rpc BumpRoute(BumpRouteRequest) returns (SimpleResponse);
+  rpc CancelScale(CancelScaleRequest) returns (SimpleResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
 
   // TSO / GC / 定位
   rpc GetTs(GetTsRequest) returns (GetTsResponse);
@@ -60,16 +62,6 @@ service MetaService {
   rpc WhoLeader(WhoLeaderRequest) returns (WhoLeaderResponse);
   rpc StoreStatus(StoreStatusRequest) returns (StoreStatusResponse);
   rpc FindMergeRight(FindMergeRightRequest) returns (FindMergeRightResponse);
-  // 行协议桥（Storage meta_rpc / 运维未单独建模的命令）
-  rpc ExecLine(ExecLineRequest) returns (ExecLineResponse);
-}
-
-message ExecLineRequest {
-  string line = 1;
-}
-
-message ExecLineResponse {
-  string body = 1;
 }
 
 enum NodeRole {
@@ -253,9 +245,12 @@ message ListMigrateResponse {
   repeated MigrateTaskInfo tasks = 1;
 }
 
-message BalanceRequest {}
+message BalanceRequest {
+  uint32 count = 1;  // 最多入队 n 个 balance 迁移；0/缺省 = 1
+}
 message SuggestPlaceRequest {
-  uint32 count = 1;
+  uint32 count = 1;  // 保留兼容；实际由 Meta 决定副本数
+  repeated string avoid_node_ids = 2;
 }
 message SuggestPlaceResponse {
   repeated string node_ids = 1;
@@ -263,14 +258,49 @@ message SuggestPlaceResponse {
 
 message BumpRouteRequest {}
 
-message GetTsRequest {}
+message CancelScaleRequest {
+  string node_id = 1;
+  uint32 region_id = 2;  // 0 = 该节点全部未完成 SCALE_OUT
+}
+
+message StatsRequest {}
+message StatsResponse {
+  uint64 requests = 1;
+  uint64 gw = 2;
+  uint64 store = 3;
+  uint64 raft = 4;
+  uint64 sync = 5;
+  uint64 admin = 6;
+  uint64 client = 7;
+  uint64 meta_out = 8;
+  uint64 to_store = 9;
+  uint64 to_meta = 10;
+  uint64 route_ver = 11;
+  uint64 next_ts = 12;
+  uint64 tso_alloc = 13;
+  uint64 watch_waits = 14;
+  uint64 migrates = 15;
+  map<string, uint64> peer_raft = 16;
+  map<string, uint64> peer_sync = 17;
+  map<string, uint64> peer_raft_out = 18;
+  map<string, uint64> peer_sync_out = 19;
+  map<string, uint64> peer_store = 20;
+}
+
+message GetTsRequest {
+  // 一次申请连续 ts 个数；0 或 1 = 单个。
+  uint32 count = 1;
+}
 message GetTsResponse {
-  uint64 ts = 1;
+  uint64 ts = 1;     // 区间起点
+  uint32 count = 2;  // 实际分配个数
 }
 
 message GetSafePointRequest {}
 message GetSafePointResponse {
   uint64 safe_point = 1;
+  uint64 next_ts = 2;
+  uint64 min_start_hint = 3;
 }
 
 message AdvanceSafePointRequest {

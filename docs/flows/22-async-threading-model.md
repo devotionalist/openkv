@@ -11,7 +11,6 @@
    - **工作线程** = `WorkPool` / BatchSystem / Transport worker（编排与 Raft）  
    - **完成回调** = client async / `ProposalQueue::invoke`（续跑状态机）
 3. **热路径零同步等待**：接收线程与 gRPC reaction 上禁止 `stub->Foo()`、`future.get()`、`wait_apply`；下游一律 async stub 或 `propose_async`→`wait_async`。
-4. 可选 Seastar 开关见 [SEASTAR_NET](../architecture/SEASTAR_NET.md)；业务路径默认不接入。
 
 ## 目标
 
@@ -50,15 +49,15 @@ flowchart TB
 ### Gateway
 
 - 入站：`KVService` / `DSService` → **CallbackService**（已实现）
-- 热路径 Put/Delete/Get：接收线程 `alloc_ts`（本地 TSO 批缓存，与同步 PutBody 一致）→ `store_exec_line_async`
+- 热路径 Put/Delete/Get：接收线程 `alloc_async`（本地 TSO 批缓存）→ `store_propose_onepc_async` / `store_get_async`
 - 其它 unary：接收线程 `WorkPool::post`，worker 内仍只准 async 出站（过渡期个别路径可先 post，禁止在接收线程同步等）
 - 环境变量：`SKV_GATEWAY_WORKERS`（默认 32）
 
 ### Meta
 
 - 入站：`MetaService` → **CallbackService**（已实现）
-- `GetTs`：`alloc_ts_async` → apply invoke → `Finish`（不占接收线程）
-- `ExecLine`：接收线程 post 到 `WorkPool`；`GET_TS` 行走 `alloc_ts_async`
+- `GetTs`：`alloc_ts_async(count)` → apply invoke → `Finish`（不占接收线程）
+- 其它 Meta RPC：`WorkPool` + 内部 `handle_line` 分发；无公开 `ExecLine`
 - Raft 入站保持短路径同步 Finish；出站 Transport worker
 - `SKV_META_GRPC_WORKERS`（默认 16）
 
@@ -66,7 +65,7 @@ flowchart TB
 
 - 入站：`Store`/`Admin` **CallbackService**；`Raft` 短路径
 - `Propose`：`propose_async` → `wait_async` → `Finish`
-- `ExecLine` ONEPC/PUT/DEL：接收线程直接 `propose_async`（不进池、不 `future.get`）；其它行 post `WorkPool`
+- Admin 类型化 RPC（Ensure/Place/Split/…/`Stats`/`Ping`）；无 `ExecLineHandler`
 - `SKV_STORAGE_GRPC_WORKERS`
 
 ## 验收
@@ -75,7 +74,7 @@ flowchart TB
 |----|------|-------------------|
 | T1 | 设计本文 + ARCHITECTURE / 21 文档交叉引用 | **PASS** |
 | T2 | Gateway/Meta/Storage 热路径代码无同步 stub wait / `promise.get` 等 apply | **PASS**（入站 Callback；ONEPC/`GetTs`/`Put` 热路径 async） |
-| T3 | `ctest -R 'ProposalQueue\|OnePc\|TsoTest\|ExecLine\|RouterTest'` PASS | **PASS**（含 StoreFacade 共 25/25） |
+| T3 | `ctest -R 'ProposalQueue\|OnePc\|TsoTest\|RouterTest\|StoreFacade'` PASS | **PASS**（含 StoreFacade） |
 | T4 | put bench fail=0；日志可见 callback + workers= | **PASS**（31.1ops/s ok=249 fail=0；三端 callback+workers 日志） |
 
 ## 失败与回滚

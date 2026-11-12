@@ -61,7 +61,7 @@ classDiagram
 flowchart TB
   CB["ClusterBootstrap — Meta/集群引导<br/>────────────────────────<br/>storage_peers — 初始 Storage 列表<br/>meta_peers — Meta Raft 副本 ≥3 则 HA<br/>replica_factor — 目标 RF<br/>node_id/listen_addr — 本 Meta 身份<br/>data_dir — Raft persist 根<br/>raft_compact_threshold — Meta 日志压缩"]
 
-  NC["NodeConfig — Storage/Compute 单机<br/>────────────────────────<br/>listen_addr — 本机 TCP<br/>meta_addr — 连哪个 Meta<br/>data_dir — 引擎/Raft 数据<br/>persist_sync — 耐久级别<br/>raft_peers — Storage Multi-Raft 初值<br/>bootstrap_regions — 启动 ENSURE 哪些 Region"]
+  NC["NodeConfig — Storage 单机（及通用 conf）<br/>────────────────────────<br/>listen_addr — 本机 TCP<br/>meta_addr — 连哪个 Meta<br/>data_dir — 引擎/Raft 数据<br/>persist_sync — 耐久级别<br/>raft_peers — Storage Multi-Raft 初值<br/>bootstrap_regions — 启动 ENSURE 哪些 Region"]
 
   KR["KeyRange / RegionMeta<br/>────────────────────────<br/>start_key/end_key — 半开区间<br/>id — 与 Meta RegionInfo.region_id 对齐<br/>locate_region — 二分落点"]
 
@@ -135,7 +135,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  F1["conf 节点文件"] --> NC["NodeConfig<br/>Storage/Compute"]
+  F1["conf 节点文件"] --> NC["NodeConfig<br/>Storage"]
   F2["conf bootstrap"] --> CB["ClusterBootstrap<br/>Meta"]
   CB --> META["MetaNode.state<br/>初始 nodes_/route_"]
   NC --> STORE["StorageNode.cfg_"]

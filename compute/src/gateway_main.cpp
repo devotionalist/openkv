@@ -13,10 +13,10 @@
 // limitations under the License.
 
 // @file gateway_main.cpp
-// gateway_node：gRPC KVService+DSService + HTTP /stats。
+// gateway_node 入口：等 Storage 就绪 → 启 GatewayServer 后台 → gRPC KV/DS + HTTP /stats。
 
 #include "openkv/compute/gateway_server.hpp"
-#include "openkv/compute/store_client.hpp"
+#include "openkv/compute/store_rpc.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/net/tcp_line_client.hpp"
 
@@ -37,8 +37,10 @@ namespace {
 
 std::atomic<bool> g_stop{false};
 
+/// SIGINT/SIGTERM → 置 g_stop，主循环退出。
 void on_signal(int) { g_stop = true; }
 
+/// 逗号分隔地址表，trim 空白。
 std::vector<std::string> split_csv(const std::string& s) {
   std::vector<std::string> out;
   std::string cur;
@@ -59,6 +61,7 @@ std::vector<std::string> split_csv(const std::string& s) {
   return out;
 }
 
+/// 由 gRPC listen 推默认 stats：同主机、端口+1；解析失败回 127.0.0.1:19001。
 std::string default_stats_listen(const std::string& grpc_listen) {
   std::string host;
   uint16_t port = 0;
@@ -69,15 +72,14 @@ std::string default_stats_listen(const std::string& grpc_listen) {
   return host + ":" + std::to_string(static_cast<int>(port) + 1);
 }
 
+/// 对每个 storage 循环 Ping，直到就绪或超时。
 void wait_storage(const std::vector<std::string>& addrs, std::chrono::seconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   for (const auto& a : addrs) {
     std::string last_err = "unknown";
     for (;;) {
       try {
-        openkv::compute::StoreClient c(a);
-        c.set_timeout_ms(3000);
-        c.ping();
+        openkv::compute::store_admin_ping(a, 3000);
         SKV_INFO << "storage ready: " << a;
         break;
       } catch (const std::exception& e) {
@@ -119,6 +121,7 @@ void normalize_go_flags(int argc, char** argv) {
 
 }  // namespace
 
+/// 解析 CLI → wait_storage → 启 gateway/gRPC/HTTP stats → 等信号收尾。
 int main(int argc, char** argv) {
   using namespace openkv;
   init_logging();

@@ -35,6 +35,11 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	StoreService_Get_FullMethodName                = "/storage.v1.StoreService/Get"
 	StoreService_Propose_FullMethodName            = "/storage.v1.StoreService/Propose"
+	StoreService_Scan_FullMethodName               = "/storage.v1.StoreService/Scan"
+	StoreService_Ttl_FullMethodName                = "/storage.v1.StoreService/Ttl"
+	StoreService_CheckTxnStatus_FullMethodName     = "/storage.v1.StoreService/CheckTxnStatus"
+	StoreService_WatchHead_FullMethodName          = "/storage.v1.StoreService/WatchHead"
+	StoreService_WatchPoll_FullMethodName          = "/storage.v1.StoreService/WatchPoll"
 	StoreService_TransferLeadership_FullMethodName = "/storage.v1.StoreService/TransferLeadership"
 )
 
@@ -46,6 +51,11 @@ const (
 type StoreServiceClient interface {
 	Get(ctx context.Context, in *StoreGetRequest, opts ...grpc.CallOption) (*StoreGetResponse, error)
 	Propose(ctx context.Context, in *ProposeRequest, opts ...grpc.CallOption) (*ProposeResponse, error)
+	Scan(ctx context.Context, in *StoreScanRequest, opts ...grpc.CallOption) (*StoreScanResponse, error)
+	Ttl(ctx context.Context, in *StoreTtlRequest, opts ...grpc.CallOption) (*StoreTtlResponse, error)
+	CheckTxnStatus(ctx context.Context, in *StoreCheckTxnRequest, opts ...grpc.CallOption) (*StoreCheckTxnResponse, error)
+	WatchHead(ctx context.Context, in *StoreWatchHeadRequest, opts ...grpc.CallOption) (*StoreWatchHeadResponse, error)
+	WatchPoll(ctx context.Context, in *StoreWatchPollRequest, opts ...grpc.CallOption) (*StoreWatchPollResponse, error)
 	TransferLeadership(ctx context.Context, in *TransferRequest, opts ...grpc.CallOption) (*TransferResponse, error)
 }
 
@@ -77,6 +87,56 @@ func (c *storeServiceClient) Propose(ctx context.Context, in *ProposeRequest, op
 	return out, nil
 }
 
+func (c *storeServiceClient) Scan(ctx context.Context, in *StoreScanRequest, opts ...grpc.CallOption) (*StoreScanResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StoreScanResponse)
+	err := c.cc.Invoke(ctx, StoreService_Scan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) Ttl(ctx context.Context, in *StoreTtlRequest, opts ...grpc.CallOption) (*StoreTtlResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StoreTtlResponse)
+	err := c.cc.Invoke(ctx, StoreService_Ttl_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) CheckTxnStatus(ctx context.Context, in *StoreCheckTxnRequest, opts ...grpc.CallOption) (*StoreCheckTxnResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StoreCheckTxnResponse)
+	err := c.cc.Invoke(ctx, StoreService_CheckTxnStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) WatchHead(ctx context.Context, in *StoreWatchHeadRequest, opts ...grpc.CallOption) (*StoreWatchHeadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StoreWatchHeadResponse)
+	err := c.cc.Invoke(ctx, StoreService_WatchHead_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) WatchPoll(ctx context.Context, in *StoreWatchPollRequest, opts ...grpc.CallOption) (*StoreWatchPollResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StoreWatchPollResponse)
+	err := c.cc.Invoke(ctx, StoreService_WatchPoll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *storeServiceClient) TransferLeadership(ctx context.Context, in *TransferRequest, opts ...grpc.CallOption) (*TransferResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TransferResponse)
@@ -95,6 +155,11 @@ func (c *storeServiceClient) TransferLeadership(ctx context.Context, in *Transfe
 type StoreServiceServer interface {
 	Get(context.Context, *StoreGetRequest) (*StoreGetResponse, error)
 	Propose(context.Context, *ProposeRequest) (*ProposeResponse, error)
+	Scan(context.Context, *StoreScanRequest) (*StoreScanResponse, error)
+	Ttl(context.Context, *StoreTtlRequest) (*StoreTtlResponse, error)
+	CheckTxnStatus(context.Context, *StoreCheckTxnRequest) (*StoreCheckTxnResponse, error)
+	WatchHead(context.Context, *StoreWatchHeadRequest) (*StoreWatchHeadResponse, error)
+	WatchPoll(context.Context, *StoreWatchPollRequest) (*StoreWatchPollResponse, error)
 	TransferLeadership(context.Context, *TransferRequest) (*TransferResponse, error)
 	mustEmbedUnimplementedStoreServiceServer()
 }
@@ -111,6 +176,21 @@ func (UnimplementedStoreServiceServer) Get(context.Context, *StoreGetRequest) (*
 }
 func (UnimplementedStoreServiceServer) Propose(context.Context, *ProposeRequest) (*ProposeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Propose not implemented")
+}
+func (UnimplementedStoreServiceServer) Scan(context.Context, *StoreScanRequest) (*StoreScanResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Scan not implemented")
+}
+func (UnimplementedStoreServiceServer) Ttl(context.Context, *StoreTtlRequest) (*StoreTtlResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Ttl not implemented")
+}
+func (UnimplementedStoreServiceServer) CheckTxnStatus(context.Context, *StoreCheckTxnRequest) (*StoreCheckTxnResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckTxnStatus not implemented")
+}
+func (UnimplementedStoreServiceServer) WatchHead(context.Context, *StoreWatchHeadRequest) (*StoreWatchHeadResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WatchHead not implemented")
+}
+func (UnimplementedStoreServiceServer) WatchPoll(context.Context, *StoreWatchPollRequest) (*StoreWatchPollResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WatchPoll not implemented")
 }
 func (UnimplementedStoreServiceServer) TransferLeadership(context.Context, *TransferRequest) (*TransferResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TransferLeadership not implemented")
@@ -172,6 +252,96 @@ func _StoreService_Propose_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StoreService_Scan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StoreScanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).Scan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_Scan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).Scan(ctx, req.(*StoreScanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_Ttl_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StoreTtlRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).Ttl(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_Ttl_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).Ttl(ctx, req.(*StoreTtlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_CheckTxnStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StoreCheckTxnRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).CheckTxnStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_CheckTxnStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).CheckTxnStatus(ctx, req.(*StoreCheckTxnRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_WatchHead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StoreWatchHeadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).WatchHead(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_WatchHead_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).WatchHead(ctx, req.(*StoreWatchHeadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_WatchPoll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StoreWatchPollRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).WatchPoll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_WatchPoll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).WatchPoll(ctx, req.(*StoreWatchPollRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StoreService_TransferLeadership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(TransferRequest)
 	if err := dec(in); err != nil {
@@ -204,6 +374,26 @@ var StoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Propose",
 			Handler:    _StoreService_Propose_Handler,
+		},
+		{
+			MethodName: "Scan",
+			Handler:    _StoreService_Scan_Handler,
+		},
+		{
+			MethodName: "Ttl",
+			Handler:    _StoreService_Ttl_Handler,
+		},
+		{
+			MethodName: "CheckTxnStatus",
+			Handler:    _StoreService_CheckTxnStatus_Handler,
+		},
+		{
+			MethodName: "WatchHead",
+			Handler:    _StoreService_WatchHead_Handler,
+		},
+		{
+			MethodName: "WatchPoll",
+			Handler:    _StoreService_WatchPoll_Handler,
 		},
 		{
 			MethodName: "TransferLeadership",
@@ -445,7 +635,7 @@ const (
 	AdminService_Checkpoint_FullMethodName     = "/storage.v1.AdminService/Checkpoint"
 	AdminService_RegionStats_FullMethodName    = "/storage.v1.AdminService/RegionStats"
 	AdminService_Ping_FullMethodName           = "/storage.v1.AdminService/Ping"
-	AdminService_ExecLine_FullMethodName       = "/storage.v1.AdminService/ExecLine"
+	AdminService_Stats_FullMethodName          = "/storage.v1.AdminService/Stats"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -470,8 +660,7 @@ type AdminServiceClient interface {
 	Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*AdminSimpleResponse, error)
 	RegionStats(ctx context.Context, in *RegionStatsRequest, opts ...grpc.CallOption) (*RegionStatsResponse, error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
-	// 行协议桥：txn/watch/运维未单独建模的命令经此进同一 handle_line
-	ExecLine(ctx context.Context, in *ExecLineRequest, opts ...grpc.CallOption) (*ExecLineResponse, error)
+	Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (*StatsResponse, error)
 }
 
 type adminServiceClient struct {
@@ -642,10 +831,10 @@ func (c *adminServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...
 	return out, nil
 }
 
-func (c *adminServiceClient) ExecLine(ctx context.Context, in *ExecLineRequest, opts ...grpc.CallOption) (*ExecLineResponse, error) {
+func (c *adminServiceClient) Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (*StatsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExecLineResponse)
-	err := c.cc.Invoke(ctx, AdminService_ExecLine_FullMethodName, in, out, cOpts...)
+	out := new(StatsResponse)
+	err := c.cc.Invoke(ctx, AdminService_Stats_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -674,8 +863,7 @@ type AdminServiceServer interface {
 	Checkpoint(context.Context, *CheckpointRequest) (*AdminSimpleResponse, error)
 	RegionStats(context.Context, *RegionStatsRequest) (*RegionStatsResponse, error)
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
-	// 行协议桥：txn/watch/运维未单独建模的命令经此进同一 handle_line
-	ExecLine(context.Context, *ExecLineRequest) (*ExecLineResponse, error)
+	Stats(context.Context, *StatsRequest) (*StatsResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -734,8 +922,8 @@ func (UnimplementedAdminServiceServer) RegionStats(context.Context, *RegionStats
 func (UnimplementedAdminServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
 }
-func (UnimplementedAdminServiceServer) ExecLine(context.Context, *ExecLineRequest) (*ExecLineResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ExecLine not implemented")
+func (UnimplementedAdminServiceServer) Stats(context.Context, *StatsRequest) (*StatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Stats not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -1046,20 +1234,20 @@ func _AdminService_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AdminService_ExecLine_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExecLineRequest)
+func _AdminService_Stats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StatsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AdminServiceServer).ExecLine(ctx, in)
+		return srv.(AdminServiceServer).Stats(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: AdminService_ExecLine_FullMethodName,
+		FullMethod: AdminService_Stats_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdminServiceServer).ExecLine(ctx, req.(*ExecLineRequest))
+		return srv.(AdminServiceServer).Stats(ctx, req.(*StatsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1136,8 +1324,8 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AdminService_Ping_Handler,
 		},
 		{
-			MethodName: "ExecLine",
-			Handler:    _AdminService_ExecLine_Handler,
+			MethodName: "Stats",
+			Handler:    _AdminService_Stats_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

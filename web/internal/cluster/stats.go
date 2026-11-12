@@ -47,7 +47,7 @@ type NodeStats struct {
 	ToMetaPeers   map[string]uint64 `json:"to_meta_peers,omitempty"`
 }
 
-// FetchTCPStats 直连 Storage（不跟随 Meta redirect），读 STATS。
+// FetchTCPStats 直连 Storage AdminService.Stats。
 func FetchTCPStats(addr string) (NodeStats, error) {
 	var out NodeStats
 	resp, err := TCPLine(addr, "STATS", 800*time.Millisecond)
@@ -57,10 +57,10 @@ func FetchTCPStats(addr string) (NodeStats, error) {
 	return parseStatsLine(resp)
 }
 
-// FetchMetaStats 直连 Meta ExecLine 读 STATS（gRPC 下不可走 Storage Admin）。
+// FetchMetaStats 直连 MetaService.Stats。
 func FetchMetaStats(addr string) (NodeStats, error) {
 	var out NodeStats
-	resp, err := metaExecLine(addr, "STATS", 800*time.Millisecond)
+	resp, err := MetaRPC([]string{addr}, "STATS")
 	if err != nil {
 		return out, err
 	}

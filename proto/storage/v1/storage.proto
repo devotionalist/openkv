@@ -23,6 +23,11 @@ option cc_enable_arenas = true;
 service StoreService {
   rpc Get(StoreGetRequest) returns (StoreGetResponse);
   rpc Propose(ProposeRequest) returns (ProposeResponse);
+  rpc Scan(StoreScanRequest) returns (StoreScanResponse);
+  rpc Ttl(StoreTtlRequest) returns (StoreTtlResponse);
+  rpc CheckTxnStatus(StoreCheckTxnRequest) returns (StoreCheckTxnResponse);
+  rpc WatchHead(StoreWatchHeadRequest) returns (StoreWatchHeadResponse);
+  rpc WatchPoll(StoreWatchPollRequest) returns (StoreWatchPollResponse);
   rpc TransferLeadership(TransferRequest) returns (TransferResponse);
 }
 
@@ -52,16 +57,25 @@ service AdminService {
   rpc Checkpoint(CheckpointRequest) returns (AdminSimpleResponse);
   rpc RegionStats(RegionStatsRequest) returns (RegionStatsResponse);
   rpc Ping(PingRequest) returns (PingResponse);
-  // 行协议桥：txn/watch/运维未单独建模的命令经此进同一 handle_line
-  rpc ExecLine(ExecLineRequest) returns (ExecLineResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
 }
 
-message ExecLineRequest {
-  string line = 1;
-}
-
-message ExecLineResponse {
-  string body = 1;
+message StatsRequest {}
+message StatsResponse {
+  uint64 requests = 1;
+  uint64 gw = 2;
+  uint64 raft = 3;
+  uint64 sync = 4;
+  uint64 admin = 5;
+  uint64 meta_out = 6;
+  uint64 client = 7;
+  uint64 qdepth = 8;
+  uint64 qdrop = 9;
+  map<string, uint64> peer_raft = 10;
+  map<string, uint64> peer_sync = 11;
+  map<string, uint64> peer_raft_out = 12;
+  map<string, uint64> peer_sync_out = 13;
+  map<string, uint64> meta_out_peers = 14;
 }
 
 message StoreGetRequest {
@@ -80,6 +94,8 @@ message StoreGetResponse {
   string redirect_to = 5;
   bool locked = 6;
   string error = 7;
+  bytes lock_primary = 8;  // locked 时阻塞锁的 primary
+  uint64 lock_ts = 9;      // locked 时锁的 start_ts
 }
 
 message ProposeRequest {
@@ -87,23 +103,116 @@ message ProposeRequest {
   enum Op {
     PUT = 0;
     DELETE = 1;
-    ONEPC = 2;  // 二进制热路径：免 ExecLine hex
+    ONEPC = 2;
+    PREWRITE = 3;
+    COMMIT = 4;
+    ROLLBACK = 5;
+    PESSIMISTIC_LOCK = 6;
+    PESSIMISTIC_ROLLBACK = 7;
+    RESOLVE_LOCK = 8;  // commit_ts==0 → 回滚清锁
   }
   Op op = 2;
   bytes key = 3;
   bytes value = 4;
-  int64 ttl_ms = 5;  // plain Put TTL；ONEPC 时表示 expire_at_ms（绝对）
+  int64 ttl_ms = 5;  // plain Put 相对 TTL；ONEPC/PREWRITE 为绝对 expire_at_ms
   string client_id = 6;
   uint64 request_id = 7;
-  // plain KV revision CAS（Raft apply 内校验 KvRecord.revision）
   bool cas = 8;
   uint64 expected_revision = 9;
-  // ONEPC 字段（op=ONEPC）
   uint64 start_ts = 10;
   uint64 commit_ts = 11;
   bytes primary = 12;
   uint64 epoch = 13;
   uint32 mvcc_op = 14;  // 0=Put 1=Delete
+  uint64 for_update_ts = 15;  // PESSIMISTIC_LOCK
+  uint64 lock_ttl_ms = 16;    // PESSIMISTIC_LOCK；0 → Storage 默认
+}
+
+message StoreScanRequest {
+  uint32 shard_id = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;
+  bytes start_after = 4;
+  uint64 start_ts = 5;
+  uint32 limit = 6;
+  bool keys_only = 7;
+  bool linearizable = 8;
+}
+
+message StoreScanPair {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 revision = 3;
+}
+
+message StoreScanResponse {
+  repeated StoreScanPair pairs = 1;
+  bool truncated = 2;
+  bytes next_key = 3;
+  bool is_leader = 4;
+  string redirect_to = 5;
+  string error = 6;
+}
+
+message StoreTtlRequest {
+  uint32 shard_id = 1;
+  bytes key = 2;
+  uint64 start_ts = 3;
+  bool linearizable = 4;
+}
+
+message StoreTtlResponse {
+  int64 ttl_ms = 1;  // -2 不存在；-1 永久；>=0 剩余
+  bool locked = 2;
+  bytes lock_primary = 3;
+  uint64 lock_ts = 4;
+  bool is_leader = 5;
+  string redirect_to = 6;
+  string error = 7;
+}
+
+message StoreCheckTxnRequest {
+  uint32 shard_id = 1;
+  bytes primary = 2;
+  uint64 lock_ts = 3;
+}
+
+message StoreCheckTxnResponse {
+  string status = 1;  // locked|committed|rolledback|expired
+  uint64 commit_ts = 2;
+  bool is_leader = 3;
+  string redirect_to = 4;
+  string error = 5;
+}
+
+message StoreWatchHeadRequest {
+  uint32 shard_id = 1;
+}
+
+message StoreWatchHeadResponse {
+  uint64 revision = 1;
+  string redirect_to = 2;  // no_region 等
+  string error = 3;
+}
+
+message StoreWatchEvent {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 revision = 3;
+  bool deleted = 4;
+}
+
+message StoreWatchPollRequest {
+  uint32 shard_id = 1;
+  uint64 since = 2;
+  int32 limit = 3;
+}
+
+message StoreWatchPollResponse {
+  repeated StoreWatchEvent events = 1;
+  uint64 max_revision = 2;
+  string redirect_to = 3;
+  string error = 4;
 }
 
 message ProposeResponse {

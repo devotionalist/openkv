@@ -1,16 +1,16 @@
 > Language: [English](./networking.md) · [中文](../NETWORKING.md)
 
-# Networking: gRPC and Seastar
+# Networking: gRPC
 
-How OpenKV talks on the wire today, and what the optional Seastar switch does. Full Chinese detail: [NETWORKING.md](../NETWORKING.md).
+How OpenKV talks on the wire today: **mandatory gRPC** on every cluster path, with multi-service multiplexing on each node’s main port. Full Chinese detail: [NETWORKING.md](../NETWORKING.md). Threading model: [22-async-threading-model](../flows/22-async-threading-model.md).
 
 ## Summary
 
-| | **gRPC** | **Seastar** |
-|--|----------|-------------|
-| Status | **Mandatory**; default local & production path | **Optional**; default `OFF`; not on the business path |
-| Role | All cluster RPC | Planned async reactor (does not change protocol) |
-| CMake | `OPENKV_USE_GRPC` fixed `ON` | `-DOPENKV_USE_SEASTAR=ON` to fetch & link |
+| Item | Detail |
+|------|--------|
+| Protocol | **gRPC** (mandatory); default local & production path |
+| CMake | `OPENKV_USE_GRPC` fixed `ON` |
+| Threads | gRPC Callback/CQ receive threads + `WorkPool` / BatchSystem / Transport workers |
 
 ```
 Client / skv / Web
@@ -24,7 +24,16 @@ Meta :850x   Storage :910x
 MetaService  StoreService + RaftService + AdminService
 ```
 
-There is **no** public raw TCP line protocol. Legacy admin line verbs remain only as RPC body semantics (`AdminService.ExecLine` / Meta equivalents).
+There is **no** public raw TCP line protocol. Ops use typed Admin / Meta RPCs (and thin CLI wrappers).
+
+### Default ports
+
+| Role | Address |
+|------|---------|
+| Gateway | `127.0.0.1:19000` |
+| Meta ×3 | `127.0.0.1:8500`–`8502` |
+| Storage ×N | `127.0.0.1:9100`–… |
+| Web console | `http://127.0.0.1:19100` (HTTP → gRPC) |
 
 ## Proto layout
 
@@ -42,16 +51,13 @@ There is **no** public raw TCP line protocol. Legacy admin line verbs remain onl
 |---------|----------------|------|
 | `StoreService` | Gateway | `Get` / `Propose` / `TransferLeadership` |
 | `RaftService` | Peer Storage | AppendEntries / Vote / Snapshot |
-| `AdminService` | skv / Web / ops | Line-style admin & migration |
+| `AdminService` | skv / Web / ops | Split / merge / place / progress |
 
-## Optional Seastar
+## Build
 
 ```bash
-# Linux experimental only; does not change the gRPC surface
-sudo ./path/to/seastar/install-dependencies.sh
-cmake -B build -DOPENKV_USE_SEASTAR=ON
-# optional pin: -DOPENKV_SEASTAR_GIT_TAG=seastar-25.05.0
+cmake -B build   # OPENKV_USE_GRPC forced ON
 cmake --build build -j
 ```
 
-Design notes (Chinese): [architecture/SEASTAR_NET.md](../architecture/SEASTAR_NET.md), [flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md).
+Related: [flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md), [USER_GUIDE](../USER_GUIDE.md).

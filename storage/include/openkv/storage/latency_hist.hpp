@@ -59,17 +59,24 @@ struct RegionLatency {
 
 class RegionMetrics {
  public:
+  RegionMetrics();
+
   void observe_propose(uint32_t region_id, uint64_t us);
   void observe_get(uint32_t region_id, uint64_t us);
 
   std::string region_compact(uint32_t region_id) const;
   std::string prometheus_text() const;
 
+  /// 测试辅助：把 by_region_ 置为 moved-from（libstdc++ 下 bucket_count 可为 0）。
+  void test_only_move_away_map();
+
  private:
+  /// libstdc++ moved-from / 堆损坏后 bucket_count==0 时 operator[]/find 会 SIGFPE。
+  void ensure_map_usable() const;
   RegionLatency& ensure(uint32_t region_id);
 
   mutable std::mutex mu_;
-  std::unordered_map<uint32_t, RegionLatency> by_region_;
+  mutable std::unordered_map<uint32_t, RegionLatency> by_region_;
 };
 
 }  // namespace openkv::storage

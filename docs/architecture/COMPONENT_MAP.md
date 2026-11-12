@@ -117,5 +117,4 @@ Client → gRPC Gateway → Storage gRPC → StorageNode
 | [META_PRODUCTION.md](../production/META_PRODUCTION.md) | Meta 能力表 |
 | [STORE_PRODUCTION.md](../production/STORE_PRODUCTION.md) | Store 生产要求 |
 | [RANGE_SHARDING.md](RANGE_SHARDING.md) | Region Range 模型 |
-| [docs/NETWORKING.md](../NETWORKING.md) | gRPC / Seastar（公开） |
-| [SEASTAR_NET.md](SEASTAR_NET.md) | 可选 Seastar |
+| [docs/NETWORKING.md](../NETWORKING.md) | gRPC 网络栈（公开） |

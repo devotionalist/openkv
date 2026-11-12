@@ -22,6 +22,7 @@
 #include "openkv/logging.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/watch_log.hpp"
 #include "openkv/work_pool.hpp"
 
 #include <cstdlib>
@@ -95,6 +96,10 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
       resp->set_is_leader(r.is_leader);
       resp->set_redirect_to(r.redirect_to);
       resp->set_locked(r.locked);
+      if (r.locked) {
+        resp->set_lock_primary(r.blocking_lock.primary);
+        resp->set_lock_ts(r.blocking_lock.start_ts);
+      }
       if (!r.error.empty()) resp->set_error(r.error);
     }
     reactor->Finish(Status::OK);
@@ -109,15 +114,148 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
       fill_propose_response(resp, r);
       reactor->Finish(Status::OK);
     };
-    if (req->op() == pb::ProposeRequest::ONEPC) {
-      // 二进制热路径：Gateway Put/Delete 免 ExecLine hex。
-      const std::string& primary = req->primary().empty() ? req->key() : req->primary();
-      facade_.one_pc_async(req->shard_id(), req->key(), req->start_ts(), req->commit_ts(), primary,
-                           static_cast<uint8_t>(req->mvcc_op()), req->value(), req->epoch(),
-                           req->cas(), req->expected_revision(), req->ttl_ms(), std::move(finish));
-    } else {
-      facade_.propose_async(req->shard_id(), command_from_propose_req(*req), std::move(finish));
+    const std::string& primary = req->primary().empty() ? req->key() : req->primary();
+    switch (req->op()) {
+      case pb::ProposeRequest::ONEPC:
+        facade_.one_pc_async(req->shard_id(), req->key(), req->start_ts(), req->commit_ts(), primary,
+                             static_cast<uint8_t>(req->mvcc_op()), req->value(), req->epoch(),
+                             req->cas(), req->expected_revision(), req->ttl_ms(), std::move(finish));
+        break;
+      case pb::ProposeRequest::PREWRITE:
+        facade_.prewrite_async(req->shard_id(), req->key(), req->start_ts(), primary,
+                               static_cast<uint8_t>(req->mvcc_op()), req->value(), req->epoch(),
+                               req->cas(), req->expected_revision(), req->ttl_ms(),
+                               std::move(finish));
+        break;
+      case pb::ProposeRequest::COMMIT:
+        facade_.commit_async(req->shard_id(), req->key(), req->start_ts(), req->commit_ts(),
+                             req->epoch(), std::move(finish));
+        break;
+      case pb::ProposeRequest::ROLLBACK:
+        facade_.rollback_async(req->shard_id(), req->key(), req->start_ts(), req->epoch(),
+                               std::move(finish));
+        break;
+      case pb::ProposeRequest::PESSIMISTIC_LOCK:
+        facade_.pessimistic_lock_async(req->shard_id(), req->key(), req->start_ts(),
+                                       req->for_update_ts(), primary, req->lock_ttl_ms(),
+                                       req->epoch(), std::move(finish));
+        break;
+      case pb::ProposeRequest::PESSIMISTIC_ROLLBACK:
+        facade_.pessimistic_rollback_async(req->shard_id(), req->key(), req->start_ts(),
+                                           req->epoch(), std::move(finish));
+        break;
+      case pb::ProposeRequest::RESOLVE_LOCK:
+        facade_.resolve_lock_async(req->shard_id(), req->key(), req->start_ts(), req->commit_ts(),
+                                   req->epoch(), std::move(finish));
+        break;
+      case pb::ProposeRequest::PUT:
+      case pb::ProposeRequest::DELETE:
+      default:
+        facade_.propose_async(req->shard_id(), command_from_propose_req(*req), std::move(finish));
+        break;
     }
+    return reactor;
+  }
+
+  ServerUnaryReactor* Scan(CallbackServerContext* ctx, const pb::StoreScanRequest* req,
+                           pb::StoreScanResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
+    auto r = facade_.txn_scan(req->shard_id(), req->start_key(), req->end_key(), req->start_after(),
+                              req->start_ts(), req->limit(), req->keys_only(), req->linearizable());
+    resp->set_truncated(r.truncated);
+    resp->set_next_key(r.next_key);
+    resp->set_is_leader(r.is_leader);
+    resp->set_redirect_to(r.redirect_to);
+    if (!r.error.empty()) resp->set_error(r.error);
+    for (const auto& p : r.pairs) {
+      auto* out = resp->add_pairs();
+      out->set_key(p.key);
+      out->set_value(p.value);
+      out->set_revision(p.revision);
+    }
+    reactor->Finish(Status::OK);
+    return reactor;
+  }
+
+  ServerUnaryReactor* Ttl(CallbackServerContext* ctx, const pb::StoreTtlRequest* req,
+                          pb::StoreTtlResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
+    auto r = facade_.txn_ttl(req->shard_id(), req->key(), req->start_ts(), req->linearizable());
+    resp->set_ttl_ms(r.ttl_ms);
+    resp->set_locked(r.locked);
+    resp->set_is_leader(r.is_leader);
+    resp->set_redirect_to(r.redirect_to);
+    if (r.locked) {
+      resp->set_lock_primary(r.blocking_lock.primary);
+      resp->set_lock_ts(r.blocking_lock.start_ts);
+    }
+    if (!r.error.empty()) resp->set_error(r.error);
+    reactor->Finish(Status::OK);
+    return reactor;
+  }
+
+  ServerUnaryReactor* CheckTxnStatus(CallbackServerContext* ctx,
+                                     const pb::StoreCheckTxnRequest* req,
+                                     pb::StoreCheckTxnResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
+    auto r = facade_.check_txn_status(req->shard_id(), req->primary(), req->lock_ts());
+    resp->set_is_leader(r.is_leader);
+    resp->set_redirect_to(r.redirect_to);
+    resp->set_commit_ts(r.commit_ts);
+    if (!r.error.empty()) resp->set_error(r.error);
+    // locked|expired|committed|rolledback
+    const char* st = "rolledback";
+    if (r.status == TxnStatus::kLocked) st = r.lock_expired ? "expired" : "locked";
+    else if (r.status == TxnStatus::kCommitted) st = "committed";
+    resp->set_status(st);
+    reactor->Finish(Status::OK);
+    return reactor;
+  }
+
+  ServerUnaryReactor* WatchHead(CallbackServerContext* ctx, const pb::StoreWatchHeadRequest* req,
+                                pb::StoreWatchHeadResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
+    auto* g = facade_.node().multi_raft().get(req->shard_id());
+    if (!g) {
+      resp->set_redirect_to("no_region");
+      resp->set_error("no_region");
+    } else {
+      resp->set_revision(g->soft_state().last_applied);
+    }
+    reactor->Finish(Status::OK);
+    return reactor;
+  }
+
+  ServerUnaryReactor* WatchPoll(CallbackServerContext* ctx, const pb::StoreWatchPollRequest* req,
+                                pb::StoreWatchPollResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
+    const uint32_t shard = req->shard_id();
+    const uint64_t since = req->since();
+    size_t limit = req->limit() > 0 ? static_cast<size_t>(req->limit()) : 64;
+    auto* g = facade_.node().multi_raft().get(shard);
+    if (!g) {
+      resp->set_redirect_to("no_region");
+      resp->set_error("no_region");
+      resp->set_max_revision(since);
+      reactor->Finish(Status::OK);
+      return reactor;
+    }
+    auto& eng = facade_.node().engines().get_or_create(shard);
+    auto evs = WatchLog::poll(eng, shard, since, limit);
+    if (evs.empty()) {
+      evs = facade_.node().watch_hub().poll(shard, since, limit);
+    }
+    uint64_t max_rev = since;
+    for (const auto& e : evs) {
+      if (e.revision > max_rev) max_rev = e.revision;
+      auto* out = resp->add_events();
+      out->set_key(e.key);
+      out->set_value(e.value);
+      out->set_revision(e.revision);
+      out->set_deleted(e.deleted);
+    }
+    resp->set_max_revision(max_rev);
+    reactor->Finish(Status::OK);
     return reactor;
   }
 
@@ -254,8 +392,7 @@ pb::AdminSimpleResponse make_admin_resp(std::string_view msg) {
 
 class AdminServiceImpl final : public pb::AdminService::CallbackService {
  public:
-  AdminServiceImpl(StorageNode& n, ExecLineHandler* line, std::string token, WorkPool& pool)
-      : node_(n), line_(line), token_(std::move(token)), pool_(pool) {}
+  AdminServiceImpl(StorageNode& n, std::string token) : node_(n), token_(std::move(token)) {}
 
   Status ensure_auth(CallbackServerContext* ctx) {
     if (!grpc_admin_allowed(*ctx, token_)) {
@@ -417,48 +554,29 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
     return reactor;
   }
 
-  ServerUnaryReactor* ExecLine(CallbackServerContext* ctx, const pb::ExecLineRequest* req,
-                               pb::ExecLineResponse* resp) override {
+  ServerUnaryReactor* Stats(CallbackServerContext* ctx, const pb::StatsRequest*,
+                            pb::StatsResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
-    if (!line_) {
-      reactor->Finish(Status(grpc::StatusCode::UNIMPLEMENTED, "ExecLine: no line handler"));
-      return reactor;
-    }
-    const std::string& line = req->line();
-    if (line.rfind("ADMIN_", 0) == 0 || line.rfind("AUTH ", 0) == 0) {
-      if (auto st = ensure_auth(ctx); !st.ok()) {
-        reactor->Finish(st);
-        return reactor;
-      }
-    }
-    AdminSession sess;
-    if (admin_acl_enabled(token_) &&
-        ctx->client_metadata().find(kGrpcAdminTokenMeta) != ctx->client_metadata().end()) {
-      sess.authenticated = true;
-    }
-    auto finish = [reactor, resp](std::string body) {
-      resp->set_body(std::move(body));
-      reactor->Finish(Status::OK);
-    };
-    // PING：回调线程直接回，不进 WorkPool（池堵时仍可探活）。
-    if (line == "PING" || line == "PING\r" || line.starts_with("PING ")) {
-      finish("OK PONG");
-      return reactor;
-    }
-    // PUT/DEL/ONEPC：接收线程直接 propose_async，不进池、不 future.get。
-    if (line_->try_process_line_async(line, &sess, finish)) return reactor;
-    // 其它行可能 sync wait；丢到 WorkPool，立刻归还 callback 线程。
-    pool_.post([line, sess, finish = std::move(finish), handler = line_]() mutable {
-      finish(handler->process_line(line, &sess));
-    });
+    const auto snap = node_.stats_snapshot();
+    resp->set_requests(snap.requests);
+    resp->set_gw(snap.gw);
+    resp->set_raft(snap.raft);
+    resp->set_sync(snap.sync);
+    resp->set_admin(snap.admin);
+    resp->set_meta_out(snap.meta_out);
+    resp->set_client(snap.client);
+    resp->set_qdepth(snap.qdepth);
+    resp->set_qdrop(snap.qdrop);
+    for (const auto& kv : snap.peer_raft_out) (*resp->mutable_peer_raft_out())[kv.first] = kv.second;
+    for (const auto& kv : snap.peer_sync_out) (*resp->mutable_peer_sync_out())[kv.first] = kv.second;
+    for (const auto& kv : snap.meta_out_peers) (*resp->mutable_meta_out_peers())[kv.first] = kv.second;
+    reactor->Finish(Status::OK);
     return reactor;
   }
 
  private:
   StorageNode& node_;
-  ExecLineHandler* line_;
   std::string token_;
-  WorkPool& pool_;
 };
 
 }  // namespace
@@ -471,10 +589,8 @@ struct StorageGrpcServer::Impl {
   std::unique_ptr<AdminServiceImpl> admin;
 };
 
-StorageGrpcServer::StorageGrpcServer(StoreFacade& facade, std::string listen_addr,
-                                     ExecLineHandler* line_server)
+StorageGrpcServer::StorageGrpcServer(StoreFacade& facade, std::string listen_addr)
     : facade_(facade),
-      line_server_(line_server),
       listen_addr_(std::move(listen_addr)),
       admin_token_(admin_token_from_env()),
       impl_(std::make_unique<Impl>()) {}
@@ -491,8 +607,7 @@ void StorageGrpcServer::start() {
   impl_->pool = std::make_unique<WorkPool>(pool_n);
   impl_->store = std::make_unique<StoreServiceImpl>(facade_, admin_token_);
   impl_->raft = std::make_unique<RaftServiceImpl>(facade_.node());
-  impl_->admin =
-      std::make_unique<AdminServiceImpl>(facade_.node(), line_server_, admin_token_, *impl_->pool);
+  impl_->admin = std::make_unique<AdminServiceImpl>(facade_.node(), admin_token_);
 
   grpc::ServerBuilder builder;
   builder.SetMaxReceiveMessageSize(64 << 20);

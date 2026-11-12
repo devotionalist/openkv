@@ -23,7 +23,7 @@ Details: [Multi-lang clients](../flows/15-multi-client-sdk.md). This repo’s `c
 |----------|-------------|
 | [Quick start](quickstart.md) | Build, local cluster, put/get in minutes |
 | [User guide](user-guide.md) | Install, console, Helm, scale-out |
-| [Networking](networking.md) | Mandatory gRPC; optional Seastar |
+| [Networking](networking.md) | Mandatory gRPC; ports & services |
 | [Architecture](architecture.md) | Topology, components, HA / scale boundaries |
 | [Contributing](contributing.md) | PR-only workflow, owner approval, tags/releases |
 | [Version CAS (ZH)](../flows/13-version-cas.md) | Single-key revision CAS (Gateway + plain Propose) |

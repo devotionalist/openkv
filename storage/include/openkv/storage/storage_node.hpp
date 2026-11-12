@@ -42,6 +42,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace openkv::storage {
@@ -162,6 +163,15 @@ class StorageNode {
   /// 本节点发往 Meta 的出站 RPC 累计次数（STATS meta_out）。
   uint64_t meta_out_count() const { return meta_out_.load(std::memory_order_relaxed); }
   std::string meta_out_peers_encode() const { return meta_out_peers_.encode(); }
+  /// AdminService.Stats 快照（避免 header 依赖 storage.v1 pb 与 openkv::storage 歧义）。
+  struct StatsSnapshot {
+    uint64_t requests{0}, gw{0}, raft{0}, sync{0}, admin{0}, meta_out{0}, client{0};
+    uint64_t qdepth{0}, qdrop{0};
+    std::vector<std::pair<std::string, uint64_t>> peer_raft_out;
+    std::vector<std::pair<std::string, uint64_t>> peer_sync_out;
+    std::vector<std::pair<std::string, uint64_t>> meta_out_peers;
+  };
+  StatsSnapshot stats_snapshot() const;
 
  private:
   void tick_loop();

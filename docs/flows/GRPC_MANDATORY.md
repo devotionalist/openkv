@@ -14,8 +14,8 @@
 ## 方案
 
 - CMake：**强制**拉取/链接 gRPC（系统包优先，否则 FetchContent）；旧 cache `OFF` 自动抬升为 ON
-- Meta / Storage：**只**在主端口起 gRPC；`ExecLineHandler` 作进程内 ExecLine 行协议解析（不 listen）
-- C++ Gateway / Web / `skv`：**只**走 gRPC ExecLine
+- Meta / Storage：**只**在主端口起类型化 gRPC（无公开 `ExecLine`）
+- C++ Gateway / Web / `skv`：**只**走 Store/Admin/Meta 类型化 RPC
 - 删除环境变量 `SKV_LEGACY_TCP` 与相关自动导出逻辑
 
 ## 废代码清理（随强制 gRPC）
@@ -24,14 +24,15 @@
 
 | 原物 | 处置 |
 |------|------|
-| `TcpServer`（listen + 行协议） | 删 listen；类/文件改名为 `ExecLineHandler`（`exec_line_handler.*`） |
+| `TcpServer` / `ExecLineHandler` | 已删除；Admin/Meta 类型化 RPC |
 | `TcpTransport`（peer 表 / 出站计数 / 历史 TCP 发包） | 删除；并入 `GrpcRaftTransport`（Impl peer 表 + `PeerCounter`） |
 | `net::tcp_line` / `tcp_line_auth` | 删除；仅保留 `parse_host_port` |
 | `#else //!OPENKV_USE_GRPC` 桩（Meta/Storage/Raft gRPC） | 删除 |
+| `AdminService.ExecLine` / `MetaService.ExecLine` | 已删除；运维映射到 typed RPC |
 
 ## 边界
 
-- 行协议字符串（`PING` / `GET_ROUTE` / `ADMIN_*`）仍作为 gRPC `ExecLine` 的 body 语义，不是独立 TCP 监听
+- 脚本/skv 仍可输入历史行命令字符串，由客户端映射为类型化 RPC（非服务端 ExecLine）
 - 构建机必须能拿到 gRPC（`brew install grpc` 或允许 FetchContent）
 
 ## 失败与回滚

@@ -34,4 +34,3 @@ target_link_libraries(meta_server PRIVATE openkv_meta)
 if(COMMAND openkv_link_jemalloc)
   openkv_link_jemalloc(meta_server)
 endif()
-# Seastar 由 openkv_common PUBLIC 传递；ON 时 meta 网络走 reactor（P1）

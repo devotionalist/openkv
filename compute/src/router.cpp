@@ -13,13 +13,14 @@
 // limitations under the License.
 
 // @file router.cpp
-// Router：Range 定位 + Leader 选取。
+// Router：Range 二分定位 + Leader/replicas 选取；线程安全（mu_）。
 
 #include "openkv/compute/router.hpp"
 
 namespace openkv::compute {
 namespace {
 
+/// 从 table.regions 重建按 Range 排序的 RegionMeta，供 locate_region 二分。
 void rebuild_sorted(const RoutingTable& table, std::vector<openkv::RegionMeta>* sorted) {
   sorted->clear();
   sorted->reserve(table.regions.size());
@@ -31,6 +32,7 @@ void rebuild_sorted(const RoutingTable& table, std::vector<openkv::RegionMeta>* 
 
 }  // namespace
 
+/// 仅接受 version ≥ 当前的表；更新后重建 sorted_。
 void Router::update(RoutingTable table) {
   std::lock_guard<std::mutex> lock(mu_);
   if (table.version < table_.version) return;
@@ -38,21 +40,25 @@ void Router::update(RoutingTable table) {
   rebuild_sorted(table_, &sorted_);
 }
 
+/// 当前已接受的 Meta 路由 version。
 uint64_t Router::version() const {
   std::lock_guard<std::mutex> lock(mu_);
   return table_.version;
 }
 
+/// key 落在哪个 Region（二分）；未命中 nullopt。
 std::optional<openkv::RegionId> Router::region_of(std::string_view key) const {
   std::lock_guard<std::mutex> lock(mu_);
   return openkv::locate_region(sorted_, key);
 }
 
+/// 旧别名：region_of 失败返回 0。
 uint32_t Router::shard_of(std::string_view key) const {
   auto id = region_of(key);
   return id ? *id : 0;
 }
 
+/// 找 is_leader 副本地址；都无标记则退回 replicas[0]。
 std::optional<std::string> Router::leader_addr(openkv::RegionId region_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = table_.regions.find(region_id);
@@ -64,12 +70,14 @@ std::optional<std::string> Router::leader_addr(openkv::RegionId region_id) const
   return std::nullopt;
 }
 
+/// key → region → leader_addr。
 std::optional<std::string> Router::leader_addr_for_key(std::string_view key) const {
   auto id = region_of(key);
   if (!id) return std::nullopt;
   return leader_addr(*id);
 }
 
+/// 副本地址：leader 插到队首，其余按表顺序跟后。
 std::vector<std::string> Router::replica_addrs(openkv::RegionId region_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<std::string> out;
@@ -88,6 +96,7 @@ std::vector<std::string> Router::replica_addrs(openkv::RegionId region_id) const
   return out;
 }
 
+/// 读 Region conf epoch；未知 0。
 uint64_t Router::epoch(openkv::RegionId region_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = table_.regions.find(region_id);
@@ -95,6 +104,7 @@ uint64_t Router::epoch(openkv::RegionId region_id) const {
   return it->second.epoch;
 }
 
+/// 单调抬高本地 epoch（Storage 回 expected= 时调用）。
 void Router::bump_epoch(openkv::RegionId region_id, uint64_t to) {
   if (to == 0) return;
   std::lock_guard<std::mutex> lock(mu_);
@@ -103,11 +113,13 @@ void Router::bump_epoch(openkv::RegionId region_id, uint64_t to) {
   if (it->second.epoch < to) it->second.epoch = to;
 }
 
+/// 拷贝整表（含 epoch/replicas）。
 RoutingTable Router::snapshot() const {
   std::lock_guard<std::mutex> lock(mu_);
   return table_;
 }
 
+/// 单机 demo：Region 0 覆盖全空间，唯一副本为 storage_addr。
 void Router::bootstrap_single(const std::string& storage_addr, uint32_t) {
   RoutingTable t;
   t.version = 1;

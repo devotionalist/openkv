@@ -9,7 +9,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
 WORKDIR /src
 COPY . .
 RUN cmake -B build \
-      -DOPENKV_USE_SEASTAR=OFF \
       -DOPENKV_BUILD_TESTS=OFF \
  && cmake --build build -j"$(nproc)" --target meta_server storage_node
 

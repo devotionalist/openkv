@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <thread>
 #include <unistd.h>
 
@@ -321,4 +322,66 @@ TEST_F(StoreFacadeTest, MvccTtlViaPrewrite) {
   auto gone = facade_->txn_get(0, "ttl-m", ~uint64_t{0}, true);
   EXPECT_FALSE(gone.found);
   EXPECT_EQ(gone.revision, 0u);
+}
+
+// StoreService Propose PREWRITE/COMMIT/… 走 *_async；锁定路径防回归。
+TEST_F(StoreFacadeTest, TxnOpsAsyncPrewriteCommitResolve) {
+  using openkv::storage::ProposeResult;
+  using openkv::storage::TxnStatus;
+  auto await = [](auto&& launch) {
+    std::promise<ProposeResult> done;
+    launch([&](ProposeResult r) { done.set_value(std::move(r)); });
+    return done.get_future().get();
+  };
+
+  auto pw = await([&](auto cb) {
+    facade_->prewrite_async(0, "async-k", 10, "async-k", 0, "v", 0, false, 0, 0, std::move(cb));
+  });
+  ASSERT_TRUE(pw.ok) << pw.error;
+
+  auto locked = facade_->txn_get(0, "async-k", 20, true);
+  EXPECT_TRUE(locked.locked);
+  EXPECT_EQ(locked.blocking_lock.primary, "async-k");
+  EXPECT_EQ(locked.blocking_lock.start_ts, 10u);
+
+  auto cts = facade_->check_txn_status(0, "async-k", 10);
+  EXPECT_TRUE(cts.is_leader);
+  EXPECT_EQ(cts.status, TxnStatus::kLocked);
+
+  auto cm = await([&](auto cb) {
+    facade_->commit_async(0, "async-k", 10, 20, 0, std::move(cb));
+  });
+  ASSERT_TRUE(cm.ok) << cm.error;
+
+  auto tg = facade_->txn_get(0, "async-k", 30, true);
+  ASSERT_TRUE(tg.found);
+  EXPECT_EQ(tg.value, "v");
+  EXPECT_EQ(tg.revision, 20u);
+
+  auto scan = facade_->txn_scan(0, "async-", "async.", "", 30, 16, false, true);
+  ASSERT_TRUE(scan.error.empty()) << scan.error;
+  ASSERT_FALSE(scan.pairs.empty());
+  EXPECT_EQ(scan.pairs.front().key, "async-k");
+
+  // resolve rollback 路径：prewrite → resolve_lock(commit_ts=0)
+  auto pw2 = await([&](auto cb) {
+    facade_->prewrite_async(0, "async-rb", 40, "async-rb", 0, "x", 0, false, 0, 0, std::move(cb));
+  });
+  ASSERT_TRUE(pw2.ok) << pw2.error;
+  auto rb = await([&](auto cb) {
+    facade_->resolve_lock_async(0, "async-rb", 40, /*commit_ts=*/0, 0, std::move(cb));
+  });
+  ASSERT_TRUE(rb.ok) << rb.error;
+  EXPECT_FALSE(facade_->get_lock(0, "async-rb").found);
+
+  auto pl = await([&](auto cb) {
+    facade_->pessimistic_lock_async(0, "async-pes", 50, 55, "async-pes", /*ttl*/ 0, 0,
+                                    std::move(cb));
+  });
+  ASSERT_TRUE(pl.ok) << pl.error;
+  auto prb = await([&](auto cb) {
+    facade_->pessimistic_rollback_async(0, "async-pes", 50, 0, std::move(cb));
+  });
+  ASSERT_TRUE(prb.ok) << prb.error;
+  EXPECT_FALSE(facade_->get_lock(0, "async-pes").found);
 }

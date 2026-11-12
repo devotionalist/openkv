@@ -23,6 +23,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace openkv::raft {
 
@@ -45,6 +47,12 @@ class GrpcRaftTransport {
 
   std::string encode_out_raft() const { return out_raft_.encode(); }
   std::string encode_out_sync() const { return out_sync_.encode(); }
+  std::vector<std::pair<std::string, uint64_t>> snapshot_out_raft() const {
+    return out_raft_.snapshot();
+  }
+  std::vector<std::pair<std::string, uint64_t>> snapshot_out_sync() const {
+    return out_sync_.snapshot();
+  }
   uint64_t out_raft_total() const;
   uint64_t out_sync_total() const;
 

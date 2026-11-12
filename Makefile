@@ -24,8 +24,7 @@ BUILD_DIR ?= build
 
 # RocksDB 由 CMake FetchContent 固定版本随工程编译，无需系统预装
 # gRPC 强制（系统包优先，否则 FetchContent）；勿再传 -DOPENKV_USE_GRPC=OFF
-CMAKE_FLAGS ?= -DOPENKV_USE_SEASTAR=OFF \
-	-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib
+CMAKE_FLAGS ?= -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib
 
 .PHONY: all configure build test gtest run-meta run-storage run-compute proto go-mod clean \
 	cluster-up cluster-down cluster-test e2e memcheck asan fault-drill integ-workload release-gate \
@@ -63,7 +62,7 @@ run-storage: build
 	./$(BUILD_DIR)/storage/storage_node conf/storage.conf
 
 run-compute: build
-	./$(BUILD_DIR)/compute/compute_node conf/compute.conf
+	./$(BUILD_DIR)/compute/gateway_node --listen 0.0.0.0:19000 --metas 127.0.0.1:8500
 
 # ---- 本地集群（daemon 保活）与客户端 --------------------------------------
 cluster-up:

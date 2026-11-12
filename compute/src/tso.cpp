@@ -13,11 +13,10 @@
 // limitations under the License.
 
 // @file tso.cpp
-// TSO 批缓存实现。
+// TSO 批缓存实现：同步 alloc / 异步 alloc_async + Meta 补货。
 
 #include "openkv/compute/tso.hpp"
 
-#include "openkv/compute/exec_line.hpp"
 #include "openkv/compute/meta_client.hpp"
 
 #include <cstdlib>
@@ -26,6 +25,7 @@
 
 namespace openkv::compute {
 
+/// batch_size==0：读 OPENKV_TSO_BATCH，否则默认 kDefaultTsoBatch。
 TSOracle::TSOracle(std::vector<std::string> meta_addrs, uint32_t batch_size)
     : meta_addrs_(std::move(meta_addrs)), batch_size_(batch_size) {
   if (batch_size_ == 0) {
@@ -38,12 +38,14 @@ TSOracle::TSOracle(std::vector<std::string> meta_addrs, uint32_t batch_size)
   }
 }
 
+/// 单测直接灌入半开区间，跳过 Meta。
 void TSOracle::inject_cache_for_test(uint64_t next, uint64_t end) {
   std::lock_guard<std::mutex> lock(mu_);
   next_ = next;
   end_ = end;
 }
 
+/// 同步分配：batch_size<=1 每次打 Meta；否则缓存不足时 refill_locked。
 uint64_t TSOracle::alloc(uint32_t n) {
   if (n == 0) n = 1;
   std::lock_guard<std::mutex> lock(mu_);
@@ -58,6 +60,7 @@ uint64_t TSOracle::alloc(uint32_t n) {
   return start;
 }
 
+/// 持锁同步 GetTs，写入 [next_, end_)。
 void TSOracle::refill_locked(uint32_t need) {
   uint32_t req = batch_size_;
   if (need > req) req = need;
@@ -67,6 +70,7 @@ void TSOracle::refill_locked(uint32_t need) {
   end_ = start + static_cast<uint64_t>(got);
 }
 
+/// 异步分配：命中直接 cb；miss 入 waiters_，唯一补货飞行，完成后按序发放。
 void TSOracle::alloc_async(uint32_t n, std::function<void(grpc::Status, uint64_t start)> cb) {
   if (!cb) return;
   if (n == 0) n = 1;
@@ -96,6 +100,7 @@ void TSOracle::alloc_async(uint32_t n, std::function<void(grpc::Status, uint64_t
   }
   if (!start_refill) return;
 
+  // 补货回调：更新缓存，依次满足 waiters；批不够则 RESOURCE_EXHAUSTED。
   meta_alloc_ts_range_async(
       meta_addrs_, refill_req, 3000,
       [this](grpc::Status st, uint64_t start, uint32_t got) {

@@ -22,9 +22,6 @@
 # 硬依赖：
 #   RocksDB（RocksDB::rocksdb）— FetchContent 固定版本，与工程一起编译；
 #   存储节点启动默认打开 RocksDB
-#
-# 可选：
-#   Seastar → OPENKV_HAS_SEASTAR=1（预留 reactor 集成）
 # =============================================================================
 
 # 库代码不含入口；main.cpp 单独给 executable
@@ -44,11 +41,6 @@ target_link_libraries(openkv_storage
     openkv_proto
     RocksDB::rocksdb
 )
-
-if(OPENKV_USE_SEASTAR)
-  target_compile_definitions(openkv_storage PUBLIC OPENKV_HAS_SEASTAR=1)
-  target_link_libraries(openkv_storage PUBLIC Seastar::seastar)
-endif()
 
 add_executable(storage_node src/main.cpp)
 target_link_libraries(storage_node PRIVATE openkv_storage)

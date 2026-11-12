@@ -14,6 +14,8 @@
 
 #include "openkv/storage/latency_hist.hpp"
 
+#include "openkv/logging.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -84,7 +86,22 @@ std::string LatencyHistogram::encode_prometheus(const std::string& metric,
   return oss.str();
 }
 
+RegionMetrics::RegionMetrics() {
+  // libc++/部分 libstdc++ 默认 bucket_count 可为 0；先占桶，避免首次 hash% 除零。
+  by_region_.rehash(16);
+}
+
+void RegionMetrics::ensure_map_usable() const {
+  if (by_region_.bucket_count() != 0) return;
+  SKV_ERROR << "RegionMetrics by_region_ bucket_count=0; rebuilding map "
+               "(moved-from or memory corruption — prevents SIGFPE on hash%)";
+  std::unordered_map<uint32_t, RegionLatency> fresh;
+  fresh.rehash(16);
+  by_region_.swap(fresh);
+}
+
 RegionLatency& RegionMetrics::ensure(uint32_t region_id) {
+  ensure_map_usable();
   return by_region_[region_id];
 }
 
@@ -98,8 +115,15 @@ void RegionMetrics::observe_get(uint32_t region_id, uint64_t us) {
   ensure(region_id).get.observe(us);
 }
 
+void RegionMetrics::test_only_move_away_map() {
+  std::lock_guard<std::mutex> lock(mu_);
+  auto stolen = std::move(by_region_);
+  (void)stolen;
+}
+
 std::string RegionMetrics::region_compact(uint32_t region_id) const {
   std::lock_guard<std::mutex> lock(mu_);
+  ensure_map_usable();
   auto it = by_region_.find(region_id);
   if (it == by_region_.end()) {
     return "propose_count=0 get_count=0";
@@ -110,6 +134,7 @@ std::string RegionMetrics::region_compact(uint32_t region_id) const {
 
 std::string RegionMetrics::prometheus_text() const {
   std::lock_guard<std::mutex> lock(mu_);
+  ensure_map_usable();
   std::ostringstream oss;
   oss << "# HELP skv_propose_latency_us Propose+apply latency in microseconds\n";
   oss << "# TYPE skv_propose_latency_us histogram\n";

@@ -58,6 +58,19 @@ TEST(LatencyHistTest, RegionMetricsProposeGet) {
   EXPECT_NE(text.find("region=\"1\""), std::string::npos);
 }
 
+TEST(LatencyHistTest, RegionMetricsSurvivesMovedFromMap) {
+  // libstdc++ moved-from unordered_map 常为 bucket_count=0；旧代码 operator[] 会 SIGFPE。
+  RegionMetrics m;
+  m.observe_propose(0, 100);
+  m.test_only_move_away_map();
+  EXPECT_NO_FATAL_FAILURE(m.observe_propose(1, 200));
+  EXPECT_NO_FATAL_FAILURE(m.observe_get(1, 50));
+  auto text = m.prometheus_text();
+  EXPECT_NE(text.find("region=\"1\""), std::string::npos);
+  auto c1 = m.region_compact(1);
+  EXPECT_NE(c1.find("propose_count=1"), std::string::npos);
+}
+
 TEST(LatencyHistTest, FacadeRecordsPropose) {
   auto dir =
       std::filesystem::temp_directory_path() / ("skv_lat_" + std::to_string(::getpid()));

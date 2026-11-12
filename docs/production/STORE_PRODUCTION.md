@@ -129,7 +129,7 @@ Epoch meta key：`\xff\xffskv/epoch`（每 Region 引擎内）。
 - 环境变量 `SKV_ADMIN_TOKEN`：非空则启用；空则开发模式（不鉴权）。
 - 连接内先发 `AUTH <token>` → `OK AUTH`；随后 `ADMIN_*` 才放行。
 - `skv` / Meta→Storage / Store 互调 `tcp_line` 在 token 已设时自动握手。
-- **TLS**：进程监听明文 TCP；生产在前面挂 stunnel / Envoy / nginx 做 TLS 终止（避免链 OpenSSL 进 Seastar 演示路径）。
+- **TLS**：进程监听明文 TCP；生产在前面挂 stunnel / Envoy / nginx 做 TLS 终止。
 
 ---
 

@@ -128,7 +128,7 @@ else
   if [[ "${FORCE_CMAKE:-0}" == "1" || "$_cmake_stale" == "1" || ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     echo "==> cmake configure (gRPC mandatory; first time / FORCE_CMAKE=1 / stale cache)"
     cmake -B "$BUILD_DIR" \
-      -DOPENKV_USE_SEASTAR=OFF -DOPENKV_USE_GRPC=ON \
+      -DOPENKV_USE_GRPC=ON \
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib \
       "${_cmake_extra[@]+"${_cmake_extra[@]}"}"

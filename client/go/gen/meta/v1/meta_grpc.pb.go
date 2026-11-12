@@ -58,6 +58,8 @@ const (
 	MetaService_Balance_FullMethodName           = "/meta.v1.MetaService/Balance"
 	MetaService_SuggestPlace_FullMethodName      = "/meta.v1.MetaService/SuggestPlace"
 	MetaService_BumpRoute_FullMethodName         = "/meta.v1.MetaService/BumpRoute"
+	MetaService_CancelScale_FullMethodName       = "/meta.v1.MetaService/CancelScale"
+	MetaService_Stats_FullMethodName             = "/meta.v1.MetaService/Stats"
 	MetaService_GetTs_FullMethodName             = "/meta.v1.MetaService/GetTs"
 	MetaService_GetSafePoint_FullMethodName      = "/meta.v1.MetaService/GetSafePoint"
 	MetaService_AdvanceSafePoint_FullMethodName  = "/meta.v1.MetaService/AdvanceSafePoint"
@@ -66,7 +68,6 @@ const (
 	MetaService_WhoLeader_FullMethodName         = "/meta.v1.MetaService/WhoLeader"
 	MetaService_StoreStatus_FullMethodName       = "/meta.v1.MetaService/StoreStatus"
 	MetaService_FindMergeRight_FullMethodName    = "/meta.v1.MetaService/FindMergeRight"
-	MetaService_ExecLine_FullMethodName          = "/meta.v1.MetaService/ExecLine"
 )
 
 // MetaServiceClient is the client API for MetaService service.
@@ -102,6 +103,8 @@ type MetaServiceClient interface {
 	Balance(ctx context.Context, in *BalanceRequest, opts ...grpc.CallOption) (*SimpleResponse, error)
 	SuggestPlace(ctx context.Context, in *SuggestPlaceRequest, opts ...grpc.CallOption) (*SuggestPlaceResponse, error)
 	BumpRoute(ctx context.Context, in *BumpRouteRequest, opts ...grpc.CallOption) (*SimpleResponse, error)
+	CancelScale(ctx context.Context, in *CancelScaleRequest, opts ...grpc.CallOption) (*SimpleResponse, error)
+	Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (*StatsResponse, error)
 	// TSO / GC / 定位
 	GetTs(ctx context.Context, in *GetTsRequest, opts ...grpc.CallOption) (*GetTsResponse, error)
 	GetSafePoint(ctx context.Context, in *GetSafePointRequest, opts ...grpc.CallOption) (*GetSafePointResponse, error)
@@ -111,8 +114,6 @@ type MetaServiceClient interface {
 	WhoLeader(ctx context.Context, in *WhoLeaderRequest, opts ...grpc.CallOption) (*WhoLeaderResponse, error)
 	StoreStatus(ctx context.Context, in *StoreStatusRequest, opts ...grpc.CallOption) (*StoreStatusResponse, error)
 	FindMergeRight(ctx context.Context, in *FindMergeRightRequest, opts ...grpc.CallOption) (*FindMergeRightResponse, error)
-	// 行协议桥（Storage meta_rpc / 运维未单独建模的命令）
-	ExecLine(ctx context.Context, in *ExecLineRequest, opts ...grpc.CallOption) (*ExecLineResponse, error)
 }
 
 type metaServiceClient struct {
@@ -382,6 +383,26 @@ func (c *metaServiceClient) BumpRoute(ctx context.Context, in *BumpRouteRequest,
 	return out, nil
 }
 
+func (c *metaServiceClient) CancelScale(ctx context.Context, in *CancelScaleRequest, opts ...grpc.CallOption) (*SimpleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SimpleResponse)
+	err := c.cc.Invoke(ctx, MetaService_CancelScale_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (*StatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StatsResponse)
+	err := c.cc.Invoke(ctx, MetaService_Stats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *metaServiceClient) GetTs(ctx context.Context, in *GetTsRequest, opts ...grpc.CallOption) (*GetTsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetTsResponse)
@@ -462,16 +483,6 @@ func (c *metaServiceClient) FindMergeRight(ctx context.Context, in *FindMergeRig
 	return out, nil
 }
 
-func (c *metaServiceClient) ExecLine(ctx context.Context, in *ExecLineRequest, opts ...grpc.CallOption) (*ExecLineResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExecLineResponse)
-	err := c.cc.Invoke(ctx, MetaService_ExecLine_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // MetaServiceServer is the server API for MetaService service.
 // All implementations must embed UnimplementedMetaServiceServer
 // for forward compatibility.
@@ -505,6 +516,8 @@ type MetaServiceServer interface {
 	Balance(context.Context, *BalanceRequest) (*SimpleResponse, error)
 	SuggestPlace(context.Context, *SuggestPlaceRequest) (*SuggestPlaceResponse, error)
 	BumpRoute(context.Context, *BumpRouteRequest) (*SimpleResponse, error)
+	CancelScale(context.Context, *CancelScaleRequest) (*SimpleResponse, error)
+	Stats(context.Context, *StatsRequest) (*StatsResponse, error)
 	// TSO / GC / 定位
 	GetTs(context.Context, *GetTsRequest) (*GetTsResponse, error)
 	GetSafePoint(context.Context, *GetSafePointRequest) (*GetSafePointResponse, error)
@@ -514,8 +527,6 @@ type MetaServiceServer interface {
 	WhoLeader(context.Context, *WhoLeaderRequest) (*WhoLeaderResponse, error)
 	StoreStatus(context.Context, *StoreStatusRequest) (*StoreStatusResponse, error)
 	FindMergeRight(context.Context, *FindMergeRightRequest) (*FindMergeRightResponse, error)
-	// 行协议桥（Storage meta_rpc / 运维未单独建模的命令）
-	ExecLine(context.Context, *ExecLineRequest) (*ExecLineResponse, error)
 	mustEmbedUnimplementedMetaServiceServer()
 }
 
@@ -601,6 +612,12 @@ func (UnimplementedMetaServiceServer) SuggestPlace(context.Context, *SuggestPlac
 func (UnimplementedMetaServiceServer) BumpRoute(context.Context, *BumpRouteRequest) (*SimpleResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BumpRoute not implemented")
 }
+func (UnimplementedMetaServiceServer) CancelScale(context.Context, *CancelScaleRequest) (*SimpleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelScale not implemented")
+}
+func (UnimplementedMetaServiceServer) Stats(context.Context, *StatsRequest) (*StatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Stats not implemented")
+}
 func (UnimplementedMetaServiceServer) GetTs(context.Context, *GetTsRequest) (*GetTsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTs not implemented")
 }
@@ -624,9 +641,6 @@ func (UnimplementedMetaServiceServer) StoreStatus(context.Context, *StoreStatusR
 }
 func (UnimplementedMetaServiceServer) FindMergeRight(context.Context, *FindMergeRightRequest) (*FindMergeRightResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FindMergeRight not implemented")
-}
-func (UnimplementedMetaServiceServer) ExecLine(context.Context, *ExecLineRequest) (*ExecLineResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ExecLine not implemented")
 }
 func (UnimplementedMetaServiceServer) mustEmbedUnimplementedMetaServiceServer() {}
 func (UnimplementedMetaServiceServer) testEmbeddedByValue()                     {}
@@ -1092,6 +1106,42 @@ func _MetaService_BumpRoute_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MetaService_CancelScale_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelScaleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).CancelScale(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_CancelScale_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).CancelScale(ctx, req.(*CancelScaleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_Stats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).Stats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_Stats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).Stats(ctx, req.(*StatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MetaService_GetTs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTsRequest)
 	if err := dec(in); err != nil {
@@ -1236,24 +1286,6 @@ func _MetaService_FindMergeRight_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_ExecLine_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExecLineRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MetaServiceServer).ExecLine(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: MetaService_ExecLine_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MetaServiceServer).ExecLine(ctx, req.(*ExecLineRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // MetaService_ServiceDesc is the grpc.ServiceDesc for MetaService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1358,6 +1390,14 @@ var MetaService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MetaService_BumpRoute_Handler,
 		},
 		{
+			MethodName: "CancelScale",
+			Handler:    _MetaService_CancelScale_Handler,
+		},
+		{
+			MethodName: "Stats",
+			Handler:    _MetaService_Stats_Handler,
+		},
+		{
 			MethodName: "GetTs",
 			Handler:    _MetaService_GetTs_Handler,
 		},
@@ -1388,10 +1428,6 @@ var MetaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FindMergeRight",
 			Handler:    _MetaService_FindMergeRight_Handler,
-		},
-		{
-			MethodName: "ExecLine",
-			Handler:    _MetaService_ExecLine_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

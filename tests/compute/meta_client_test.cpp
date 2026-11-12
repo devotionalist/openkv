@@ -17,7 +17,7 @@
 
 #include "openkv/codec.hpp"
 #include "openkv/compute/active_ts.hpp"
-#include "openkv/compute/exec_line.hpp"
+#include "openkv/compute/grpc_channel.hpp"
 #include "openkv/compute/meta_client.hpp"
 #include "openkv/compute/tso.hpp"
 
@@ -36,7 +36,7 @@ using openkv::compute::parse_redirect;
 using openkv::compute::parse_route;
 using openkv::compute::TSOracle;
 
-TEST(ExecLineTest, ParseRedirect) {
+TEST(GrpcUtilTest, ParseRedirect) {
   EXPECT_EQ(parse_redirect("ERR not_leader redirect=127.0.0.1:8500"), "127.0.0.1:8500");
   EXPECT_EQ(parse_redirect("OK"), "");
 }

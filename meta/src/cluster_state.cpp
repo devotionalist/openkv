@@ -109,8 +109,25 @@ std::string ClusterState::register_node(NodeInfo node) {
     it->second.address = node.address;
     it->second.role = node.role;
     it->second.last_heartbeat_ms = now_ms();
+    // Offline 只可能从 Active 经租约 TTL sweep 而来（Joining 不会被 sweep）。
+    // 崩溃/滚动重启后 REGISTER：恢复 Active，避免 Web 长期「待加入」且须人工 JOIN。
+    // 新扩容节点仍走首次 register → Joining → JOIN_NODE。
     if (it->second.state == NodeState::kOffline) {
-      it->second.state = NodeState::kJoining;
+      it->second.state = NodeState::kActive;
+    }
+    // 历史误标 Joining、但路由上已持副本：视为已准入，REGISTER 时升 Active。
+    if (it->second.state == NodeState::kJoining) {
+      bool holds_replica = false;
+      for (const auto& region : route_.regions) {
+        for (const auto& rep : region.replicas) {
+          if (rep.node_id == node.node_id) {
+            holds_replica = true;
+            break;
+          }
+        }
+        if (holds_replica) break;
+      }
+      if (holds_replica) it->second.state = NodeState::kActive;
     }
     // Tombstone / Draining：拒绝因 REGISTER 复活（须 ACTIVATE / 清 tomb 后重建）
     if (it->second.state == NodeState::kTombstone || it->second.state == NodeState::kDraining) {

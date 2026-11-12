@@ -1,6 +1,6 @@
 # jemalloc 内存分配器
 
-进程级分配器使用 **[jemalloc](https://github.com/jemalloc/jemalloc)**（与 RocksDB / Seastar 一样经 FetchContent 编进工程）。
+进程级分配器使用 **[jemalloc](https://github.com/jemalloc/jemalloc)**（与 RocksDB 一样经 FetchContent 编进工程）。
 
 ## 开关
 
@@ -18,7 +18,7 @@ cmake -B build -DOPENKV_USE_JEMALLOC=OFF  # 回退系统 malloc
 ## 行为
 
 - 配置：`--with-jemalloc-prefix=`（导出标准 `malloc`/`free`），替换 libc 分配器。
-- 链接：`openkv_link_jemalloc(<exe>)` 挂到 `meta_server`、`storage_node`、`compute_node`、`skv`、`openkv_unit_tests`。
+- 链接：`openkv_link_jemalloc(<exe>)` 挂到 `meta_server`、`storage_node`、`gateway_node`、`skv`、`openkv_unit_tests`。
 - 编译宏：`OPENKV_HAS_JEMALLOC=1`（可选用 `mallctl` 做诊断，非必须）。
 
 RocksDB / 业务 `new`/`malloc` 均走同一进程分配器，无需再开 RocksDB `WITH_JEMALLOC`。

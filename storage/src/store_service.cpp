@@ -35,6 +35,25 @@ struct ScopedRegionTimer {
   uint32_t region{0};
   bool propose{true};
   std::chrono::steady_clock::time_point t0{std::chrono::steady_clock::now()};
+
+  ScopedRegionTimer() = default;
+  ScopedRegionTimer(openkv::storage::RegionMetrics* m, uint32_t r, bool p)
+      : metrics(m), region(r), propose(p) {}
+  ScopedRegionTimer(const ScopedRegionTimer&) = delete;
+  ScopedRegionTimer& operator=(const ScopedRegionTimer&) = delete;
+  ScopedRegionTimer(ScopedRegionTimer&& o) noexcept
+      : metrics(o.metrics), region(o.region), propose(o.propose), t0(o.t0) {
+    o.metrics = nullptr;  // 避免 moved-from 临时对象析构时重复 observe
+  }
+  ScopedRegionTimer& operator=(ScopedRegionTimer&& o) noexcept {
+    if (this == &o) return *this;
+    metrics = o.metrics;
+    region = o.region;
+    propose = o.propose;
+    t0 = o.t0;
+    o.metrics = nullptr;
+    return *this;
+  }
   ~ScopedRegionTimer() {
     if (!metrics) return;
     const auto us = static_cast<uint64_t>(
@@ -326,7 +345,8 @@ ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
 void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
                                 std::function<void(ProposeResult)> cb) {
   if (!cb) return;
-  auto timer = std::make_shared<ScopedRegionTimer>(ScopedRegionTimer{&metrics_, shard_id, true});
+  // 原地构造，避免临时对象析构导致 observe 双打。
+  auto timer = std::make_shared<ScopedRegionTimer>(&metrics_, shard_id, true);
   auto fail = [&](std::string err, std::string redirect = {}) {
     ProposeResult r;
     r.error = std::move(err);
@@ -575,6 +595,63 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
   });
 }
 
+void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                                 std::string primary, uint8_t mvcc_op, std::string value,
+                                 uint64_t expected_epoch, bool cas, uint64_t expected_revision,
+                                 int64_t expire_at_ms, std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  ProposeResult gate = require_leader(shard_id, expected_epoch);
+  auto fail = [&](std::string err, bool cas_failed = false, uint64_t cur_rev = 0) {
+    gate.ok = false;
+    gate.error = std::move(err);
+    gate.cas_failed = cas_failed;
+    gate.current_revision = cur_rev;
+    cb(std::move(gate));
+  };
+  if (!gate.ok) {
+    cb(std::move(gate));
+    return;
+  }
+  auto* eng = node_.engines().get(shard_id);
+  if (!eng) {
+    fail("no_engine");
+    return;
+  }
+  MvccStore mvcc(*eng);
+  if (auto lk = mvcc.get_lock(key)) {
+    if (lk->start_ts != start_ts) {
+      fail("locked");
+      return;
+    }
+    // 同事务悲观锁 → 允许升级为 prewrite
+  } else if (mvcc.has_write_conflict(key, start_ts)) {
+    fail("write_conflict");
+    return;
+  }
+  if (cas) {
+    bool locked = false;
+    uint64_t cur_rev = 0;
+    auto vis = mvcc.txn_get(key, ~uint64_t{0}, &locked, nullptr, &cur_rev);
+    if (locked) {
+      fail("locked");
+      return;
+    }
+    const bool match = (expected_revision == 0) ? !vis.has_value() : (cur_rev == expected_revision);
+    if (!match) {
+      fail("cas_failed current_revision=" + std::to_string(cur_rev), true, cur_rev);
+      return;
+    }
+  }
+  Command cmd;
+  cmd.op = CmdOp::kPrewrite;
+  cmd.key = std::move(key);
+  cmd.value = encode_prewrite_value(start_ts, mvcc_op, primary, value);
+  cmd.ttl_ms = expire_at_ms;
+  cmd.cas = cas;
+  cmd.expected_revision = expected_revision;
+  propose_async(shard_id, cmd, std::move(cb));
+}
+
 ProposeResult StoreFacade::commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                   uint64_t commit_ts, uint64_t expected_epoch) {
   ProposeResult gate = require_leader(shard_id, expected_epoch);
@@ -616,6 +693,54 @@ ProposeResult StoreFacade::commit(uint32_t shard_id, std::string_view key, uint6
   return propose(shard_id, cmd);
 }
 
+void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                               uint64_t commit_ts, uint64_t expected_epoch,
+                               std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  ProposeResult gate = require_leader(shard_id, expected_epoch);
+  auto fail = [&](std::string err) {
+    gate.ok = false;
+    gate.error = std::move(err);
+    cb(std::move(gate));
+  };
+  if (!gate.ok) {
+    cb(std::move(gate));
+    return;
+  }
+  auto* eng = node_.engines().get(shard_id);
+  if (!eng) {
+    fail("no_engine");
+    return;
+  }
+  MvccStore mvcc(*eng);
+  if (auto cts = mvcc.find_commit_ts(key, start_ts)) {
+    if (*cts == commit_ts || commit_ts != 0) {
+      gate.ok = true;
+      cb(std::move(gate));
+      return;
+    }
+  }
+  auto lk = mvcc.get_lock(key);
+  if (!lk || lk->start_ts != start_ts) {
+    if (mvcc.find_commit_ts(key, start_ts)) {
+      gate.ok = true;
+      cb(std::move(gate));
+      return;
+    }
+    fail("lock_not_found");
+    return;
+  }
+  if (lk->op == MvccOp::kPessimistic) {
+    fail("pessimistic_not_prewritten");
+    return;
+  }
+  Command cmd;
+  cmd.op = CmdOp::kCommit;
+  cmd.key = std::move(key);
+  cmd.value = encode_commit_value(start_ts, commit_ts);
+  propose_async(shard_id, cmd, std::move(cb));
+}
+
 ProposeResult StoreFacade::rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                     uint64_t expected_epoch) {
   ProposeResult gate = require_leader(shard_id, expected_epoch);
@@ -625,6 +750,21 @@ ProposeResult StoreFacade::rollback(uint32_t shard_id, std::string_view key, uin
   cmd.key = std::string(key);
   cmd.value = encode_rollback_value(start_ts);
   return propose(shard_id, cmd);
+}
+
+void StoreFacade::rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                                 uint64_t expected_epoch, std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  ProposeResult gate = require_leader(shard_id, expected_epoch);
+  if (!gate.ok) {
+    cb(std::move(gate));
+    return;
+  }
+  Command cmd;
+  cmd.op = CmdOp::kRollback;
+  cmd.key = std::move(key);
+  cmd.value = encode_rollback_value(start_ts);
+  propose_async(shard_id, cmd, std::move(cb));
 }
 
 ProposeResult StoreFacade::pessimistic_lock(uint32_t shard_id, std::string_view key,
@@ -661,6 +801,48 @@ ProposeResult StoreFacade::pessimistic_lock(uint32_t shard_id, std::string_view 
   return propose(shard_id, cmd);
 }
 
+void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                                         uint64_t for_update_ts, std::string primary,
+                                         uint64_t ttl_ms, uint64_t expected_epoch,
+                                         std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  ProposeResult gate = require_leader(shard_id, expected_epoch);
+  auto fail = [&](std::string err) {
+    gate.ok = false;
+    gate.error = std::move(err);
+    cb(std::move(gate));
+  };
+  if (!gate.ok) {
+    cb(std::move(gate));
+    return;
+  }
+  auto* eng = node_.engines().get(shard_id);
+  if (!eng) {
+    fail("no_engine");
+    return;
+  }
+  MvccStore mvcc(*eng);
+  if (auto lk = mvcc.get_lock(key)) {
+    if (lk->start_ts == start_ts) {
+      gate.ok = true;
+      cb(std::move(gate));
+      return;
+    }
+    fail("locked");
+    return;
+  }
+  if (mvcc.has_write_conflict(key, for_update_ts != 0 ? for_update_ts : start_ts)) {
+    fail("write_conflict");
+    return;
+  }
+  if (ttl_ms == 0) ttl_ms = 5000;
+  Command cmd;
+  cmd.op = CmdOp::kPessimisticLock;
+  cmd.key = std::move(key);
+  cmd.value = encode_pessimistic_lock_value(start_ts, for_update_ts, ttl_ms, primary);
+  propose_async(shard_id, cmd, std::move(cb));
+}
+
 ProposeResult StoreFacade::pessimistic_rollback(uint32_t shard_id, std::string_view key,
                                                 uint64_t start_ts, uint64_t expected_epoch) {
   ProposeResult gate = require_leader(shard_id, expected_epoch);
@@ -672,6 +854,22 @@ ProposeResult StoreFacade::pessimistic_rollback(uint32_t shard_id, std::string_v
   return propose(shard_id, cmd);
 }
 
+void StoreFacade::pessimistic_rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                                             uint64_t expected_epoch,
+                                             std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  ProposeResult gate = require_leader(shard_id, expected_epoch);
+  if (!gate.ok) {
+    cb(std::move(gate));
+    return;
+  }
+  Command cmd;
+  cmd.op = CmdOp::kPessimisticRollback;
+  cmd.key = std::move(key);
+  cmd.value = encode_rollback_value(start_ts);
+  propose_async(shard_id, cmd, std::move(cb));
+}
+
 ProposeResult StoreFacade::resolve_lock(uint32_t shard_id, std::string_view key,
                                         uint64_t start_ts, uint64_t commit_ts,
                                         uint64_t expected_epoch) {
@@ -679,6 +877,17 @@ ProposeResult StoreFacade::resolve_lock(uint32_t shard_id, std::string_view key,
     return rollback(shard_id, key, start_ts, expected_epoch);
   }
   return commit(shard_id, key, start_ts, commit_ts, expected_epoch);
+}
+
+void StoreFacade::resolve_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                                     uint64_t commit_ts, uint64_t expected_epoch,
+                                     std::function<void(ProposeResult)> cb) {
+  if (!cb) return;
+  if (commit_ts == 0) {
+    rollback_async(shard_id, std::move(key), start_ts, expected_epoch, std::move(cb));
+    return;
+  }
+  commit_async(shard_id, std::move(key), start_ts, commit_ts, expected_epoch, std::move(cb));
 }
 
 TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint64_t start_ts,

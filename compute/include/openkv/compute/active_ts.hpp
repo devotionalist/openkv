@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file active_ts.hpp
-// Gateway 活跃 start_ts 跟踪（对齐 Go activeTsTracker）。
+// Gateway 活跃 start_ts 跟踪：Put/Txn 占用区间，完成后 remove。
+//
+// min() 上报 Meta 作 GC 下界；TTL 过期条目自动剔除，避免永久挡 GC。
+// 仅统计**本进程**已知 ts，非集群全局。
 
 #pragma once
 
@@ -28,12 +31,15 @@ namespace openkv::compute {
 /// 本 Gateway 已知活跃 start_ts；过期自动剔除，避免挡住 GC。
 class ActiveTsTracker {
  public:
+  /// 构造；ttl 内未 remove 的条目在 min()/扫描时剔除。
   explicit ActiveTsTracker(std::chrono::milliseconds ttl = std::chrono::seconds(60));
 
+  /// 登记一个活跃 start_ts（Put/TxnBegin 占用时调用）。
   void add(uint64_t ts);
+  /// 事务结束或 Put 完成后注销该 ts。
   void remove(uint64_t ts);
 
-  /// 活跃最小 start_ts；无活跃则为 UINT64_MAX。
+  /// 当前活跃集合中的最小 start_ts；无活跃则为 UINT64_MAX（上报 Meta 表示「无挡」）。
   uint64_t min();
 
  private:

@@ -95,7 +95,7 @@ make admin-run       # http://127.0.0.1:19100
 make cluster-down
 ```
 
-gRPC C++ is **required**; Seastar defaults **OFF**. Details: [Networking](docs/en/networking.md).
+gRPC C++ is **required**. Details: [Networking](docs/en/networking.md).
 
 ## Features
 

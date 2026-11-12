@@ -42,7 +42,7 @@ SDK / skv / Web
       │  gRPC kv.v1 / ds.v1  (:19000)
       ▼
 gateway_node（无状态：路由 · TSO 批缓存 · 重试 · Watch 轮询）
-      │  gRPC Store / Admin / ExecLine
+      │  gRPC Store / Admin / Meta（类型化）
       ▼
 StorageNode × N（Scheduler latch → RaftKV → raftstore Ready → RocksDB）
       ▲
@@ -113,6 +113,8 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | 主题 | 文件 | 要点 |
 |------|------|------|
 | C++ Gateway | [18-cpp-gateway.md](18-cpp-gateway.md) | `gateway_node` 组件、端口、启动参数 |
+| Compute 代码地图 | [29-compute-code-map.md](29-compute-code-map.md) | 路径矩阵、双栈、粗糙点与注释基线 |
+| 统一异步 Store | [30-unified-async-store.md](30-unified-async-store.md) | 去 WorkPool sync；StoreService 扩 Txn/Scan/Watch |
 | TSO 热路径 | [16-gateway-tso-perf.md](16-gateway-tso-perf.md) | 批缓存；`alloc_ts(2)`；短 Put 一次 Meta 跳 |
 | 异步网络 | [21-async-network.md](21-async-network.md) | CallbackService；`propose_async` / `wait_async` |
 | 异步线程模型 | [22-async-threading-model.md](22-async-threading-model.md) | 接收线程 vs WorkPool vs apply 回调 |

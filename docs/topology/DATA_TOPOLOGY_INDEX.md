@@ -7,7 +7,7 @@
 | **Meta** | [META_DATA_TOPOLOGY.md](META_DATA_TOPOLOGY.md) | `ClusterState` / `RegionInfo` / TSO / 迁移 |
 | **Raft** | [RAFT_DATA_TOPOLOGY.md](RAFT_DATA_TOPOLOGY.md) | `RaftNode` / `RaftLog` / `MultiRaft` / Persist |
 | **Storage** | [STORE_DATA_TOPOLOGY.md](STORE_DATA_TOPOLOGY.md) | `StorageNode` / `KvEngine` / MVCC / `Command` |
-| **Compute** | [COMPUTE_DATA_TOPOLOGY.md](COMPUTE_DATA_TOPOLOGY.md) | `Router` / `KvProxy` / 路由缓存 |
+| **Compute** | [COMPUTE_DATA_TOPOLOGY.md](COMPUTE_DATA_TOPOLOGY.md) | `GatewayServer` / `Router` / 路由缓存 |
 | **Common** | [COMMON_DATA_TOPOLOGY.md](COMMON_DATA_TOPOLOGY.md) | `NodeConfig` / `ClusterBootstrap` / `KeyRange` / ACL |
 
 ## 模块间数据流（概览）

@@ -29,6 +29,7 @@ set(OPENKV_TEST_SOURCES
   common/region_test.cpp
   common/config_test.cpp
   common/admin_acl_test.cpp
+  common/meta_rpc_test.cpp
   # raft：日志、单节点、MultiRaft、持久化恢复
   raft/raft_log_test.cpp
   raft/raft_node_test.cpp
@@ -59,9 +60,8 @@ set(OPENKV_TEST_SOURCES
   meta/scaler_test.cpp
   meta/meta_ha_test.cpp
   meta/region_scheduler_test.cpp
-  # compute：路由、Proxy、Gateway 出站客户端
+  # compute：路由、Gateway 出站客户端
   compute/router_test.cpp
-  compute/kv_proxy_test.cpp
   compute/ds_encode_test.cpp
   compute/meta_client_test.cpp
 )

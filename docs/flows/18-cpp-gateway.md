@@ -28,9 +28,9 @@ flowchart LR
 | 进程入口 | `compute/src/gateway_main.cpp` | 解析 `--listen` / `--metas` / `--storages` |
 | GatewayServer | `gateway_server*.cpp` | KV / Txn / Scan / TTL / Watch / DS |
 | Router | `router.hpp` | epoch、Locate、leader 优先 replicas |
-| MetaClient | `meta_client.cpp` | GET_ROUTE / ExecLine / 连接复用 |
+| MetaClient | `meta_client.cpp` | GetRoutingTable / GetTs(count) / 连接复用 |
 | TSO | `tso.cpp` | 批缓存本地发放 |
-| StoreClient | `store_client.cpp` | ExecLine async、`one_pc`、`txn_get` |
+| store_rpc | `store_rpc.cpp` | StoreService async Propose/Get/Scan/… |
 | dsencode | `ds_encode.cpp` | Hash/Set/List/ZSet blob |
 
 镜像：`deploy/Dockerfile.gateway` → `/opt/openkv/gateway_node`。
@@ -50,7 +50,8 @@ flowchart LR
 | DS | MetaKey TxnGet → mutate → Prewrite/Commit（[12](12-data-structures.md)） |
 
 线程模型：[22-async-threading-model.md](22-async-threading-model.md)。  
-TSO：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。
+TSO：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。  
+代码地图 / 路径矩阵 / 已知粗糙点：[29-compute-code-map.md](29-compute-code-map.md)。
 
 ---
 

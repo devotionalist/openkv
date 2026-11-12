@@ -79,17 +79,17 @@
 
 | 模块 | 文件数 | 用例数 | 关注点 |
 |------|--------|--------|--------|
-| common | 4 | 14 | 哈希、Range、配置、Admin ACL |
+| common | 5 | 15 | 哈希、Range、配置、Admin ACL、meta_rpc 线格式 |
 | raft | 11 | 34 | 日志、选主、Joint、快照流、RawNode、raftstore |
 | storage | 12 | 47 | KvEngine/快照区间、MVCC（TxnScan/TxnTtl）、StoreFacade、Admin Raft、Watch |
-| meta | 4 | 27 | ClusterState、Scaler（含排队/取消）、Scheduler、Meta HA FSM |
+| meta | 4 | 29 | ClusterState、Scaler（含排队/取消）、Scheduler、Meta HA FSM |
 | compute | 2 | 8 | Router Locate、Proxy 重试 |
-| **合计** | **33** | **130** | |
+| **合计** | **34** | **133** | |
 
 ### 3.2 套件 → 用例名
 
 <details>
-<summary>common（14）</summary>
+<summary>common（15）</summary>
 
 | Suite.Case | 文件 |
 |------------|------|
@@ -97,6 +97,7 @@
 | ConfigTest.{LoadNodeConfig,LoadBootstrapPeers,MissingFileThrows} | `common/config_test.cpp` |
 | HashTest.{Fnv1aStable,EmptyKey,ShardOfRange,ShardOfZeroCount,ShardDistributionNotCollapsed} | `common/hash_test.cpp` |
 | RegionTest.{ContainsAndInf,LocateSorted,CanSplitAt} | `common/region_test.cpp` |
+| MetaRpcTest.FormatRoutingTableLineIncludesNrepComma | `common/meta_rpc_test.cpp` |
 
 </details>
 
@@ -126,7 +127,7 @@
 |-------|------|
 | KvEngineTest | Put/Get/Delete、Snapshot、**SnapshotRangePreservesSibling**（兄弟区间不被空 range 抹掉）、Checkpoint、CF、SyncMode |
 | MvccTest | Lock、可见性、WriteConflict、悲观锁、GC、TxnScan、TxnTtl |
-| StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite**、Epoch、Split seed、幂等 Propose |
+| StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite** / **TxnOpsAsyncPrewriteCommitResolve**、Epoch、Split seed、幂等 Propose |
 | WatchHubTest / WatchLogTest | Watch 过滤与持久化 |
 | InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、Latch、前缀扫描 |
 | RocksRaftEngineTest / ShardEngineManagerTest | Raft 引擎、单 Store 共享引擎 |
@@ -146,23 +147,22 @@
 </details>
 
 <details>
-<summary>compute（Router/Proxy + Gateway 出站客户端）</summary>
+<summary>compute（Router + Gateway 出站客户端）</summary>
 
 | Suite | Cases | 最近结果 |
 |-------|-------|----------|
-| RouterTest | BootstrapSingle, UpdateIgnoresStaleVersion, RangeLocateAfterSplit, ReplicaAddrsAndFallback（含 epoch/leader 优先）, MissingShard | **PASS** 2026-11-10 |
-| KvProxyTest | PutGetViaTransport, NoRoute, RedirectRetry | （未改行为） |
-| DsEncodeTest | MetaKeyPrefix, HashRoundTrip, WrongType, SetListZSet | **PASS** 2026-11-10 |
-| MetaClientTest / ExecLineTest / TsoTest / ActiveTsTest | ParseRedirect, ParseRoute*, AllocMonotonicLocal, ConcurrentUnique, MinAndExpire | **PASS** 2026-11-10（15/15 含 Router） |
+| RouterTest | BootstrapSingle, UpdateIgnoresStaleVersion, RangeLocateAfterSplit, ReplicaAddrsAndFallback（含 epoch/leader 优先）, MissingShard | **PASS** 2026-11-12 |
+| DsEncodeTest | MetaKeyPrefix, HashRoundTrip, WrongType, SetListZSet | **PASS** 2026-11-12 |
+| MetaClientTest / GrpcUtilTest / TsoTest / ActiveTsTest | ParseRedirect, ParseRoute*, AllocMonotonicLocal, ConcurrentUnique, MinAndExpire | **PASS** 2026-11-12 |
+| ~~KvProxyTest~~ | 已随遗留 `KvProxy`/`ComputeNode` 删除 | — |
 
 ```bash
-# 验收 C1（阶段 1 出站库）：docs/flows/18-cpp-gateway.md
-ctest --test-dir build -R 'DsEncodeTest|MetaClientTest|TsoTest|ActiveTsTest|ExecLineTest|RouterTest' --output-on-failure
-# 最近：15/15 PASS（2026-11-10）
+# 验收 C1（出站库）：docs/flows/18-cpp-gateway.md
+ctest --test-dir build -R 'DsEncodeTest|MetaClientTest|TsoTest|ActiveTsTest|GrpcUtilTest|ParseRedirect|RouterTest' --output-on-failure
 
-# 验收 G1（阶段 2 gateway_node）：docs/flows/18-cpp-gateway.md
+# 验收 G1（gateway_node）：docs/flows/18-cpp-gateway.md
 cmake --build build -j8 --target gateway_node
-# 最近：PASS（2026-11-10）→ build/compute/gateway_node
+# 验收 L1（遗留清理）：无 compute_node / KvProxy 源与目标
 ```
 
 </details>
@@ -236,10 +236,18 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 | 2026-10-26 | Web 拓扑在 K8s 显示 127.0.0.1「离线」 | **PASS** | 无 `-run-dir` 时拓扑改用 `-metas/-storages/-gateway` TCP 探测；`go test ./internal/lifecycle`；Colima 下 7 节点 `up=true` + DNS 地址 |
 | 2026-10-26 | K8s 拓扑缺网关线 | **PASS** | Gateway 默认 stats 绑 `127.0.0.1`；Helm 加 `-stats-listen=0.0.0.0:19001` + Service `stats`；`/stats` 可达后出现 `client→gateway` / `gateway→storage-*` links |
 | 2026-11-11 | 总览缺 gateway→store 连线 | **PASS** | 根因：热路径 `note_to_store()` 未带 peer，`to_store_peers` 空；已改 addr 记账 + Web `AttributePeerCounts` 均摊兜底；`(cd web && go test ./internal/cluster)`；见 [ADMIN_CONSOLE](../ops/ADMIN_CONSOLE.md) |
+| 2026-11-12 | Seastar/ExecLine 清理后重部署+故障/压测 | **PASS** | `ensured=4`；F1–F3 杀 gw/storage/meta 后 basic 绿；put w8≈123ops/s fail=0；见 §6 |
 | 2026-11-12 | 总览连线修复后 K8s 重部署 | **PASS** | 重建并导入 `openkv-gateway:dev` / `openkv-web:dev`（web 需 `--build-context sdk=../openkv-client-go`），rollout gateway+web；`/api/topology` 出现 `gateway→storage-0` 且 `/stats` 含 `to_store_peers` |
 | 2026-11-12 | 四语言 SDK 对齐 Raw* | **PASS** | 同步 `kv.proto` + Go/Rust/Java/TS Raw API；`go test` / `cargo test` / `mvn -q test` / `npm test`；`client/go` examples build；见 [15](../flows/15-multi-client-sdk.md)·[27](../flows/27-raw-vs-txn.md) |
+| 2026-11-12 | Compute 出站收口类型化 gRPC | **PASS** | 删 `exec_line`/`StoreClient`；新增 `store_rpc`/`grpc_channel`；Meta typed GetTs/Route；见 [29](../flows/29-compute-code-map.md)·[30](../flows/30-unified-async-store.md) |
+| 2026-11-12 | 清退全部 ExecLine 运维桥 | **PASS** | 删 proto ExecLine + `exec_line_handler`；`GetTs.count` / Meta·Admin `Stats` / `CancelScale`；Web/skv/line-rpc 类型化；见执行记录 |
+| 2026-11-12 | Compute 代码地图 + 注释补齐 | **PASS** | 新增 [29-compute-code-map](../flows/29-compute-code-map.md)；契约注释（gateway/tso/router/txn/ds）；`cmake --build … gateway_node openkv_compute` PASS；行为不变 |
+| 2026-11-12 | Compute 代码地图 + 注释补齐 | **PASS** | 新增 [29-compute-code-map.md](../flows/29-compute-code-map.md)；头文件 + `compute/src` **逐方法**职责注释（行为不变）；`cmake --build build --target gateway_node openkv_compute -j` |
+| 2026-11-12 | 清理遗留 ComputeNode/KvProxy | **PASS** | 删除 `compute_node`/`KvProxy`/`main.cpp`/`conf/compute.conf`/`kv_proxy_test`；拓扑与 29 地图改写为 GatewayServer；见执行记录 |
+| 2026-11-12 | 移除 Seastar 文档与开关残留 | **PASS** | 删文档对比/死链；脚本与 Dockerfile 去掉 `OPENKV_USE_SEASTAR`；见执行记录 |
 | 2026-10-26 | K8s 加 Storage 节点 conf | **PASS** | 入口：`ordinal≥RF` → 空 `bootstrap_regions` + 仅自己 peers（仅加节点=Joining）；`scripts/it-entrypoint-storage-conf.sh`；加入/Balance 须运维页人工，见 [K8S_SCALE.md](../flows/K8S_SCALE.md) |
-| 2026-10-26 | Helm 加节点后 JOIN not_pending | **PASS** | Offline 再 REGISTER 误 touch→Active；Joining 被 sweep 成 Offline。修：Offline REGISTER 走 Raft→Joining；sweep 跳过 Joining；DNS meta 不回落 127.0.0.1 |
+| 2026-11-12 | Web 待加入：storage 崩溃后 Joining | **PASS** | 非 Web 误显；Offline REGISTER 曾→Joining。改为已准入→Active；`OfflineReregisterBecomesActive`；已 join 现网 |
+| 2026-10-26 | Helm 加节点后 JOIN not_pending | **PASS** | Offline 再 REGISTER 误 touch→Active；Joining 被 sweep 成 Offline。修：Offline REGISTER 走 Raft（现恢复 Active）；sweep 跳过 Joining |
 | 2026-10-25 | 快速加副本→立刻下线 / 并发扩容 | FAIL→PASS | 并发 SCALE_OUT 假成功(`scale_busy`/`ok:true`)；下线时 Learner 未进路由。Scaler FIFO 排队+`CANCEL_SCALE`；Web 等路由/强制 REMOVE；`ok=false` on Failed |
 | 2026-10-25 | DS Hash/Set/List/ZSet（非 RESP） | **PASS** | gRPC `DSService` + blob 编码；`ds-smoke` / `it-ds-*.sh` 全绿；见 [DATA_STRUCTURES.md](../architecture/DATA_STRUCTURES.md) |
 
@@ -257,6 +265,169 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 结果: PASS | FAIL | 部分
 摘要:
 日志: .run/...
+```
+
+### 2026-11-12（Seastar/ExecLine 清理后重部署 + 故障/压测；修 route 线格式）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: Colima k3s openkv（meta=1 storage=1 RF=1 regions=4）
+改动:
+  format_routing_table_line 补 nrep,（与 MetaNode::format_route 一致）
+  recover_local_regions_from_meta 兼容漏 nrep 的旧线格式
+  文档 flows/04-fault-recovery · MetaRpcTest
+命令/验收:
+  ctest -R 'MetaRpcTest|MetaClientTest.ParseRoute' → 3/3 PASS
+  docker build openkv:dev → k3s import → rollout meta/storage/gateway/web
+  storage 日志 recover_local_regions_from_meta ensured=4 local_groups=4
+  F0 basic smoke → PASS
+  F1 delete gateway pod → basic PASS
+  F2 delete storage-0 → ensured=4 → basic PASS
+  F3 delete meta-0 → basic PASS
+  集群内 kv-bench-linux：
+    put w8 8s → 123.2 ops/s p50=41ms ok=986 fail=0
+    get w8 5s → 1945 ops/s fail=0
+    mode=all：put 252 ops/s fail=0；get 2318；rawget 2789；
+      watch/hset/hget/sadd 高 fail（既有 DS/Watch 路径，未挡 KV 主路径）
+结果: PASS（部署 + F0–F3 + KV 压测）；DS Hash/Watch 压测项记部分失败
+摘要: typed GET_ROUTE 回退线缺 nrep 导致 split Region 重启不装载 → no_region；已修并验证 ensured=4
+```
+
+### 2026-11-12（移除 Seastar 文档与开关残留）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin, openkv working tree
+命令:
+  rg -i 'seastar|OPENKV_USE_SEASTAR|SEASTAR_NET|FetchSeastar' \
+    docs README.md scripts deploy --glob '!**/TEST_CASES.md'
+  test ! -f docs/architecture/SEASTAR_NET.md
+  test ! -f cmake/FetchSeastar.cmake
+验收:
+  文档与脚本无存活 Seastar / OPENKV_USE_SEASTAR / SEASTAR_NET 引用
+  NETWORKING.md / en/networking.md 聚焦 gRPC + 端口 + 线程/CQ
+结果: PASS
+摘要: 代码侧 Seastar 已删；文档对齐 gRPC-only；清 Dockerfile/脚本死开关。
+```
+
+### 2026-11-12（StoreService 二进制扩面 · Storage）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin, openkv working tree
+命令:
+  cmake --build build -j8 --target openkv_storage storage_node openkv_unit_tests
+  ctest --test-dir build -R 'StoreFacadeTest.TxnOpsAsync'
+设计: docs/flows/30-unified-async-store.md
+改动:
+  StoreFacade::*_async（prewrite/commit/rollback/pessimistic/resolve）
+  StoreService Propose 分发 ONEPC/PREWRITE/COMMIT/… Finish@apply
+  Scan/Ttl/CheckTxnStatus/WatchHead/WatchPoll；Get 补 lock_primary/lock_ts
+结果: PASS（build + StoreFacadeTest.TxnOpsAsyncPrewriteCommitResolve）
+```
+
+### 2026-11-12（Gateway 统一异步 · 评审修补）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin
+命令:
+  cmake --build build -j8 --target gateway_node openkv_compute openkv_unit_tests → PASS
+  ctest -R 'RouterTest|DsEncodeTest|TsoTest|MetaClientTest|StoreFacadeTest.TxnOpsAsync|ActiveTsTest'
+    → 16/16 PASS
+结果: PASS
+摘要: 修 expire_async GetRequest UAF；Watch OnCancel Finish；batch Finish 竞态；
+      ds_store 空删 attempt≤4。
+```
+
+### 2026-11-12（清退全部 ExecLine 运维桥）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin, openkv working tree
+命令:
+  cmake --build build -j8 --target gateway_node storage_node meta_server openkv_unit_tests skv → PASS
+  ctest --test-dir build -R 'RouterTest|DsEncodeTest|TsoTest|MetaClientTest|StoreFacadeTest.TxnOpsAsync|ActiveTsTest|ParseRedirect|MetaHa' --output-on-failure
+    → 20/20 PASS
+  (cd web && go test ./internal/cluster/... ./internal/api/...) → cluster PASS；api 无测试文件
+设计: docs/flows/29 · 30 · 28 · 22 · 18 · GRPC_MANDATORY · ADMIN_CONSOLE
+改动:
+  proto：删 ExecLine；GetTs.count；Meta Stats/CancelScale；Admin Stats；Balance.count；SuggestPlace.avoid；SafePoint 扩字段
+  删 storage exec_line_handler.*；Meta/Storage storage_rpc/meta_rpc → admin_rpc/meta_rpc 类型化
+  Compute TSO refill 单次 GetTs(count)；Web/skv/line-rpc 类型化 dispatch
+验收: *.cpp/*.hpp/*.go/*.proto 无 ExecLine 匹配
+结果: PASS
+```
+
+### 2026-11-12（Compute 出站收口类型化 gRPC · 删 exec_line）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin, openkv working tree
+命令:
+  cmake --build build -j8 --target gateway_node openkv_compute openkv_unit_tests
+  ctest --test-dir build -R 'RouterTest|DsEncodeTest|TsoTest|MetaClientTest|StoreFacadeTest.TxnOpsAsync|ActiveTsTest|ParseRedirect' --output-on-failure
+设计: docs/flows/29-compute-code-map.md · 30-unified-async-store.md · 28-compute-net-opt.md
+改动:
+  新增 grpc_channel / store_rpc；meta_client → MetaService GetTs/GetRoutingTable/WatchRoutingTable/ReportMinStartTs
+  Gateway：storage_addrs_ 字符串 + store_admin_set_epoch_async；删 StoreClient 池 / with_leader / sync Bodies
+  删除 compute exec_line.*、store_client.*；ExecLineTest → GrpcUtilTest.ParseRedirect
+结果: PASS（build + 17/17 ctest）
+后续: GetTs.count + 全量 ExecLine 清退见上条
+```
+
+### 2026-11-12（Gateway 统一异步 StoreService · P1+P2）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin, openkv working tree
+命令:
+  cmake --build build -j8 --target gateway_node openkv_compute openkv_unit_tests
+  ctest --test-dir build -R 'RouterTest|DsEncodeTest|TsoTest|MetaClientTest|StoreFacadeTest.TxnOpsAsync' --output-on-failure
+  bash scripts/it-txn.sh   # 本机 cluster down → 跳过
+设计: docs/flows/30-unified-async-store.md · docs/flows/29-compute-code-map.md
+改动:
+  store_rpc 前身（原 exec_line）：Propose Txn Op / Scan / Ttl / CheckTxnStatus / WatchHead|Poll async
+  Gateway：pick_leader_addr + with_store_async；Txn/Scan/TTL/Expire/Persist/DS/Watch 入口去 defer_unary
+  ds_load/ds_store → get_async_cb / put_async_cb；get_stale → store_get_async(linearizable=false)
+结果: PASS（build + 15/15 ctest）；it-txn 待集群
+```
+
+### 2026-11-12（Compute 代码地图 + 注释补齐）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin, openkv working tree
+命令:
+  cmake --build build --target gateway_node openkv_compute -j     → PASS
+结果: PASS（文档 M1 + 编译 M2；行为未改）
+摘要: 落 docs/flows/29-compute-code-map.md（路径矩阵/粗糙点/里程碑）；
+      compute 头文件 + src 逐方法职责注释（Gateway/TSO/Router/StoreClient/…）；
+      索引见 flows/README §D、18-cpp-gateway。
+```
+
+### 2026-11-12（清理遗留 ComputeNode / KvProxy）
+
+```text
+日期: 2026-11-12
+执行人: agent
+环境: darwin, openkv working tree
+命令:
+  cmake --build build --target gateway_node openkv_compute openkv_unit_tests -j  → PASS
+  ctest --test-dir build -R 'DsEncodeTest|MetaClientTest|TsoTest|ActiveTsTest|ExecLineTest|RouterTest'
+    → 16/16 PASS
+  L1：无 build/compute/compute_node；compute/tests/Makefile/conf 无 KvProxy|ComputeNode|compute_node|kv_proxy
+结果: PASS
+摘要: 删除 compute_node 二进制、KvProxy/ComputeNode 源、kv_proxy_test、conf/compute.conf；
+      CMake/Makefile/jemalloc/拓扑/29 地图改为仅 gateway_node。
 ```
 
 ### 2026-10-26 (Helm)

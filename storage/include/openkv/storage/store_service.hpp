@@ -184,18 +184,35 @@ class StoreFacade {
                     std::string primary, uint8_t mvcc_op, std::string value,
                     uint64_t expected_epoch, bool cas, uint64_t expected_revision,
                     int64_t expire_at_ms, std::function<void(ProposeResult)> cb);
+  /// 异步 Prewrite：预检同 sync；成功走 propose_async。
+  void prewrite_async(uint32_t shard_id, std::string key, uint64_t start_ts, std::string primary,
+                      uint8_t mvcc_op, std::string value, uint64_t expected_epoch, bool cas,
+                      uint64_t expected_revision, int64_t expire_at_ms,
+                      std::function<void(ProposeResult)> cb);
   ProposeResult commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        uint64_t commit_ts, uint64_t expected_epoch = 0);
+  void commit_async(uint32_t shard_id, std::string key, uint64_t start_ts, uint64_t commit_ts,
+                    uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
   ProposeResult rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                          uint64_t expected_epoch = 0);
+  void rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                      uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
   ProposeResult pessimistic_lock(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                  uint64_t for_update_ts, std::string_view primary,
                                  uint64_t ttl_ms = 5000, uint64_t expected_epoch = 0);
+  void pessimistic_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                              uint64_t for_update_ts, std::string primary, uint64_t ttl_ms,
+                              uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
   ProposeResult pessimistic_rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                      uint64_t expected_epoch = 0);
+  void pessimistic_rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                                  uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
   /// commit_ts==0 → rollback resolve。
   ProposeResult resolve_lock(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                              uint64_t commit_ts, uint64_t expected_epoch = 0);
+  void resolve_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
+                          uint64_t commit_ts, uint64_t expected_epoch,
+                          std::function<void(ProposeResult)> cb);
 
   /// linearizable=true 仅 Leader；false 可读任意副本本地 MVCC（可能落后）。
   TxnGetResult txn_get(uint32_t shard_id, std::string_view key, uint64_t start_ts,

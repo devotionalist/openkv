@@ -111,7 +111,8 @@ curl -sS http://127.0.0.1:19100/api/nodes \
 
 | 现象 | 原因 / 处理 |
 |------|-------------|
-| `ERR not_pending` 且 UI 显示 Offline | 旧版：Offline 再 REGISTER 只本地升 Active。已修为 Raft → Joining；升级 meta/storage 镜像后重启 STS |
+| `ERR not_pending` 且 UI 显示 Offline | Offline 再 REGISTER 须走 Raft（不得本地 touch）。已准入节点恢复为 **Active**；真正新节点仍是 Joining→JOIN |
+| 滚动/崩溃后 Web 长期「待加入」 | 旧版 Offline→Joining 须人工 join；现 Offline REGISTER→Active。若仍 Joining：查是否首次扩容未点「加入」，或 meta 镜像未升级 |
 | `ERR heartbeat_stale` / `no_heartbeat` | Store 未连上 Meta；查日志是否误连 `127.0.0.1:8500`（DNS 部署勿用本机 fallback） |
 | `ERR unreachable` | PING 失败；等 Pod Ready 再点加入 |
 | 待加入不出现 | 确认 conf 为空 `bootstrap_regions` + 仅自己 peers；看 `REGISTER ok` |
