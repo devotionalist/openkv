@@ -33,9 +33,9 @@ sequenceDiagram
 
 | 组件 | 入口 | 行为 |
 |------|------|------|
-| Storage | `StorageGrpcServer::stop` | `graceful_grpc_shutdown` → 再拆 service / WorkPool → `StorageNode::stop` |
-| Meta | `MetaGrpcServer::stop` | 同上；`MetaNode::stop` 内调 gRPC stop |
-| Gateway | `gateway_main` | 停 HTTP → `graceful_grpc_shutdown` → `stop_background` |
+| Storage | `StorageGrpcServer::stop` | `graceful_grpc_shutdown` → 拆 service → `StorageNode::stop`（无 WorkPool） |
+| Meta | `MetaGrpcServer::stop` | `graceful_grpc_shutdown` → 拆 service / WorkPool；`MetaNode::stop` 内调 gRPC stop |
+| Gateway | `gateway_main` | 停 HTTP → `graceful_grpc_shutdown` → `stop_background`（含 WorkPool） |
 
 公共头：`common/include/openkv/grpc_shutdown.hpp`。
 
@@ -46,7 +46,7 @@ sequenceDiagram
 | 情况 | 行为 |
 |------|------|
 | 在途 apply / 下游 RPC 超过宽限 | deadline 后 gRPC 取消剩余调用；可能客户端见 UNAVAILABLE |
-| Callback 热路径挂在 apply 回调 | Wait 期间 WorkPool / BatchSystem 须仍存活（先 Wait 再 `pool.reset`） |
+| Callback 热路径挂在 apply 回调 | Wait 期间 BatchSystem（及 Meta/Gateway 的 WorkPool）须仍存活；先 Wait 再拆池/停节点 |
 | k8s | 需 `terminationGracePeriodSeconds` ≥ 宽限；无 preStop 则直接 SIGTERM 走本路径 |
 | 缩容 | 先 scale-in 迁光，再 SIGTERM |
 

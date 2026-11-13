@@ -11,7 +11,7 @@
 | 目标 | 方案 |
 |------|------|
 | 网络协议 | **全链路强制 gRPC**（见 [NETWORKING.md](../NETWORKING.md)、[flows/GRPC_MANDATORY.md](../flows/GRPC_MANDATORY.md)） |
-| 异步网络 | gRPC **Callback 接收线程** + **WorkPool**；热路径 `propose_async` / async stub；Raft Transport worker（见 [flows/22-async-threading-model.md](../flows/22-async-threading-model.md)） |
+| 异步网络 | gRPC **Callback**；Gateway/Meta 旁路 **WorkPool**；Storage 纯 Callback；热路径 `propose_async` / async stub；Raft Transport worker（见 [flows/22](../flows/22-async-threading-model.md)） |
 | 持久化存储 | RocksDB（单 Store 一份 KV；Region 靠 KeyRange） |
 | 强一致 | Multi-Raft（每 Region 一个 Raft Group，默认 RF=3）；生产要求见 [MULTI_RAFT_PRODUCTION.md](../production/MULTI_RAFT_PRODUCTION.md) |
 | 对外 API | gRPC → C++ Compute Gateway（`KVService` + `DSService`，见 [DATA_STRUCTURES.md](DATA_STRUCTURES.md)） |

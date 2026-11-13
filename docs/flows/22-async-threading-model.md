@@ -8,7 +8,7 @@
 1. **协议栈**：继续 gRPC，全面采用 **CallbackService + ServerUnaryReactor**（reaction 内禁止同步 RPC / 等 CV）。
 2. **线程角色**：  
    - **接收线程** = gRPC callback/CQ 线程（只投递 / 发起 async / `Finish`）  
-   - **工作线程** = `WorkPool` / BatchSystem / Transport worker（编排与 Raft）  
+   - **工作线程** = `WorkPool`（Gateway Watch / Meta 非热路径）+ BatchSystem / Transport worker  
    - **完成回调** = client async / `ProposalQueue::invoke`（续跑状态机）
 3. **热路径零同步等待**：接收线程与 gRPC reaction 上禁止 `stub->Foo()`、`future.get()`、`wait_apply`；下游一律 async stub 或 `propose_async`→`wait_async`。
 
@@ -20,20 +20,20 @@
 
 | 角色 | 谁 | 允许做什么 | 禁止做什么 |
 |------|-----|------------|------------|
-| **接收线程** | gRPC Callback CQ / reactor 回调 | 解析请求、投递 `WorkPool`、发起 async stub、`Finish` | 等 Raft apply、等下游 RPC、睡 CV |
-| **工作线程** | `openkv::WorkPool` | CPU/编排、启动下一跳 async RPC、写响应字段 | 同步 gRPC stub（热路径） |
+| **接收线程** | gRPC Callback CQ / reactor 回调 | 解析请求、发起 async stub、必要时 `WorkPool::post`、`Finish` | 等 Raft apply、等下游 RPC、睡 CV |
+| **工作线程** | `openkv::WorkPool`（Gateway/Meta） | 卸阻塞/长等：Watch sleep、Meta `handle_line`、WATCH_ROUTE | 热路径同步 gRPC stub |
 | **完成回调** | client async / apply `invoke` | 续跑状态机、再投递或 `Finish` | — |
 
-Raft 出站另有 **Transport worker**（已有），不占用 BatchSystem / 接收线程。
+Raft 出站另有 **Transport worker**（已有），不占用 BatchSystem / 接收线程。Storage **不再建 WorkPool**。
 
 ```mermaid
 flowchart TB
   subgraph recv [接收线程 gRPC Callback]
     A[Accept / Read RPC] --> B[DefaultReactor]
-    B -->|post 或 start async| C{热路径?}
+    B -->|post 或 start async| C{路径}
   end
   C -->|Put/GetTs/Propose| D[async stub / propose_async]
-  C -->|其它 unary| E[WorkPool]
+  C -->|Gateway Watch / Meta 其它| E[WorkPool]
   E --> D
   D --> F[完成回调线程]
   F -->|状态机续跑| D
@@ -50,14 +50,14 @@ flowchart TB
 
 - 入站：`KVService` / `DSService` → **CallbackService**（已实现）
 - 热路径 Put/Delete/Get：接收线程 `alloc_async`（本地 TSO 批缓存）→ `store_propose_onepc_async` / `store_get_async`
-- 其它 unary：接收线程 `WorkPool::post`，worker 内仍只准 async 出站（过渡期个别路径可先 post，禁止在接收线程同步等）
-- 环境变量：`SKV_GATEWAY_WORKERS`（默认 32）
+- `WorkPool`（`SKV_GATEWAY_WORKERS`，默认 32）：仅 Watch 间隔 sleep / `write_ev`（勿堵 CQ）
 
 ### Meta
 
 - 入站：`MetaService` → **CallbackService**（已实现）
-- `GetTs`：`alloc_ts_async(count)` → apply invoke → `Finish`（不占接收线程）
-- 其它 Meta RPC：`WorkPool` + 内部 `handle_line` 分发；无公开 `ExecLine`
+- `GetTs`：`alloc_ts_async(count)` → apply invoke → `Finish`（不占接收线程、不经 WorkPool）
+- 廉价读（`reply` 内联 Finish）：Ping / WhoLeader / GetRoutingTable / Locate / GetSafePoint / Stats / ListNodes / SuggestPlace / StoreStatus / FindMergeRight / ListScale / ListMigrate 等（禁止 `replicate` / CV 长等 / 出站 RPC）
+- 写与长等（`defer` → WorkPool）：REGISTER / HEARTBEAT / ReportMinStartTs / 运维写 / WATCH_ROUTE / GetScale（可能 `storage_rpc`）等
 - Raft 入站保持短路径同步 Finish；出站 Transport worker
 - `SKV_META_GRPC_WORKERS`（默认 16）
 
@@ -67,16 +67,16 @@ flowchart TB
 - `Propose`：`propose_async`（Raw 非 CAS 无 latch；其余 `lock_key_async`）→ `wait_async` → `Finish`；Latch **仅** `lock_async`（已无阻塞 `Latches::lock`）
 - `propose_async` 回调只持 `StorageNode&` + `shared_ptr<RegionMetrics>`，禁止捕获临时 `StoreFacade*`（txn GC 栈上 facade 火后即毁）
 - Admin 类型化 RPC（Ensure/Place/Split/…/`Stats`/`Ping`）；无 `ExecLineHandler`
-- `SKV_STORAGE_GRPC_WORKERS`
+- **无 WorkPool** / 已废 `SKV_STORAGE_GRPC_WORKERS`；日志 `callback`（无 `workers=`）
 
 ## 验收
 
-| ID | 标准 | 结果（2026-11-10） |
-|----|------|-------------------|
+| ID | 标准 | 结果 |
+|----|------|------|
 | T1 | 设计本文 + ARCHITECTURE / 21 文档交叉引用 | **PASS** |
-| T2 | Gateway/Meta/Storage 热路径代码无同步 stub wait / `promise.get` 等 apply | **PASS**（入站 Callback；ONEPC/`GetTs`/`Put` 热路径 async） |
-| T3 | `ctest -R 'ProposalQueue\|OnePc\|TsoTest\|RouterTest\|StoreFacade'` PASS | **PASS**（含 StoreFacade） |
-| T4 | put bench fail=0；日志可见 callback + workers= | **PASS**（31.1ops/s ok=249 fail=0；三端 callback+workers 日志） |
+| T2 | Gateway/Meta/Storage 热路径代码无同步 stub wait / `promise.get` 等 apply | **PASS** |
+| T3 | `ctest -R 'ProposalQueue\|OnePc\|TsoTest\|RouterTest\|StoreFacade'` PASS | **PASS** |
+| T4 | put bench fail=0；Storage 日志 `callback`；Gateway/Meta 仍可见 `workers=` | **PASS**（2026-11-14：`callback`；`-mode all` exit 0） |
 
 ## 失败与回滚
 

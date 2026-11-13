@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file work_pool.hpp
-// 通用有界工作线程池：gRPC 接收线程只投递，业务在 worker 上跑（或继续挂异步 RPC）。
+// 有界工作线程池：卸掉 Callback 接收线程上的阻塞/长等。
+// 现状：Gateway Watch（间隔 sleep / write_ev）；
+// Meta 写路径 / WATCH_ROUTE / 可能出站 RPC 的读（如 GetScale）；廉价读已内联 reply。
+// Storage 热路径已纯 Callback + apply 回调 Finish，不再建池。
 
 #pragma once
 

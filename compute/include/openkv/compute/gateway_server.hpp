@@ -19,7 +19,7 @@
 //
 // 约定（CQ 线程禁止同步 Meta/Storage RPC）：
 //   Txn/Scan/TTL/Watch/DS/Put/Get/Raw/Batch 一律 CQ 回调 + StoreService async。
-//   WorkPool 仅作短 sleep / 本地 CPU（Watch 轮询间隔）；不出站阻塞 RPC。
+//   WorkPool 仅 Watch（间隔 sleep / write_ev）；热路径 Put/Get 不经池。
 
 #pragma once
 

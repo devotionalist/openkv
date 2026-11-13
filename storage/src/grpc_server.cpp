@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file grpc_server.cpp
-// Storage gRPC Server：Store/Admin/Raft 一律 CallbackService（热路径不占线程等 apply）。
+// Storage gRPC：Store/Admin/Raft 一律 CallbackService；Finish@apply / reactor，无 WorkPool。
 
 #include "openkv/storage/grpc_server.hpp"
 
@@ -24,9 +24,7 @@
 #include "openkv/protocol.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/watch_log.hpp"
-#include "openkv/work_pool.hpp"
 
-#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -47,7 +45,6 @@ std::string extract_redirect(std::string_view s) {
   return std::string(rest);
 }
 
-using openkv::WorkPool;
 using grpc::CallbackServerContext;
 using grpc::ServerContext;
 using grpc::ServerReadReactor;
@@ -626,7 +623,6 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
 
 struct StorageGrpcServer::Impl {
   std::unique_ptr<grpc::Server> server;
-  std::unique_ptr<WorkPool> pool;
   std::unique_ptr<StoreServiceImpl> store;
   std::unique_ptr<RaftServiceImpl> raft;
   std::unique_ptr<AdminServiceImpl> admin;
@@ -642,12 +638,7 @@ StorageGrpcServer::~StorageGrpcServer() { stop(); }
 
 void StorageGrpcServer::start() {
   if (running_.exchange(true)) return;
-  size_t pool_n = 32;
-  if (const char* e = std::getenv("SKV_STORAGE_GRPC_WORKERS")) {
-    const auto v = std::strtoul(e, nullptr, 10);
-    if (v > 0) pool_n = v;
-  }
-  impl_->pool = std::make_unique<WorkPool>(pool_n);
+  // Store/Admin/Raft 均为 CallbackService：热路径 Finish@apply / reactor，无 WorkPool。
   impl_->store = std::make_unique<StoreServiceImpl>(facade_, admin_token_);
   impl_->raft = std::make_unique<RaftServiceImpl>(facade_.node());
   impl_->admin = std::make_unique<AdminServiceImpl>(facade_.node(), admin_token_);
@@ -664,12 +655,12 @@ void StorageGrpcServer::start() {
     running_ = false;
     throw std::runtime_error("StorageGrpcServer failed to listen on " + listen_addr_);
   }
-  SKV_INFO << "storage gRPC listening " << listen_addr_ << " (callback + workers=" << pool_n << ")";
+  SKV_INFO << "storage gRPC listening " << listen_addr_ << " (callback)";
 }
 
 void StorageGrpcServer::stop() {
   if (!running_.exchange(false)) return;
-  // 先拒新 RPC 并排空在途（WorkPool 仍存活，供 Callback Finish）；再拆服务与线程池。
+  // 先拒新 RPC 并排空在途（apply 回调仍可 Finish）；再拆 service。
   if (impl_ && impl_->server) {
     openkv::graceful_grpc_shutdown(impl_->server);
     impl_->server.reset();
@@ -677,7 +668,6 @@ void StorageGrpcServer::stop() {
   impl_->admin.reset();
   impl_->store.reset();
   impl_->raft.reset();
-  impl_->pool.reset();
 }
 
 }  // namespace openkv::storage

@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file grpc_server.cpp
-// Meta gRPC：CallbackService + WorkPool；GetTs 走 alloc_ts_async。
+// Meta gRPC：CallbackService。
+// - GetTs：alloc_ts_async（不经池）
+// - 廉价读：接收线程 reply() 内联 Finish（禁止 replicate / CV 长等）
+// - 写 / REGISTER / HEARTBEAT / WATCH_ROUTE：WorkPool defer（可能等 apply）
 
 #include "openkv/meta/grpc_server.hpp"
 
@@ -77,7 +80,22 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return Status::OK;
   }
 
-  /// Auth early-return，否则把 body 丢到 WorkPool 再 Finish。
+  /// 廉价读：接收线程同步跑完再 Finish。fn 内禁止 replicate / route_cv_ 长等。
+  template <typename Fn>
+  ServerUnaryReactor* reply(CallbackServerContext* ctx, bool need_auth, Fn&& fn) {
+    auto* reactor = ctx->DefaultReactor();
+    if (need_auth) {
+      if (auto st = auth_write(ctx); !st.ok()) {
+        reactor->Finish(st);
+        return reactor;
+      }
+    }
+    fn();
+    reactor->Finish(Status::OK);
+    return reactor;
+  }
+
+  /// 可能阻塞（replicate 等 apply / WATCH_ROUTE）：丢 WorkPool 再 Finish。
   template <typename Fn>
   ServerUnaryReactor* defer(CallbackServerContext* ctx, bool need_auth, Fn&& fn) {
     auto* reactor = ctx->DefaultReactor();
@@ -96,7 +114,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* Ping(CallbackServerContext* ctx, const pb::PingRequest*,
                            pb::PingResponse* resp) override {
-    return defer(ctx, false, [this, resp] { resp->set_message(meta_.handle_line("PING")); });
+    return reply(ctx, false, [this, resp] { resp->set_message(meta_.handle_line("PING")); });
   }
 
   ServerUnaryReactor* RegisterNode(CallbackServerContext* ctx, const pb::RegisterNodeRequest* req,
@@ -155,7 +173,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* GetRoutingTable(CallbackServerContext* ctx, const pb::GetRoutingTableRequest*,
                                       pb::RoutingTable* resp) override {
-    return defer(ctx, false, [this, resp] { fill_routing_table(resp); });
+    return reply(ctx, false, [this, resp] { fill_routing_table(resp); });
   }
 
   ServerWriteReactor<pb::RoutingTable>* WatchRoutingTable(
@@ -201,6 +219,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* GetScaleTask(CallbackServerContext* ctx, const pb::GetScaleTaskRequest* req,
                                    pb::ScaleTask* resp) override {
+    // GET_SCALE 在 CatchingUp 时可能同步 storage_rpc，须走 WorkPool。
     return defer(ctx, false, [this, req, resp] {
       auto line = meta_.handle_line("GET_SCALE " + req->task_id());
       resp->set_task_id(req->task_id());
@@ -210,12 +229,12 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* ListScaleTasks(CallbackServerContext* ctx, const pb::ListScaleTasksRequest*,
                                      pb::ListScaleTasksResponse*) override {
-    return defer(ctx, false, [this] { meta_.handle_line("LIST_SCALE"); });
+    return reply(ctx, false, [this] { meta_.handle_line("LIST_SCALE"); });
   }
 
   ServerUnaryReactor* ListNodes(CallbackServerContext* ctx, const pb::ListNodesRequest* req,
                                 pb::ListNodesResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
+    return reply(ctx, false, [this, req, resp] {
       std::string line = "LIST_NODES";
       if (req->role() == pb::STORAGE) line += " storage";
       else if (req->role() == pb::COMPUTE) line += " compute";
@@ -343,7 +362,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* ListMigrate(CallbackServerContext* ctx, const pb::ListMigrateRequest*,
                                   pb::ListMigrateResponse*) override {
-    return defer(ctx, false, [this] { meta_.handle_line("LIST_MIGRATE"); });
+    return reply(ctx, false, [this] { meta_.handle_line("LIST_MIGRATE"); });
   }
 
   ServerUnaryReactor* Balance(CallbackServerContext* ctx, const pb::BalanceRequest* req,
@@ -358,7 +377,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* SuggestPlace(CallbackServerContext* ctx, const pb::SuggestPlaceRequest* req,
                                    pb::SuggestPlaceResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
+    return reply(ctx, false, [this, req, resp] {
       std::ostringstream oss;
       oss << "SUGGEST_PLACE";
       if (!req->avoid_node_ids().empty()) {
@@ -396,7 +415,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* Stats(CallbackServerContext* ctx, const pb::StatsRequest*,
                             pb::StatsResponse* resp) override {
-    return defer(ctx, false, [this, resp] {
+    return reply(ctx, false, [this, resp] {
       const auto snap = meta_.stats_snapshot();
       resp->set_requests(snap.requests);
       resp->set_gw(snap.gw);
@@ -445,7 +464,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* GetSafePoint(CallbackServerContext* ctx, const pb::GetSafePointRequest*,
                                    pb::GetSafePointResponse* resp) override {
-    return defer(ctx, false, [this, resp] {
+    return reply(ctx, false, [this, resp] {
       auto line = meta_.handle_line("GET_SAFE_POINT");
       std::istringstream iss(line);
       std::string ok, tag;
@@ -482,7 +501,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* Locate(CallbackServerContext* ctx, const pb::LocateRequest* req,
                              pb::LocateResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
+    return reply(ctx, false, [this, req, resp] {
       auto line = meta_.handle_line("LOCATE " + openkv::to_hex(req->key()));
       resp->set_ok(line_ok(line));
       if (!resp->ok()) resp->set_error(line);
@@ -491,7 +510,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* WhoLeader(CallbackServerContext* ctx, const pb::WhoLeaderRequest*,
                                 pb::WhoLeaderResponse* resp) override {
-    return defer(ctx, false, [this, resp] {
+    return reply(ctx, false, [this, resp] {
       resp->set_address(meta_.leader_address());
       resp->set_leader_id(meta_.is_leader() ? meta_.bootstrap().node_id : "");
     });
@@ -499,7 +518,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* StoreStatus(CallbackServerContext* ctx, const pb::StoreStatusRequest* req,
                                   pb::StoreStatusResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
+    return reply(ctx, false, [this, req, resp] {
       auto line = meta_.handle_line("STORE_STATUS " + req->node_id());
       resp->set_ok(line_ok(line));
       resp->set_status(line);
@@ -510,7 +529,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
   ServerUnaryReactor* FindMergeRight(CallbackServerContext* ctx,
                                      const pb::FindMergeRightRequest* req,
                                      pb::FindMergeRightResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
+    return reply(ctx, false, [this, req, resp] {
       auto line = meta_.handle_line("FIND_MERGE_RIGHT " + std::to_string(req->left_region_id()));
       resp->set_ok(line_ok(line));
       if (!resp->ok()) {
