@@ -16,8 +16,6 @@
 
 #include "openkv/storage/raftkv.hpp"
 
-#include "openkv/raft/raw_node.hpp"
-
 namespace openkv::storage {
 
 RaftKV::RaftKV(raftstore::Store* store) : store_(store) {}
@@ -25,12 +23,6 @@ RaftKV::RaftKV(raftstore::Store* store) : store_(store) {}
 raft::RaftNode* RaftKV::node(uint32_t region_id) {
   if (!store_) return nullptr;
   return store_->get(region_id);
-}
-
-raft::RawNode* RaftKV::raw(uint32_t region_id) {
-  (void)region_id;
-  // Peer 生产路径以 external_io RaftNode 挂 legacy 槽；RawNode 适配器供单测。
-  return nullptr;
 }
 
 bool RaftKV::is_leader(uint32_t region_id) const {
@@ -69,18 +61,6 @@ bool RaftKV::async_write(uint32_t region_id, std::string data, uint64_t* assigne
   }
   // group commit：按 Store ready_coalesce_* 攒批后再 drive_ready（勿在此同步 fsync）。
   store_->request_ready(region_id);
-  return true;
-}
-
-bool RaftKV::sync_write(uint32_t region_id, std::string data, uint64_t* assigned_index,
-                        std::string* error, uint32_t wait_ms) {
-  uint64_t idx = 0;
-  if (!async_write(region_id, std::move(data), &idx, error)) return false;
-  if (assigned_index) *assigned_index = idx;
-  if (apply_wait_ && !apply_wait_(region_id, idx, wait_ms)) {
-    if (error) *error = "apply_timeout";
-    return false;
-  }
   return true;
 }
 

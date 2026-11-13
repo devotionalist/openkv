@@ -21,37 +21,27 @@
 #include "openkv/raftstore/store.hpp"
 
 #include <cstdint>
-#include <functional>
-#include <memory>
 #include <string>
 
 namespace openkv::storage {
 
 class RaftKV {
  public:
-  using ApplyWaitFn = std::function<bool(uint32_t region_id, uint64_t index, uint32_t timeout_ms)>;
-
   explicit RaftKV(raftstore::Store* store);
 
-  void set_apply_wait(ApplyWaitFn fn) { apply_wait_ = std::move(fn); }
-
-  /// 写：propose + 驱动 Ready；可选等待 apply。
+  /// 写：propose + request_ready；不等 apply（由 ProposalQueue / wait_async 等待）。
   bool async_write(uint32_t region_id, std::string data, uint64_t* assigned_index,
                    std::string* error);
-  bool sync_write(uint32_t region_id, std::string data, uint64_t* assigned_index,
-                  std::string* error, uint32_t wait_ms = 5000);
 
   bool is_leader(uint32_t region_id) const;
   raft::SoftState soft_state(uint32_t region_id) const;
   raft::RaftNode* node(uint32_t region_id);
-  raft::RawNode* raw(uint32_t region_id);
 
   /// propose 后驱动 Ready（经 Store::drive_ready；批内合并 group commit）。
   void flush_ready(uint32_t region_id);
 
  private:
   raftstore::Store* store_{nullptr};
-  ApplyWaitFn apply_wait_;
 };
 
 }  // namespace openkv::storage

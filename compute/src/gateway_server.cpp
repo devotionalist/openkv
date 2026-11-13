@@ -199,12 +199,6 @@ std::string GatewayServer::stats_json() const {
   return oss.str();
 }
 
-/// 同步向 Meta 申请 n 个时间戳。
-uint64_t GatewayServer::alloc_ts(uint32_t n) {
-  note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
-  return ts_.alloc(n);
-}
-
 /// 按路由表计算 key 所属 region。
 uint32_t GatewayServer::region_of(std::string_view key) const { return routes_.shard_of(key); }
 

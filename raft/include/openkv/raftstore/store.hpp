@@ -55,7 +55,7 @@ class Store {
     uint32_t ready_coalesce_ms{1};
   };
 
-  using LegacyFactory = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
+  using NodeFactory = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
   using ApplyFn = std::function<void(uint32_t region_id, uint64_t index, const std::string& data)>;
   /// 同 Region 一批 committed entries（可合并 WriteBatch）；未设置则退回逐条 ApplyFn。
   using ApplyBatchFn =
@@ -68,7 +68,7 @@ class Store {
       std::function<std::string(uint32_t region_id, uint64_t* last_idx, uint64_t* last_term)>;
   using ReloadFn = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
 
-  Store(Options opts, LegacyFactory factory);
+  Store(Options opts, NodeFactory factory);
   ~Store();
 
   void set_apply_fn(ApplyFn f) { apply_fn_ = std::move(f); }
@@ -113,20 +113,20 @@ class Store {
  private:
   void on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs);
   void on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs);
-  /// process_ready=false：只 tick，由调用方（如 on_raft_batch）在批末统一 process_ready。
-  void handle_tick(Peer& peer, bool process_ready);
+  /// run_ready=false：只 tick，由调用方（如 on_raft_batch）在批末统一 process_ready。
+  void handle_tick(Peer& peer, bool run_ready);
   /// 只 step / 唤醒；Ready 一律由 on_raft_batch 批末合并。
   void handle_raft_message(Peer& peer, const RaftMessage& msg);
-  /// process_ready：入站同步路径在 step 成功后立刻 Ready；批处理路径传 false。
-  std::string step_raft_message(Peer& peer, const RaftMessage& msg, bool process_ready);
-  void process_ready_legacy(Peer& peer);
+  /// run_ready：入站同步路径在 step 成功后立刻 Ready；批处理路径传 false。
+  std::string step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready);
+  void process_ready(Peer& peer);
   void maybe_hibernate_or_unload(Peer& peer);
   void wake_peer(Peer& peer);
   std::shared_ptr<Peer> peer_locked(uint32_t region_id);
   raft::RaftNode* peer_node(Peer& peer);
 
   Options opts_;
-  LegacyFactory factory_;
+  NodeFactory factory_;
   ApplyFn apply_fn_;
   ApplyBatchFn apply_batch_fn_;
   PersistFn persist_fn_;

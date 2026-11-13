@@ -163,13 +163,14 @@ class ShardEngineManager {
   void migrate_legacy_shards_if_needed();
 
  private:
-  void ensure_shared_locked();
 
-  std::string data_dir_;
-  raft::SyncMode sync_;
-  mutable std::mutex mu_;
-  std::shared_ptr<KvEngine> shared_;
-  std::unordered_map<uint32_t, std::shared_ptr<KvEngine>> engines_;
+  void ensure_shared_locked(); // 确保共享锁
+
+  std::string data_dir_; // 数据目录
+  raft::SyncMode sync_; // 同步模式
+  mutable std::mutex mu_; // 互斥锁
+  std::shared_ptr<KvEngine> shared_; // 共享引擎
+  std::unordered_map<uint32_t, std::shared_ptr<KvEngine>> engines_; // 引擎映射
 };
 
 }  // namespace openkv::storage

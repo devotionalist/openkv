@@ -64,7 +64,8 @@ flowchart TB
 ### Storage
 
 - 入站：`Store`/`Admin` **CallbackService**；`Raft` 短路径
-- `Propose`：`propose_async`（Raw 非 CAS 无 latch；其余 `lock_key_async`）→ `wait_async` → `Finish`；**禁止**在 CQ 上 `Latches::lock`/`cv.wait`
+- `Propose`：`propose_async`（Raw 非 CAS 无 latch；其余 `lock_key_async`）→ `wait_async` → `Finish`；Latch **仅** `lock_async`（已无阻塞 `Latches::lock`）
+- `propose_async` 回调只持 `StorageNode&` + `shared_ptr<RegionMetrics>`，禁止捕获临时 `StoreFacade*`（txn GC 栈上 facade 火后即毁）
 - Admin 类型化 RPC（Ensure/Place/Split/…/`Stats`/`Ping`）；无 `ExecLineHandler`
 - `SKV_STORAGE_GRPC_WORKERS`
 

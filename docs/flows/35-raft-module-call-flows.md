@@ -2,7 +2,7 @@
 
 **状态：** 与源码对齐（`raft/` · `openkv_raft`）  
 **源码地图：** [raft/README.md](../../raft/README.md) · **分层契约：** [raft/ARCHITECTURE.md](../../raft/ARCHITECTURE.md)  
-**相关：** [06-raft-election-commit](06-raft-election-commit.md) · [24-persist-raft-vs-kv](24-persist-raft-vs-kv.md) · [26-raftstore-schedule-pipeline](26-raftstore-schedule-pipeline.md) · [MULTI_RAFT_PRODUCTION](../production/MULTI_RAFT_PRODUCTION.md)
+**相关：** [06-raft-election-commit](06-raft-election-commit.md) · [24-persist-raft-vs-kv](24-persist-raft-vs-kv.md) · [26-raftstore-schedule-pipeline](26-raftstore-schedule-pipeline.md) · [36-propose-ack-durability](36-propose-ack-durability.md) · [MULTI_RAFT_PRODUCTION](../production/MULTI_RAFT_PRODUCTION.md)
 
 ## 问题
 
@@ -116,7 +116,7 @@ sequenceDiagram
 |------|------|
 | propose + request_ready | `storage/src/raftkv.cpp` · `RaftKV::async_write` |
 | 攒批 | `raft/src/raftstore/store.cpp` · `request_ready` / `coalesce_loop` |
-| 批末 Ready | `Store::on_raft_batch` → `process_ready_legacy` |
+| 批末 Ready | `Store::on_raft_batch` → `process_ready` |
 | 落盘 | `raft/src/raft_node.cpp` · `persist_ready` |
 | Apply 回告 | `RaftNode::report_applied` |
 

@@ -533,24 +533,25 @@ bool RaftNode::try_inc_inflight(const std::string& peer_id) {
   return true;
 }
 
+// 检查是否满足法定人数
 void RaftNode::maybe_check_quorum() {
   if (!opts_.check_quorum || role_ != Role::kLeader) return;
   // Joint 内必须撑到 LeaveJoint 双多数提交；step-down 会清 match、反复 propose LeaveJoint
   // 却永远 commit 不了（it-scale-live REMOVE 后卡 joint 根因）。
   if (in_joint_) return;
   // 新 Leader：先发心跳并等待 ACK，避免刚上任就被误判让位（TCP 排队时尤甚）。
-  if (leader_quorum_grace_ticks_ > 0) {
+  if (leader_quorum_grace_ticks_ > 0) { // 如果领导者选举窗口时间大于0，则减少窗口时间
     --leader_quorum_grace_ticks_;
     return;
   }
-  const auto voters = voter_ids();
-  if (majority_of(voters) <= 1) return;
+  const auto voters = voter_ids(); // 获取所有投票者
+  if (majority_of(voters) <= 1) return; // 如果投票者数量小于等于1，则返回
   // 宽松窗口：3×election_timeout（本机也常因单 worker 快照头阻塞误判）。
-  const int quiet_limit = election_timeout_ticks_ * 3;
+  const int quiet_limit = election_timeout_ticks_ * 3; // 设置安静窗口时间
   auto active_in = [&](const std::vector<std::string>& vs) -> uint32_t {
     uint32_t active = 0;
-    for (const auto& id : vs) {
-      if (id == opts_.self_id) {
+    for (const auto& id : vs) { // 遍历所有投票者
+      if (id == opts_.self_id) { // 如果是自己
         ++active;
         continue;
       }
@@ -600,23 +601,25 @@ uint32_t RaftNode::majority() const {
   return majority_of(voter_ids());
 }
 
+// 判断是否满足法定人数
 bool RaftNode::quorate_at(const std::vector<std::string>& voters, uint64_t index) const {
   uint32_t ok = 0;
-  for (const auto& id : voters) {
+  for (const auto& id : voters) { // 遍历所有投票者
     uint64_t m = 0;
-    if (id == opts_.self_id) {
+    if (id == opts_.self_id) { // 如果是自己
       m = match_index_.count(opts_.self_id) ? match_index_.at(opts_.self_id) : log_.last_index();
     } else {
       auto it = match_index_.find(id);
       m = it == match_index_.end() ? 0 : it->second;
     }
-    if (m >= index) ++ok;
+    if (m >= index) ++ok; // 如果匹配索引大于等于当前索引，则满足法定人数
   }
-  return ok >= majority_of(voters);
+  return ok >= majority_of(voters); // 如果满足法定人数，则返回true
 }
 
+// 判断是否赢得投票
 bool RaftNode::votes_won(const std::unordered_map<std::string, bool>& votes) const {
-  auto count_yes = [&](const std::vector<std::string>& vs) {
+  auto count_yes = [&](const std::vector<std::string>& vs) { // 统计投票者中投票为true的数量
     uint32_t yes = 0;
     for (const auto& id : vs) {
       auto it = votes.find(id);
@@ -631,6 +634,7 @@ bool RaftNode::votes_won(const std::unordered_map<std::string, bool>& votes) con
          count_yes(joint_new_voters_) >= majority_of(joint_new_voters_);
 }
 
+// 入队
 void RaftNode::enqueue(std::string peer_id, std::string type, std::string payload) {
   outbound_.push_back(Outbound{std::move(peer_id), std::move(type), std::move(payload)});
 }
@@ -724,8 +728,31 @@ void RaftNode::report_applied(uint64_t index) {
   std::lock_guard<std::mutex> lock(mu_);
   if (!opts_.external_io) return;
   if (index > last_applied_) last_applied_ = index;
+  applied_cv_.notify_all();
   maybe_compact();
   persist_locked();
+}
+
+bool RaftNode::wait_applied(uint64_t index, uint32_t timeout_ms,
+                            const std::function<void()>& tick) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      if (last_applied_ >= index) return true;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      std::lock_guard<std::mutex> lock(mu_);
+      return last_applied_ >= index;
+    }
+    if (tick) tick();
+    std::unique_lock<std::mutex> lock(mu_);
+    if (last_applied_ >= index) return true;
+    const auto slice = std::min(deadline, std::chrono::steady_clock::now() +
+                                              std::chrono::milliseconds(2));
+    applied_cv_.wait_until(lock, slice);
+  }
 }
 
 void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<LogEntry>& entries) {
@@ -785,6 +812,7 @@ bool RaftNode::decode_conf(std::string_view data, ConfChange* cc) {
   return true;
 }
 
+// 提议
 bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
   // Leader：只把条目追加进内存 RaftLog（并标记 unstable）。
   // external_io（生产 Store 路径）：真正 fsync 在 Store 调 persist_ready → Engine::consume。
@@ -793,6 +821,7 @@ bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (role_ != Role::kLeader) return false;
+    // 异步 Apply 队列满：backpressure，避免卡死（非生产 Store 不启用）。
     if (opts_.enable_async_apply) {
       std::lock_guard<std::mutex> lk(apply_mu_);
       if (apply_q_.size() >= opts_.apply_queue_capacity) {
@@ -801,20 +830,20 @@ bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
         return false;
       }
     }
-    idx = log_.append(term_, std::move(data));
-    if (opts_.external_io) {
+    idx = log_.append(term_, std::move(data)); // 追加日志条目
+    if (opts_.external_io) {  // 外部IO模式下，将日志条目标记为未稳定
       if (auto e = log_.entry(idx)) ready_unstable_.push_back(*e);
     }
-    match_index_[opts_.self_id] = idx;
-    if (assigned_index) *assigned_index = idx;
-    persist_locked();
-    need_bcast_ = true;
-    if (!opts_.coalesce_replication || majority() <= 1) {
+    match_index_[opts_.self_id] = idx; // 更新匹配索引
+    if (assigned_index) *assigned_index = idx; // 返回分配的索引
+    persist_locked();  
+    need_bcast_ = true; // 需要广播
+    if (!opts_.coalesce_replication || majority() <= 1) { // 如果不需要合并复制或大多数节点数小于等于1，则广播心跳
       maybe_broadcast();
     }
-    maybe_commit();
-    apply_committed();
-    persist_locked();
+    maybe_commit(); // 提交日志
+    apply_committed(); // 应用已提交的日志
+    persist_locked(); 
   }
   flush_transport();
   // 嵌入模式：等待异步 apply 追上。external_io 下可见性由 Store Apply 路径负责。
@@ -850,6 +879,7 @@ void RaftNode::maybe_broadcast() {
   need_bcast_ = false;
 }
 
+// 心跳
 void RaftNode::tick() {
   {
     std::lock_guard<std::mutex> lock(mu_);
@@ -870,22 +900,22 @@ void RaftNode::tick() {
         if (snap_inflight_.count(id) || peer_send_blocked_.count(id)) continue;
         ++quiet;
       }
-      maybe_check_quorum();
+      maybe_check_quorum(); // 检查是否满足法定人数
     } else if (!self_is_learner()) {
-      ++election_elapsed_;
-      if (election_elapsed_ >= election_timeout_ticks_) {
-        election_elapsed_ = 0;
+      ++election_elapsed_; // 增加选举时间
+      if (election_elapsed_ >= election_timeout_ticks_) { // 如果选举时间大于等于选举超时时间
+        election_elapsed_ = 0; // 重置选举时间
         // 超时后必须丢掉陈旧 leader_id。否则 on_request_pre_vote 因
         //「仍有 leader 且 elapsed 刚清零」互拒 PreVote，选主永久卡死（it-scale-live）。
-        leader_id_.clear();
-        if (opts_.enable_pre_vote) {
-          start_pre_vote();
+        leader_id_.clear(); // 清空领导者ID
+        if (opts_.enable_pre_vote) { // 如果启用预投票
+          start_pre_vote(); // 启动预投票
         } else {
-          become_candidate();
-          start_election();
+          become_candidate(); // 成为候选者
+          start_election(); // 启动选举
         }
-        persist_locked();
-        mark_activity();
+        persist_locked(); // 持久化
+        mark_activity(); // 标记活动
       }
     }
     persist_maybe_flush(true);  // tick 边界强制 group flush
@@ -893,11 +923,12 @@ void RaftNode::tick() {
   flush_transport();
 }
 
+// 自动离开联合
 void RaftNode::maybe_auto_leave_joint() {
-  if (!auto_leave_pending_ || !in_joint_ || role_ != Role::kLeader) return;
+  if (!auto_leave_pending_ || !in_joint_ || role_ != Role::kLeader) return; // 如果不需要自动离开联合或不是领导者，则返回
   // 已有本任期未提交的 LeaveJoint：只等双多数提交，勿重复 append（换主后旧任期条目需新任期条目才能提交）。
-  for (uint64_t i = commit_index_ + 1; i <= log_.last_index(); ++i) {
-    auto e = log_.entry(i);
+  for (uint64_t i = commit_index_ + 1; i <= log_.last_index(); ++i) { // 从下一个要提交的日志索引开始，遍历到最后一个日志索引
+    auto e = log_.entry(i); // 获取日志条目
     if (!e || e->term != term_) continue;
     ConfChange cc;
     if (decode_conf(e->data, &cc) && cc.type == ConfChange::kLeaveJoint) {
@@ -1117,12 +1148,12 @@ void RaftNode::broadcast_heartbeat() {
 
 void RaftNode::maybe_commit() {
   if (role_ != Role::kLeader) return;
-  uint64_t lo = commit_index_ + 1;
-  uint64_t hi = log_.last_index();
-  uint64_t best = commit_index_;
-  for (uint64_t cand = hi; cand >= lo; --cand) {
+  uint64_t lo = commit_index_ + 1; // 下一个要提交的日志索引
+  uint64_t hi = log_.last_index(); // 最后一个日志索引
+  uint64_t best = commit_index_; // 最佳提交索引
+  for (uint64_t cand = hi; cand >= lo; --cand) { // 从最后一个日志索引开始，向前遍历，直到找到最佳提交索引
     bool ok;
-    if (in_joint_) {
+    if (in_joint_) { // 如果处于联合角色
       ok = quorate_at(joint_old_voters_, cand) && quorate_at(joint_new_voters_, cand);
     } else {
       ok = quorate_at(voter_ids(), cand);
@@ -1229,15 +1260,16 @@ void RaftNode::apply_conf_entry(const LogEntry& e) {
   }
 }
 
+// 应用已提交的日志
 void RaftNode::apply_committed() {
-  while (apply_scheduled_ < commit_index_) {
-    const uint64_t idx = apply_scheduled_ + 1;
-    if (idx < log_.first_index()) {
-      apply_scheduled_ = idx;
-      if (idx > last_applied_) last_applied_ = idx;
+  while (apply_scheduled_ < commit_index_) { // 如果应用的日志索引小于已提交的日志索引
+    const uint64_t idx = apply_scheduled_ + 1; // 下一个要应用的日志索引
+    if (idx < log_.first_index()) { // 如果下一个要应用的日志索引小于第一个日志索引
+      apply_scheduled_ = idx; // 更新应用的日志索引
+      if (idx > last_applied_) last_applied_ = idx; // 更新最后应用的日志索引
       continue;
     }
-    auto e = log_.entry(idx);
+    auto e = log_.entry(idx); // 获取日志条目
     if (!e) {
       apply_scheduled_ = idx;
       continue;

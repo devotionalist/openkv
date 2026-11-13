@@ -34,68 +34,66 @@
 
 namespace openkv::storage {
 
-/// 按 log index 挂 waiter，apply 后 invoke 唤醒（无 last_applied 轮询）。
+// 按 log index 挂 waiter，apply 后 invoke 唤醒（无 last_applied 轮询）。
 class ProposalQueue {
  public:
-  struct WaitOutcome {
-    bool timed_out{false};
+  struct WaitOutcome {// 等待结果
+    bool timed_out{false}; // 是否超时
     std::string error;  // 空 = 成功；非空 = apply 业务错误（如 CAS）
   };
 
-  using CompleteCb = std::function<void(WaitOutcome)>;
+  using CompleteCb = std::function<void(WaitOutcome)>; // 完成回调
 
-  ProposalQueue();
-  ~ProposalQueue();
+  ProposalQueue(); // 提议队列
+  ~ProposalQueue(); // 销毁
 
-  ProposalQueue(const ProposalQueue&) = delete;
-  ProposalQueue& operator=(const ProposalQueue&) = delete;
+  ProposalQueue(const ProposalQueue&) = delete; // 禁止拷贝构造
+  ProposalQueue& operator=(const ProposalQueue&) = delete; // 禁止拷贝赋值  
 
-  /// 等 index 被 invoke。tick 可选：等待切片间推进 Ready（RF=1）。
-  WaitOutcome wait(uint64_t index, std::chrono::milliseconds timeout,
-                   const std::function<void()>& tick = {});
+  // 等 index 被 invoke。tick 可选：等待切片间推进 Ready（RF=1）。
+  WaitOutcome wait(uint64_t index, std::chrono::milliseconds timeout, const std::function<void()>& tick = {});
 
-  /// 异步等待：已完成则同步回调；否则 register，由 invoke / 超时线程回调。
+  // 异步等待：已完成则同步回调；否则 register，由 invoke / 超时线程回调。
   void wait_async(uint64_t index, std::chrono::milliseconds timeout, CompleteCb cb);
 
-  /// apply 完成：唤醒 waiters；error 空 = 成功。
+  // apply 完成：唤醒 waiters；error 空 = 成功。
   void invoke(uint64_t index, std::string error);
 
-  /// 非阻塞取走已完成结果（兼容旧 take_apply_result）。
-  std::optional<std::string> take(uint64_t index);
-
+  // 超时总数
   uint64_t timeout_total() const { return timeout_total_.load(std::memory_order_relaxed); }
+  // 等待直方图
   const LatencyHistogram& wait_hist() const { return wait_hist_; }
-  /// Prometheus：apply_wait 直方图 + apply_timeout 计数。
+  // Prometheus：apply_wait 直方图 + apply_timeout 计数。
   std::string prometheus_text() const;
 
  private:
-  struct Slot {
+  struct Slot {// 槽
     std::condition_variable cv;
-    bool done{false};
-    std::string error;
+    bool done{false}; // 是否完成
+    std::string error; // 错误
     int waiters{0};  // sync wait + pending async_cbs
     uint64_t gen{0};  // bump on invoke → invalidate stale timeouts
     std::vector<CompleteCb> async_cbs;
   };
 
-  struct TimeoutItem {
-    uint64_t index{0};
-    uint64_t gen{0};
-    std::chrono::steady_clock::time_point deadline;
+  struct TimeoutItem {// 超时项
+    uint64_t index{0}; // 索引
+    uint64_t gen{0}; // 生成
+    std::chrono::steady_clock::time_point deadline; // 截止时间
   };
 
-  mutable std::mutex mu_;
-  std::unordered_map<uint64_t, Slot> slots_;
-  std::atomic<uint64_t> timeout_total_{0};
-  LatencyHistogram wait_hist_;
+  mutable std::mutex mu_; // 互斥锁
+  std::unordered_map<uint64_t, Slot> slots_; // 槽
+  std::atomic<uint64_t> timeout_total_{0}; // 超时总数
+  LatencyHistogram wait_hist_; // 等待直方图
 
-  std::vector<TimeoutItem> timeouts_;
-  std::condition_variable timeout_cv_;
-  std::atomic<bool> stop_{false};
-  std::thread timeout_thread_;
-  bool timeout_thread_started_{false};
+  std::vector<TimeoutItem> timeouts_; // 超时项
+  std::condition_variable timeout_cv_; // 超时条件变量
+  std::atomic<bool> stop_{false}; // 停止
+  std::thread timeout_thread_; // 超时线程
+  bool timeout_thread_started_{false}; // 超时线程是否启动
 
-  static bool slot_idle(const Slot& slot) {
+  static bool slot_idle(const Slot& slot) { // 槽是否空闲
     return slot.done && slot.waiters == 0 && slot.async_cbs.empty();
   }
 

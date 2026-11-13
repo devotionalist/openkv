@@ -19,12 +19,7 @@
 
 namespace openkv::raftstore {
 
-Peer::Peer(uint32_t region_id, std::unique_ptr<raft::RawNode> raw) : raw_(std::move(raw)) {
-  meta_.region_id = region_id;
-}
-
-Peer::Peer(uint32_t region_id, std::shared_ptr<raft::RaftNode> legacy)
-    : legacy_(std::move(legacy)) {
+Peer::Peer(uint32_t region_id, std::shared_ptr<raft::RaftNode> node) : node_(std::move(node)) {
   meta_.region_id = region_id;
 }
 

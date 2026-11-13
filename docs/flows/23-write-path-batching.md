@@ -32,7 +32,7 @@
 | `RaftNode::persist_ready` | 持锁组 batch；`persist_io_mu_` 下 consume/sync；再推进 `stable_*`（只前进） |
 
 `data` 下 Raft Ready 仍 sync；KV 不 sync。目标是 **多数派 + Raft sync 摊销**，崩溃用日志重放，而不是每笔 apply 再 fsync。  
-Group commit **不在** Raft sync 前 ACK；客户端仍等 apply（内存可见）。
+Group commit **不在** Raft sync 前 ACK；客户端仍等 apply（内存可见）。完整调用链与崩溃窗口见 [36-propose-ack-durability.md](36-propose-ack-durability.md)。
 
 ```mermaid
 flowchart TD

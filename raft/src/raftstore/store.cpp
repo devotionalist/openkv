@@ -20,7 +20,6 @@
 
 #include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
-#include "openkv/raft/raw_node.hpp"
 #include "openkv/raftstore/write_batch_merge.hpp"
 
 #include <chrono>
@@ -49,7 +48,7 @@ std::vector<std::string> split_pipe(const std::string& s) {
 
 }  // namespace
 
-Store::Store(Options opts, LegacyFactory factory)
+Store::Store(Options opts, NodeFactory factory)
     : opts_(opts), factory_(std::move(factory)), router_(std::make_shared<Router>()) {
   batch_ = std::make_unique<BatchSystem>(router_, opts_.batch);
   batch_->set_raft_handler([this](uint32_t rid, std::vector<PeerMsg> msgs) {
@@ -199,7 +198,7 @@ void Store::schedule_tick() {
       std::lock_guard<std::mutex> lk(mu_);
       for (auto& [_, p] : peers_) snap.push_back(p);
     }
-    for (auto& p : snap) handle_tick(*p, /*process_ready=*/true);
+    for (auto& p : snap) handle_tick(*p, /*run_ready=*/true);
     return;
   }
   router_->broadcast_tick();
@@ -215,7 +214,7 @@ void Store::drive_ready(uint32_t region_id) {
     }
     if (!peer) return;
     wake_peer(*peer);
-    process_ready_legacy(*peer);
+    process_ready(*peer);
     return;
   }
   // 只对本 Region 投递 Wake；同批多个 propose 合并为一次 Ready/sync。
@@ -231,13 +230,13 @@ std::shared_ptr<Peer> Store::peer_locked(uint32_t region_id) {
 raft::RaftNode* Store::get(uint32_t region_id) {
   std::lock_guard<std::mutex> lk(mu_);
   auto p = peer_locked(region_id);
-  return p ? p->legacy() : nullptr;
+  return p ? p->raft_node() : nullptr;
 }
 
 std::shared_ptr<raft::RaftNode> Store::get_shared(uint32_t region_id) {
   std::lock_guard<std::mutex> lk(mu_);
   auto p = peer_locked(region_id);
-  return p ? p->legacy_shared() : nullptr;
+  return p ? p->raft_node_shared() : nullptr;
 }
 
 raft::RaftNode& Store::get_or_create(uint32_t region_id) {
@@ -250,7 +249,7 @@ raft::RaftNode& Store::get_or_create(uint32_t region_id) {
         p->mark_loaded(factory_(region_id));
       }
     }
-    if (auto* n = p->legacy()) return *n;
+    if (auto* n = p->raft_node()) return *n;
   }
   auto node = factory_(region_id);
   auto peer = std::make_shared<Peer>(region_id, node);
@@ -268,7 +267,7 @@ std::shared_ptr<raft::RaftNode> Store::take(uint32_t region_id) {
   std::lock_guard<std::mutex> lk(mu_);
   auto it = peers_.find(region_id);
   if (it == peers_.end()) return nullptr;
-  auto sp = it->second->legacy_shared();
+  auto sp = it->second->raft_node_shared();
   peers_.erase(it);
   router_->deregister(region_id);
   meta_.erase(region_id);
@@ -293,10 +292,7 @@ bool Store::send_raft_message(uint32_t region_id, RaftMessage msg) {
   return router_->send_raft(region_id, std::move(msg));
 }
 
-raft::RaftNode* Store::peer_node(Peer& peer) {
-  if (auto* raw = peer.raw()) return raw->raft_node();
-  return peer.legacy();
-}
+raft::RaftNode* Store::peer_node(Peer& peer) { return peer.raft_node(); }
 
 std::string Store::apply_inbound_raft(uint32_t region_id, RaftMessage msg) {
   std::shared_ptr<Peer> peer;
@@ -308,15 +304,14 @@ std::string Store::apply_inbound_raft(uint32_t region_id, RaftMessage msg) {
   wake_peer(*peer);
   // 同步步进（行协议需立即回包）；同时投递 Router 作唤醒/批处理对齐。
   router_->send_raft(region_id, RaftMessage{msg.from, msg.type, {}});
-  return step_raft_message(*peer, msg, /*process_ready=*/true);
+  return step_raft_message(*peer, msg, /*run_ready=*/true);
 }
 
 std::vector<uint32_t> Store::leader_shards() const {
   std::lock_guard<std::mutex> lk(mu_);
   std::vector<uint32_t> out;
   for (const auto& [id, p] : peers_) {
-    auto* n = p->legacy();
-    if (!n && p->raw()) n = p->raw()->raft_node();
+    auto* n = p->raft_node();
     if (n && n->is_leader()) out.push_back(id);
   }
   return out;
@@ -394,7 +389,7 @@ void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
           using T = std::decay_t<decltype(arg)>;
           if constexpr (std::is_same_v<T, TickMsg>) {
             if (!did_tick) {
-              handle_tick(*peer, /*process_ready=*/false);
+              handle_tick(*peer, /*run_ready=*/false);
               did_tick = true;
             }
             need_ready = true;
@@ -404,23 +399,23 @@ void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
             need_ready = true;
           } else if constexpr (std::is_same_v<T, SignificantMsg>) {
             wake_peer(*peer);
-            if (arg.type == SignificantMsg::Type::kMsgUnreachable && peer->legacy()) {
-              peer->legacy()->on_rpc_transport_fail(arg.peer_id);
+            if (arg.type == SignificantMsg::Type::kMsgUnreachable && peer->raft_node()) {
+              peer->raft_node()->on_rpc_transport_fail(arg.peer_id);
             }
             need_ready = true;  // kWake / TimeoutNow 等：批末 Ready
           } else if constexpr (std::is_same_v<T, ApplyRes>) {
             peer->touch_activity();
-            if (peer->legacy()) {
-              meta_.set_leader(region_id, peer->legacy()->soft_state().leader_id);
+            if (peer->raft_node()) {
+              meta_.set_leader(region_id, peer->raft_node()->soft_state().leader_id);
             }
           }
         },
         m);
   }
-  if (need_ready) process_ready_legacy(*peer);
+  if (need_ready) process_ready(*peer);
 }
 
-void Store::handle_tick(Peer& peer, bool process_ready) {
+void Store::handle_tick(Peer& peer, bool run_ready) {
   if (peer.unloaded()) {
     maybe_hibernate_or_unload(peer);
     return;
@@ -439,7 +434,7 @@ void Store::handle_tick(Peer& peer, bool process_ready) {
   if (n->consume_activity_flag() || n->is_leader()) {
     peer.touch_activity();
   }
-  if (process_ready) process_ready_legacy(peer);
+  if (run_ready) process_ready(peer);
   maybe_hibernate_or_unload(peer);
   meta_.set_leader(peer.region_id(), n->soft_state().leader_id);
 }
@@ -450,17 +445,17 @@ void Store::handle_raft_message(Peer& peer, const RaftMessage& msg) {
     peer.touch_activity();
     return;
   }
-  (void)step_raft_message(peer, msg, /*process_ready=*/false);
+  (void)step_raft_message(peer, msg, /*run_ready=*/false);
 }
 
-std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool process_ready) {
+std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready) {
   auto* n = peer_node(peer);
   if (!n) return "ERR no_region";
   peer.touch_activity();
   const auto& type = msg.type;
   const auto parts = split_pipe(msg.payload);
   auto maybe_ready = [&] {
-    if (process_ready) process_ready_legacy(peer);
+    if (run_ready) process_ready(peer);
   };
   try {
     if (type == "RequestVote" || type == "RequestPreVote") {
@@ -530,7 +525,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool pr
   return "ERR unknown_raft_type";
 }
 
-void Store::process_ready_legacy(Peer& peer) {
+void Store::process_ready(Peer& peer) {
   auto drive = [&](auto take_ready_fn, auto advance_fn, auto has_fn) {
     while (has_fn()) {
       raft::Ready rd = take_ready_fn();
@@ -572,14 +567,8 @@ void Store::process_ready_legacy(Peer& peer) {
     }
   };
 
-  if (auto* raw = peer.raw()) {
-    drive([&] { return raw->ready(); }, [&](const raft::Ready& rd) { raw->advance(rd); },
-          [&] { return raw->has_ready(); });
-    return;
-  }
-  auto* n = peer.legacy();
+  auto* n = peer.raft_node();
   if (!n || !n->has_ready()) return;
-  // external_io RaftNode：Ready 外提
   drive([&] { return n->take_ready(); }, [&](const raft::Ready& rd) { n->advance(rd); },
         [&] { return n->has_ready(); });
 }

@@ -32,7 +32,8 @@ flowchart LR
 
 ## 边界
 
-- 客户端仍等 **apply 完成** 才 ACK（线性可见），不是「sync 前返回」。  
+- 客户端仍等 **apply 完成** 才 ACK（线性可见），不是「sync 前返回」。Propose→ACK 调用链见 [36-propose-ack-durability.md](36-propose-ack-durability.md)。  
+
 - `data` 下掉电可能丢 **未 sync 进 RocksDB、但已在 Raft log** 的 apply；重启重放补齐。  
 - 若要求 KV 介质也同步落盘，显式设 `all`。
 

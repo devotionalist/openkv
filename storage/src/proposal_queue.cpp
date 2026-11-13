@@ -143,6 +143,8 @@ void ProposalQueue::timeout_loop() {
   }
 }
 
+
+// 调用
 void ProposalQueue::invoke(uint64_t index, std::string error) {
   std::vector<CompleteCb> cbs;
   WaitOutcome out;
@@ -160,15 +162,7 @@ void ProposalQueue::invoke(uint64_t index, std::string error) {
   fire_cbs(cbs, out);
 }
 
-std::optional<std::string> ProposalQueue::take(uint64_t index) {
-  std::lock_guard<std::mutex> lock(mu_);
-  auto it = slots_.find(index);
-  if (it == slots_.end() || !it->second.done) return std::nullopt;
-  std::string err = it->second.error;
-  if (slot_idle(it->second)) slots_.erase(it);
-  return err;
-}
-
+// 异步等待
 void ProposalQueue::wait_async(uint64_t index, std::chrono::milliseconds timeout, CompleteCb cb) {
   if (!cb) return;
   const auto t0 = std::chrono::steady_clock::now();
@@ -193,39 +187,39 @@ void ProposalQueue::wait_async(uint64_t index, std::chrono::milliseconds timeout
 
 ProposalQueue::WaitOutcome ProposalQueue::wait(uint64_t index, std::chrono::milliseconds timeout,
                                                const std::function<void()>& tick) {
-  const auto t0 = std::chrono::steady_clock::now();
-  const auto deadline = t0 + timeout;
-  WaitOutcome out;
+  const auto t0 = std::chrono::steady_clock::now(); // 开始时间
+  const auto deadline = t0 + timeout; // 截止时间
+  WaitOutcome out; // 等待结果
 
-  std::unique_lock<std::mutex> lock(mu_);
+  std::unique_lock<std::mutex> lock(mu_); // 互斥锁
   {
-    auto& slot = slots_[index];
+    auto& slot = slots_[index]; // 槽
     if (slot.done) {
-      out.error = slot.error;
-      if (slot_idle(slot)) slots_.erase(index);
-      record_wait_us(elapsed_us(t0));
-      return out;
+      out.error = slot.error; // 错误
+      if (slot_idle(slot)) slots_.erase(index); // 删除槽
+      record_wait_us(elapsed_us(t0)); // 记录等待时间
+      return out; // 返回等待结果
     }
-    ++slot.waiters;
+    ++slot.waiters; // 增加等待者
   }
 
-  while (true) {
-    auto it = slots_.find(index);
+  while (true) {// 循环
+    auto it = slots_.find(index); // 查找槽
     if (it == slots_.end()) {
-      slots_[index].waiters = 1;
-      it = slots_.find(index);
+      slots_[index].waiters = 1; // 设置等待者
+      it = slots_.find(index); // 查找槽
     }
-    if (it->second.done) {
-      out.error = it->second.error;
-      break;
+    if (it->second.done) { // 是否完成
+      out.error = it->second.error; // 错误
+      break; // 中断
     }
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= deadline) {
+    const auto now = std::chrono::steady_clock::now(); // 当前时间
+    if (now >= deadline) { // 是否超时
       out.timed_out = true;
       timeout_total_.fetch_add(1, std::memory_order_relaxed);
       break;
     }
-    if (!tick) {
+    if (!tick) {// 是否需要tick
       it->second.cv.wait_until(lock, deadline);
       continue;
     }

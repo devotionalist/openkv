@@ -64,6 +64,8 @@
 4. **Apply**：仅在 commit 推进后，由 Apply 池执行业务写入；`persist_sync=data` 时 KV 不强制 sync。
 5. **report_applied**：回写 `last_applied`，可再进 Engine。
 
+客户端 ACK 在 apply 之后；Ready 批内 **persist → 发网 → apply**。详见 [docs/flows/36-propose-ack-durability.md](../docs/flows/36-propose-ack-durability.md)。
+
 失败语义：`consume` 返回 0 或抛错视为本批未落盘；调用方不得推进「已持久化」游标。File 引擎对 IO 失败写日志并返回 0。
 
 ## 5. FileRaftEngine 布局与语义

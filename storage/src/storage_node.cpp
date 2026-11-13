@@ -38,6 +38,7 @@
 #include <climits>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -129,9 +130,6 @@ void StorageNode::publish_apply_result(uint64_t index, std::string error) {
   proposals_.invoke(index, std::move(error));  // apply 完成 → ProposalQueue::invoke
 }
 
-std::optional<std::string> StorageNode::take_apply_result(uint64_t index) {
-  return proposals_.take(index);
-}
 
 ProposalQueue::WaitOutcome StorageNode::wait_apply(uint64_t index,
                                                    std::chrono::milliseconds timeout,
@@ -1249,30 +1247,35 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
   }
   multi_raft_->mark_hot(shard_id);
   uint64_t idx = 0;
-  // Scheduler：按 payload 前缀 latch，持到 apply。
-  const std::string latch =
-      encoded.size() > 16 ? encoded.substr(0, 16) : encoded;
-  auto write = [&](uint32_t rid, std::string data, uint64_t* out_idx, std::string* err) {
-    if (raftkv_) return raftkv_->async_write(rid, std::move(data), out_idx, err);
-    if (!g->propose(std::move(data), out_idx)) {
-      if (err) *err = "propose_failed";
-      return false;
-    }
-    if (raftkv_) raftkv_->flush_ready(rid);
-    return true;
-  };
+  // 与 Propose 热路径同一套 lock_async；Admin 线程上 future 等待占锁（不进 Latches::cv）。
+  const std::string latch = encoded.size() > 16 ? encoded.substr(0, 16) : encoded;
   uint64_t latch_tok = 0;
-  bool ok = false;
   if (scheduler_) {
-    scheduler_->set_write_fn(write);
-    ok = scheduler_->schedule_write_hold(shard_id, latch, std::move(encoded), &idx, &latch_tok,
-                                         error);
-  } else {
-    ok = write(shard_id, std::move(encoded), &idx, error);
+    std::promise<uint64_t> granted;
+    auto fut = granted.get_future();
+    scheduler_->lock_key_async(latch, [&granted](uint64_t tok) { granted.set_value(tok); });
+    latch_tok = fut.get();
   }
-  if (!ok) return false;
+  auto unlock_latch = [&] {
+    if (scheduler_ && latch_tok != 0) {
+      scheduler_->unlock(latch_tok);
+      latch_tok = 0;
+    }
+  };
+  bool ok = false;
+  if (raftkv_) {
+    ok = raftkv_->async_write(shard_id, std::move(encoded), &idx, error);
+  } else if (g->propose(std::move(encoded), &idx)) {
+    ok = true;
+  } else {
+    if (error) *error = "propose_failed";
+  }
+  if (!ok) {
+    unlock_latch();
+    return false;
+  }
   const auto outcome = wait_apply(idx, std::chrono::milliseconds(10000));
-  if (scheduler_) scheduler_->unlock(latch_tok);
+  unlock_latch();
   if (outcome.timed_out || !outcome.error.empty()) {
     if (error) *error = outcome.timed_out ? "apply_timeout" : outcome.error;
     return false;
@@ -1523,14 +1526,16 @@ void StorageNode::maybe_txn_gc(uint32_t region_id) {
   if (!eng) return;
   MvccStore mvcc(*eng);
   StoreFacade facade(*this);
-  // 1) 过期锁 → Raft rollback
+  // 1) 过期锁 → Raft rollback（async，不阻塞 tick 线程等 apply）
   for (const auto& user : mvcc.list_expired_locks()) {
     auto lk = mvcc.get_lock(user);
     if (!lk) continue;
-    auto r = facade.rollback(region_id, user, lk->start_ts, 0);
-    if (!r.ok) {
-      SKV_DEBUG << "txn_gc rollback failed key=" << user << " err=" << r.error;
-    }
+    const std::string key = user;
+    facade.rollback_async(region_id, key, lk->start_ts, 0, [key](ProposeResult r) {
+      if (!r.ok) {
+        SKV_DEBUG << "txn_gc rollback failed key=" << key << " err=" << r.error;
+      }
+    });
   }
   // 2) MVCC GC 经 Raft；水位来自 Meta TSO safe point（0 则跳过）
   const uint64_t safe = fetch_gc_safe_ts();
@@ -1538,7 +1543,11 @@ void StorageNode::maybe_txn_gc(uint32_t region_id) {
   Command gc;
   gc.op = CmdOp::kGcBelow;
   gc.value.assign(reinterpret_cast<const char*>(&safe), sizeof(safe));
-  facade.propose(region_id, gc);
+  facade.propose_async(region_id, gc, [](ProposeResult r) {
+    if (!r.ok) {
+      SKV_DEBUG << "txn_gc GcBelow failed err=" << r.error;
+    }
+  });
 }
 
 void StorageNode::maybe_auto_split(uint32_t region_id) {
@@ -2392,12 +2401,6 @@ void StorageNode::start() {
     multi_raft_->store().schedule_tick();
   }
   raftkv_ = std::make_unique<RaftKV>(&multi_raft_->store());
-  raftkv_->set_apply_wait([this](uint32_t rid, uint64_t index, uint32_t timeout_ms) {
-    const auto outcome = wait_apply(index, std::chrono::milliseconds(timeout_ms), [this, rid] {
-      if (raftkv_) raftkv_->flush_ready(rid);
-    });
-    return !outcome.timed_out;
-  });
   scheduler_ = std::make_unique<Scheduler>();
   multi_raft_->store().set_apply_fn(
       [this](uint32_t rid, uint64_t index, const std::string& data) { on_apply(rid, index, data); });

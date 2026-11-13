@@ -33,20 +33,27 @@ class RocksRaftEngine : public raft::RaftEngine {
   RocksRaftEngine(const RocksRaftEngine&) = delete;
   RocksRaftEngine& operator=(const RocksRaftEngine&) = delete;
 
+  // 数据库路径
   const std::string& db_path() const { return path_; }
 
   std::unique_ptr<raft::RaftLogBatch> make_log_batch(size_t capacity_hint = 0) override;
+  // 消费
   size_t consume(raft::RaftLogBatch& batch, bool sync) override;
 
+  // 获取raft状态
   std::optional<raft::RaftLocalState> get_raft_state(uint64_t raft_group_id) const override;
+  // 获取日志
   std::optional<raft::LogEntry> get_entry(uint64_t raft_group_id, uint64_t index) const override;
+  // 获取日志
   size_t fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end, size_t max_size,
                           std::vector<raft::LogEntry>* to) const override;
-
+  // 垃圾回收
   size_t gc(uint64_t raft_group_id, uint64_t from, uint64_t to) override;
+  // 清理
   void clean(uint64_t raft_group_id) override;
-
+  // 同步模式
   raft::SyncMode sync_mode() const override { return sync_; }
+  // 设置同步模式
   void set_sync_mode(raft::SyncMode m) override;
 
  private:
@@ -54,12 +61,12 @@ class RocksRaftEngine : public raft::RaftEngine {
 
   struct RocksHandle;
 
-  static std::string state_key(uint64_t group_id);
-  static std::string log_key(uint64_t group_id, uint64_t index);
-  static std::string log_prefix(uint64_t group_id);
+  static std::string state_key(uint64_t group_id); // 状态键
+  static std::string log_key(uint64_t group_id, uint64_t index); // 日志键
+  static std::string log_prefix(uint64_t group_id); // 日志前缀
 
-  std::string path_;
-  raft::SyncMode sync_{raft::SyncMode::kData};
+  std::string path_; // 数据库路径
+  raft::SyncMode sync_{raft::SyncMode::kData}; // 同步模式
   std::unique_ptr<RocksHandle> rocks_;
   mutable std::mutex mu_;  // 保护 set_sync_mode 与 WriteOptions
 };

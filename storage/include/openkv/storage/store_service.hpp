@@ -23,17 +23,18 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 
 namespace openkv::storage {
 
-enum class CmdOp : uint8_t {
-  kPut = 0,
+enum class CmdOp : uint8_t {// 命令操作
+  kPut = 0, // 插入
   kDelete = 1,
-  kPrewrite = 2,
-  kCommit = 3,
-  kRollback = 4,
+  kPrewrite = 2, // 预写
+  kCommit = 3, // 提交
+  kRollback = 4, // 回滚
   kPessimisticLock = 5,
   kPessimisticRollback = 6,
   kGcBelow = 7,  // value = safe_ts u64；删非最新且 commit_ts < safe_ts
@@ -163,78 +164,94 @@ class StoreFacade {
  public:
   explicit StoreFacade(StorageNode& node);
 
+  /// 同步 propose（内部 promise 等 apply）。**仅单测 / 后台**；gRPC CQ 用 propose_async。
   ProposeResult propose(uint32_t shard_id, const Command& cmd);
-  /// 异步 propose：gRPC Callback 路径；完成回调可能在 apply / 超时线程。
-  /// expected_epoch==0 跳过校验（与 one_pc_async 一致）。
+  /// 异步提议（热路径）。
   void propose_async(uint32_t shard_id, const Command& cmd,
                      std::function<void(ProposeResult)> cb, uint64_t expected_epoch = 0);
+
+  // 获取  
   GetResult get(uint32_t shard_id, std::string_view key, bool linearizable);
 
-  /// expected_epoch==0 跳过校验。cas=true 时 apply 校验最新 commit_ts == expected_revision（0=create-only）。
+
+  // 预写
   ProposeResult prewrite(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                          std::string_view primary, uint8_t mvcc_op, std::string_view value,
                          uint64_t expected_epoch = 0, bool cas = false,
                          uint64_t expected_revision = 0, int64_t expire_at_ms = 0);
-  /// 单 key 原子写（Put/Delete）；revision 返回 commit_ts。
+  // 单 key 原子写（Put/Delete）；revision 返回 commit_ts。
   ProposeResult one_pc(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        uint64_t commit_ts, std::string_view primary, uint8_t mvcc_op,
                        std::string_view value, uint64_t expected_epoch = 0, bool cas = false,
                        uint64_t expected_revision = 0, int64_t expire_at_ms = 0);
-  /// 异步 ONEPC：预检失败同步回调；成功走 propose_async（不占调用线程等 apply）。
+  // 异步 ONEPC：预检失败同步回调；成功走 propose_async（不占调用线程等 apply）。
   void one_pc_async(uint32_t shard_id, std::string key, uint64_t start_ts, uint64_t commit_ts,
                     std::string primary, uint8_t mvcc_op, std::string value,
                     uint64_t expected_epoch, bool cas, uint64_t expected_revision,
                     int64_t expire_at_ms, std::function<void(ProposeResult)> cb);
-  /// 异步 Prewrite：预检同 sync；成功走 propose_async。
+  // 异步 Prewrite：预检同 sync；成功走 propose_async。
   void prewrite_async(uint32_t shard_id, std::string key, uint64_t start_ts, std::string primary,
                       uint8_t mvcc_op, std::string value, uint64_t expected_epoch, bool cas,
                       uint64_t expected_revision, int64_t expire_at_ms,
                       std::function<void(ProposeResult)> cb);
+  // 提交
   ProposeResult commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        uint64_t commit_ts, uint64_t expected_epoch = 0);
+  // 异步提交
   void commit_async(uint32_t shard_id, std::string key, uint64_t start_ts, uint64_t commit_ts,
                     uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
+  // 回滚
   ProposeResult rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                          uint64_t expected_epoch = 0);
+  // 异步回滚
   void rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                       uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
+  // 悲观锁
   ProposeResult pessimistic_lock(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                  uint64_t for_update_ts, std::string_view primary,
                                  uint64_t ttl_ms = 5000, uint64_t expected_epoch = 0);
+  // 异步悲观锁
   void pessimistic_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                               uint64_t for_update_ts, std::string primary, uint64_t ttl_ms,
                               uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
+  // 悲观回滚
   ProposeResult pessimistic_rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                      uint64_t expected_epoch = 0);
+  // 异步悲观回滚
   void pessimistic_rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                                   uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
-  /// commit_ts==0 → rollback resolve。
+  // 解决锁
   ProposeResult resolve_lock(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                              uint64_t commit_ts, uint64_t expected_epoch = 0);
+  // 异步解决锁
   void resolve_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                           uint64_t commit_ts, uint64_t expected_epoch,
                           std::function<void(ProposeResult)> cb);
 
-  /// linearizable=true 仅 Leader；false 可读任意副本本地 MVCC（可能落后）。
+  // 事务获取
   TxnGetResult txn_get(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        bool linearizable = true);
-  /// MVCC 用户键范围扫；limit==0 → 256；硬顶 4096。
+  // MVCC 用户键范围扫；limit==0 → 256；硬顶 4096。
   TxnScanResult txn_scan(uint32_t shard_id, std::string_view start_key, std::string_view end_key,
                          std::string_view start_after, uint64_t start_ts, uint32_t limit,
                          bool keys_only = false, bool linearizable = true);
+  // 事务 TTL
   TxnTtlResult txn_ttl(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                        bool linearizable = true);
+  // 获取锁
   GetLockResult get_lock(uint32_t shard_id, std::string_view key);
+  // 检查事务状态
   CheckTxnResult check_txn_status(uint32_t shard_id, std::string_view primary, uint64_t lock_ts);
 
   StorageNode& node() { return node_; }
-  RegionMetrics& metrics() { return metrics_; }
-  const RegionMetrics& metrics() const { return metrics_; }
+  RegionMetrics& metrics() { return *metrics_; }
+  const RegionMetrics& metrics() const { return *metrics_; }
 
  private:
-  ProposeResult require_leader(uint32_t shard_id, uint64_t expected_epoch);
-  StorageNode& node_;
-  RegionMetrics metrics_;
+  ProposeResult require_leader(uint32_t shard_id, uint64_t expected_epoch); // 需要领导者
+  StorageNode& node_; // 存储节点
+  /// shared：propose_async 回调可能晚于临时 StoreFacade（如 txn GC）析构。
+  std::shared_ptr<RegionMetrics> metrics_;
 };
 
 }  // namespace openkv::storage

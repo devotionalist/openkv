@@ -108,6 +108,9 @@ class RaftNode {
   /// C3：线性读确认。成功则 *read_commit 为可读水位（通常=commit_index）。
   /// Leader：lease 有效则本地确认；否则 ReadIndex（心跳 + 等多数派 ACK）。
   bool read_index(uint64_t* read_commit, uint32_t timeout_ms = 500);
+  /// 等到 last_applied >= index（CV，无 sleep 自旋）；tick 在等待切片间调用（如 flush_ready）。
+  bool wait_applied(uint64_t index, uint32_t timeout_ms = 400,
+                    const std::function<void()>& tick = {});
   void tick();
 
   void on_append_entries(const std::string& from, uint64_t term, uint64_t prev_idx,
@@ -237,13 +240,13 @@ class RaftNode {
 
   mutable std::mutex mu_;
   Role role_{Role::kFollower};
-  uint64_t term_{0};
-  std::string voted_for_;
-  std::string leader_id_;
+  uint64_t term_{0};  // 当前任期号
+  std::string voted_for_; // 投票给的节点ID
+  std::string leader_id_; // 当前领导者ID
   RaftLog log_;  // 日志  
-  uint64_t commit_index_{0};
+  uint64_t commit_index_{0}; // 已提交的日志索引
   /// 状态机已 apply（含 conf）；Facade 可见。
-  uint64_t last_applied_{0};
+  uint64_t last_applied_{0}; // 最后应用的日志索引
   /// 已调度进 apply 队列或同步 apply 的最高 index。
   uint64_t apply_scheduled_{0};
 
@@ -285,6 +288,8 @@ class RaftNode {
   uint64_t pending_read_commit_{0};
   std::unordered_set<std::string> read_index_acks_;
   std::condition_variable read_cv_;
+  /// report_applied 推进 last_applied 时唤醒 wait_applied。
+  std::condition_variable applied_cv_;
 
   // O1
   uint64_t election_count_{0};
@@ -302,14 +307,14 @@ class RaftNode {
   // Ready 缓冲（external_io）
   bool ready_hs_dirty_{false};
   HardState ready_hs_{};
-  std::vector<LogEntry> ready_unstable_;
-  std::vector<LogEntry> ready_committed_;
-  std::vector<SnapshotMeta> ready_snaps_;
-  uint64_t ready_applied_watermark_{0};
+  std::vector<LogEntry> ready_unstable_;  // 未稳定落盘的日志条目
+  std::vector<LogEntry> ready_committed_;  // 已稳定落盘的日志条目
+  std::vector<SnapshotMeta> ready_snaps_;  // 快照元数据
+  uint64_t ready_applied_watermark_{0};  // 已应用的日志条目索引
 
   std::mutex apply_mu_;
-  std::condition_variable apply_cv_;
-  std::deque<ApplyItem> apply_q_;
+  std::condition_variable apply_cv_;  // 应用条件变量
+  std::deque<ApplyItem> apply_q_;  // 应用队列
   std::atomic<bool> apply_running_{false};
   /// 当前线程正在执行 on_apply；recover_apply 遇此须直接返回，否则自死锁。
   std::atomic<bool> in_on_apply_{false};

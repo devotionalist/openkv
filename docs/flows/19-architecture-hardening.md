@@ -16,7 +16,10 @@
 | 主题 | 行为 |
 |------|------|
 | 写等待 | `RaftKV::async_write` → propose + `drive_ready`；`ProposalQueue` **CV / wait_async** 等 `invoke`（无 5ms tick 空转） |
-| Latch | 事务/CAS：`lock_key_async` 在 propose 前，**持到 apply**；非 CAS Raw Put/Delete **跳过**（见 [27](27-raw-vs-txn.md)） |
+| Latch | 唯一入口 `lock_key_async`；事务/CAS **持到 apply**；非 CAS Raw Put/Delete **跳过**（见 [27](27-raw-vs-txn.md)）；Admin `propose_encoded` 同 API |
+| 死双轨清理 | 已删 `RaftKV::sync_write` / `ProposalQueue::take` / Gateway `alloc_ts`；`process_ready_legacy`→`process_ready`；`Peer::legacy`→`raft_node` |
+| 线性读追上 | `RaftNode::wait_applied` + `flush_ready` tick；替代 `sleep_for(2ms)` 自旋 |
+| txn GC | `maybe_txn_gc` 改 `*_async`，tick 线程不再同步等 apply |
 | 廉价 size | RocksDB `GetApproximateSizes` + `estimate-num-keys`；`pick_split_key` 近似对半 |
 | Split worker | tick 只做廉价阈值判定入队；独立线程跑 Meta SPLIT + PREPARE/SPLIT |
 | Meta CV | `apply_cv_` 唤醒 GET_TS / replicate；`route_cv_` + version 唤醒 WATCH_ROUTE |
@@ -49,6 +52,6 @@ flowchart LR
 
 | ID | 命令 / 期望 |
 |----|-------------|
-| H1 | `ctest -R 'ApproxAndPickSplit\|ProposalQueue\|LatchHold\|MetaWatch\|OnePc'` PASS |
+| H1 | `ctest -R 'ApproxAndPickSplit\|ProposalQueue\|LatchAsync\|LatchHold\|MetaWatch\|OnePc'` PASS |
 | H2 | 本文与 `ARCHITECTURE` / `RANGE_SHARDING` 一致 |
 | H3 | put bench `fail=0`；无 Meta HB Deadline 风暴 |

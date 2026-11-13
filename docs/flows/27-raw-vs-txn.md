@@ -13,7 +13,7 @@
 |--|-------------|---------------------|
 | API | `RawPut` / `RawGet` / `RawDelete` | 现有 `Put`/`Get`/`Delete`/`Txn*` |
 | TSO | 无 | 有（Gateway 批缓存） |
-| 落盘 | plain `KvRecord`（**不写 WatchLog**） | MVCC data + write（ONEPC 或 2PC）+ WatchLog |
+| 落盘 | plain `KvRecord`（**不写 WatchLog**） | MVCC data + write（[ONEPC 或 2PC](37-onepc-vs-2pc.md)）+ WatchLog |
 | revision | Raft apply index | commit_ts |
 | epoch | Gateway 带 Region epoch | 同 |
 | 隔离 | **同一用户 key 空间**；**禁止混用同 key**（未定义，可能互相覆盖） |
@@ -66,6 +66,6 @@ flowchart LR
 |----|-------------|
 | R1 | `./build/tests/openkv_unit_tests --gtest_filter='StoreFacadeTest.RawPlane*:WatchLogTest.OnePcWatch*'` → PASS；Raw 无 WatchLog、ONEPC 有 |
 | R2 | 集群 **隔离** `-mode put` 与 `-mode rawput`（各 w8 / 8s）→ 均 `fail=0`；**rawput ops/s ≥ put** |
-| R3 | `ctest -R 'SchedulerTest.LatchAsync\|SchedulerTest.LatchHold\|StoreFacadeTest.RawPlane'` PASS |
+| R3 | `./build/tests/openkv_unit_tests --gtest_filter='SchedulerTest.*:StoreFacadeTest.RawPlane*'` → PASS |
 
 **2026-11-12 实测（跳过 Raw latch + lock_async）：** R2 隔离 put **227.1** / rawput **343.7** ops/s，p50 **7.8ms / 4.0ms**，`fail=0`。详见 [TEST_CASES](../test/TEST_CASES.md)。

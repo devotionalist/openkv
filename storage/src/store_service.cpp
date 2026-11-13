@@ -13,13 +13,15 @@
 // limitations under the License.
 
 // @file store_service.cpp
-// Command 二进制编解码与 StoreFacade 读写编排（含 propose 后轮询 apply 的 demo 同步）。
+// Command 二进制编解码与 StoreFacade 读写编排。
+// CQ 热路径用 *_async；同步 propose/one_pc/… 仅单测与后台（如 txn GC）。
 
 #include "openkv/storage/store_service.hpp"
 
 #include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/storage/mvcc.hpp"
+#include "openkv/storage/raftkv.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -27,31 +29,27 @@
 #include <functional>
 #include <future>
 #include <memory>
-#include <thread>
 
 namespace {
 struct ScopedRegionTimer {
-  openkv::storage::RegionMetrics* metrics{nullptr};
+  std::shared_ptr<openkv::storage::RegionMetrics> metrics;
   uint32_t region{0};
   bool propose{true};
   std::chrono::steady_clock::time_point t0{std::chrono::steady_clock::now()};
 
   ScopedRegionTimer() = default;
-  ScopedRegionTimer(openkv::storage::RegionMetrics* m, uint32_t r, bool p)
-      : metrics(m), region(r), propose(p) {}
+  ScopedRegionTimer(std::shared_ptr<openkv::storage::RegionMetrics> m, uint32_t r, bool p)
+      : metrics(std::move(m)), region(r), propose(p) {}
   ScopedRegionTimer(const ScopedRegionTimer&) = delete;
   ScopedRegionTimer& operator=(const ScopedRegionTimer&) = delete;
   ScopedRegionTimer(ScopedRegionTimer&& o) noexcept
-      : metrics(o.metrics), region(o.region), propose(o.propose), t0(o.t0) {
-    o.metrics = nullptr;  // 避免 moved-from 临时对象析构时重复 observe
-  }
+      : metrics(std::move(o.metrics)), region(o.region), propose(o.propose), t0(o.t0) {}
   ScopedRegionTimer& operator=(ScopedRegionTimer&& o) noexcept {
     if (this == &o) return *this;
-    metrics = o.metrics;
+    metrics = std::move(o.metrics);
     region = o.region;
     propose = o.propose;
     t0 = o.t0;
-    o.metrics = nullptr;
     return *this;
   }
   ~ScopedRegionTimer() {
@@ -248,7 +246,8 @@ int64_t stamp_expire_at_ms(int64_t ttl_ms) {
   return wall_ms_now() + ttl_ms;
 }
 
-StoreFacade::StoreFacade(StorageNode& node) : node_(node) {}
+StoreFacade::StoreFacade(StorageNode& node)
+    : node_(node), metrics_(std::make_shared<RegionMetrics>()) {}
 
 ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_epoch) {
   ProposeResult r;
@@ -300,6 +299,17 @@ bool cmd_has_user_key(const Command& cmd) {
 
 namespace {
 
+/// Leader 线性读：ReadIndex 后等到 apply 追上（CV，无 sleep 自旋）。
+bool ensure_applied_catchup(StorageNode& node, raft::RaftNode* group, uint32_t shard_id,
+                            uint64_t read_ci) {
+  if (!group) return false;
+  if (group->soft_state().last_applied >= read_ci) return true;
+  return group->wait_applied(read_ci, 400, [&] {
+    if (auto* kv = node.raftkv()) kv->flush_ready(shard_id);
+    else group->tick();
+  });
+}
+
 void fill_cas_meta(ProposeResult& pr) {
   if (pr.error.rfind("cas_failed", 0) != 0) return;
   pr.cas_failed = true;
@@ -345,8 +355,8 @@ ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
 void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
                                 std::function<void(ProposeResult)> cb, uint64_t expected_epoch) {
   if (!cb) return;
-  // 原地构造，避免临时对象析构导致 observe 双打。
-  auto timer = std::make_shared<ScopedRegionTimer>(&metrics_, shard_id, true);
+  // metrics_ shared_ptr：临时 StoreFacade（txn GC）析构后回调仍可 observe。
+  auto timer = std::make_shared<ScopedRegionTimer>(metrics_, shard_id, true);
   auto fail = [&](std::string err, std::string redirect = {}) {
     ProposeResult r;
     r.error = std::move(err);
@@ -354,19 +364,20 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     cb(std::move(r));
   };
 
-  auto* group = node_.multi_raft().get(shard_id);
+  StorageNode& node = node_;
+  auto* group = node.multi_raft().get(shard_id);
   if (!group) {
     fail("no_region");
     return;
   }
   if (!group->is_leader()) {
     std::string redir = group->leader_address();
-    if (redir.empty()) redir = node_.peer_address(group->soft_state().leader_id);
+    if (redir.empty()) redir = node.peer_address(group->soft_state().leader_id);
     fail("not_leader", std::move(redir));
     return;
   }
   if (expected_epoch != 0) {
-    const uint64_t cur = node_.region_epoch(shard_id);
+    const uint64_t cur = node.region_epoch(shard_id);
     if (cur != expected_epoch) {
       fail("epoch_not_match expected=" + std::to_string(cur));
       return;
@@ -374,7 +385,7 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
   }
   // E4：同 request_id 重试直接返回缓存，不再二次 propose
   if (cmd.request_id != 0) {
-    if (auto hit = node_.lookup_request(shard_id, cmd.request_id)) {
+    if (auto hit = node.lookup_request(shard_id, cmd.request_id)) {
       ProposeResult r;
       r.ok = hit->ok;
       r.revision = hit->revision;
@@ -385,29 +396,30 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
   }
   // PUT/DEL/ONEPC 走分裂暂停（与事务写一致）；窗口仅覆盖 Raft apply 元数据，无物理搬迁。
   if ((cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete || cmd.op == CmdOp::kOnePc) &&
-      node_.region_splitting(shard_id)) {
+      node.region_splitting(shard_id)) {
     fail("splitting");
     return;
   }
-  if (cmd_has_user_key(cmd) && !node_.key_in_region(shard_id, cmd.key)) {
+  if (cmd_has_user_key(cmd) && !node.key_in_region(shard_id, cmd.key)) {
     fail("key_not_in_region");
     return;
   }
 
   // Raw 平面 LWW（非 CAS Put/Delete）：Raft apply 已串行，跳过 latch，避免 Propose CQ 上 cv.wait。
   // 事务 / CAS：lock_async 占锁持到 apply；冲突时回调续跑，不阻塞接收线程。
-  auto* sched = node_.scheduler();
+  // 回调只捕获 StorageNode&（节点寿命覆盖异步），禁止捕获 StoreFacade* this。
+  auto* sched = node.scheduler();
   const bool skip_latch =
       (cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete) && !cmd.cas;
 
-  auto after_latch = [this, shard_id, cmd, timer = std::move(timer), cb = std::move(cb),
+  auto after_latch = [&node, shard_id, cmd, timer = std::move(timer), cb = std::move(cb),
                       sched](uint64_t latch_tok) mutable {
     uint64_t idx = 0;
     std::string perr;
     bool proposed = false;
-    if (auto* kv = node_.raftkv()) {
+    if (auto* kv = node.raftkv()) {
       proposed = kv->async_write(shard_id, encode_command(cmd), &idx, &perr);
-    } else if (auto* g = node_.multi_raft().get(shard_id)) {
+    } else if (auto* g = node.multi_raft().get(shard_id)) {
       if (g->propose(encode_command(cmd), &idx)) {
         proposed = true;
       } else {
@@ -425,11 +437,11 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     }
 
     // 无 waiter tick：BatchSystem 经 flush_ready + tick_loop 推进；apply → invoke → Finish。
-    node_.wait_apply_async(
+    node.wait_apply_async(
         idx, std::chrono::milliseconds(5000),
-        [this, shard_id, cmd, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
+        [&node, shard_id, cmd, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
             ProposalQueue::WaitOutcome outcome) mutable {
-          cb(finish_propose(node_, shard_id, cmd, idx, outcome, latch_tok));
+          cb(finish_propose(node, shard_id, cmd, idx, outcome, latch_tok));
           timer.reset();
         });
   };
@@ -444,7 +456,7 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
 }
 
 GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool linearizable) {
-  ScopedRegionTimer timer{&metrics_, shard_id, false};
+  ScopedRegionTimer timer{metrics_, shard_id, false};
   GetResult r;
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
@@ -465,12 +477,7 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
       r.redirect_to = group->leader_address();
       return r;
     }
-    // 确保状态机至少 apply 到 ReadIndex 水位
-    for (int i = 0; i < 200; ++i) {
-      if (group->soft_state().last_applied >= read_ci) break;
-      if (i % 10 == 9) group->tick();
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
   if (!node_.key_in_region(shard_id, key)) {
     r.redirect_to = "key_not_in_region";
@@ -937,11 +944,7 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
       r.error = "read_index_failed";
       return r;
     }
-    for (int i = 0; i < 200; ++i) {
-      if (group->soft_state().last_applied >= read_ci) break;
-      if (i % 10 == 9) group->tick();
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
   auto* eng = node_.engines().get(shard_id);
   if (!eng) return r;
@@ -989,11 +992,7 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
       r.error = "read_index_failed";
       return r;
     }
-    for (int i = 0; i < 200; ++i) {
-      if (group->soft_state().last_applied >= read_ci) break;
-      if (i % 10 == 9) group->tick();
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
   auto* eng = node_.engines().get(shard_id);
   if (!eng) return r;
@@ -1031,11 +1030,7 @@ TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint6
       r.error = "read_index_failed";
       return r;
     }
-    for (int i = 0; i < 200; ++i) {
-      if (group->soft_state().last_applied >= read_ci) break;
-      if (i % 10 == 9) group->tick();
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
   auto* eng = node_.engines().get(shard_id);
   if (!eng) return r;

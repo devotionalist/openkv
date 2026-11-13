@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // @file scheduler.cpp
+// Latches：仅 lock_async / unlock；无阻塞 lock。
 
 #include "openkv/storage/scheduler.hpp"
 
@@ -46,34 +47,6 @@ void Latches::drain_async_locked(
   }
 }
 
-uint64_t Latches::lock(const std::vector<std::string>& keys) {
-  std::unique_lock<std::mutex> lk(mu_);
-  const uint64_t token = next_token_++;
-  sync_waiters_[token] = SyncWaiter{keys};
-  for (;;) {
-    bool blocked = false;
-    for (const auto& k : keys) {
-      auto it = held_.find(k);
-      if (it != held_.end() && it->second != token) {
-        blocked = true;
-        break;
-      }
-    }
-    if (!blocked) {
-      for (const auto& k : keys) held_[k] = token;
-      sync_waiters_.erase(token);
-      return token;
-    }
-    cv_.wait(lk);
-  }
-}
-
-uint64_t Latches::try_lock(const std::vector<std::string>& keys) {
-  std::lock_guard<std::mutex> lk(mu_);
-  if (!can_hold_locked(keys)) return 0;
-  return grant_locked(keys);
-}
-
 void Latches::lock_async(std::vector<std::string> keys, std::function<void(uint64_t)> cb) {
   if (!cb) return;
   uint64_t tok = 0;
@@ -98,46 +71,10 @@ void Latches::unlock(uint64_t token) {
       else ++it;
     }
     drain_async_locked(&ready);
-    cv_.notify_all();
   }
   for (auto& [tok, fn] : ready) {
     if (fn) fn(tok);
   }
-}
-
-bool Scheduler::schedule_write(uint32_t region_id, const std::string& latch_key, std::string data,
-                               uint64_t* assigned_index, std::string* error) {
-  uint64_t tok = 0;
-  if (!schedule_write_hold(region_id, latch_key, std::move(data), assigned_index, &tok, error)) {
-    return false;
-  }
-  unlock(tok);
-  return true;
-}
-
-bool Scheduler::schedule_write_hold(uint32_t region_id, const std::string& latch_key,
-                                    std::string data, uint64_t* assigned_index,
-                                    uint64_t* latch_token, std::string* error) {
-  if (latch_token) *latch_token = 0;
-  if (!write_fn_) {
-    if (error) *error = "no_write_fn";
-    return false;
-  }
-  const uint64_t tok = latches_.lock({latch_key});
-  bool ok = false;
-  try {
-    ok = write_fn_(region_id, std::move(data), assigned_index, error);
-  } catch (...) {
-    latches_.unlock(tok);
-    throw;
-  }
-  if (!ok) {
-    latches_.unlock(tok);
-    return false;
-  }
-  if (latch_token) *latch_token = tok;
-  else latches_.unlock(tok);
-  return true;
 }
 
 }  // namespace openkv::storage

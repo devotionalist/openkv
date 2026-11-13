@@ -10,6 +10,7 @@
 | Gateway | `GatewayServer::put_async` · `alloc_ts` · `store_propose_onepc_async` |
 | Storage | `StoreFacade::one_pc_async` · `CmdOp::kOnePc` · `MvccStore` · `ProposalQueue` |
 | Raft | `RaftKV::async_write` · `Store::request_ready` · `RaftNode::persist_ready` |
+| ACK/落盘 | [36-propose-ack-durability.md](36-propose-ack-durability.md)（ACK=apply；persist 先于 apply） |
 
 短 Put/Delete 走 **ONEPC**（1 次 Raft Propose，一次写入 MVCC data+write）。多 key / 显式 Txn 仍 **Prewrite → Commit**（见 Gateway `Txn*`）。
 
@@ -54,6 +55,7 @@ flowchart TD
 | Txn* 多 key | Prewrite → Commit | `kPrewrite` / `kCommit` | **≥2** |
 | DS（HSet 等） | TxnGet blob → Prewrite → Commit | 同 Txn | **≥2** |
 
+完整说明（何时 1PC/2PC、MVCC、跨 Region）：[37-onepc-vs-2pc.md](37-onepc-vs-2pc.md)。  
 TSO 批缓存说明：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。
 
 ---

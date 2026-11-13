@@ -59,9 +59,6 @@ class StorageNode {
   /// 同 Region 一批 committed entries：可批的 ONEPC/Put/Delete 合并为一次 WriteBatch。
   void on_apply_entries(uint32_t shard_id, const std::vector<raft::LogEntry>& entries);
 
-  /// S2：propose 等待 apply 后读取结果；空串=成功。无条目视为成功。
-  std::optional<std::string> take_apply_result(uint64_t index);
-
   /// 阻塞至 apply invoke 或超时。tick 用于等待期间推进 Ready。
   ProposalQueue::WaitOutcome wait_apply(uint64_t index, std::chrono::milliseconds timeout,
                                         const std::function<void()>& tick = {});

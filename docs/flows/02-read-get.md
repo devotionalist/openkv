@@ -47,7 +47,8 @@ SDK：`Get` = 强一致；`GetOpt(ctx, key, false)` = 副本读。
 
 ## 注意
 
-- **无 Raft ReadIndex**：副本读不提供线性一致边界。  
+- Leader 线性读：`read_index` 确认水位后，`wait_applied`（CV）等到状态机追上；**无 sleep 自旋**。  
+- 副本读（`linearizable=false`）不走 ReadIndex，可能落后于 Leader。  
 - 线性读打到 Follower → `not_leader`，走 [08-not-leader-redirect](08-not-leader-redirect.md)。  
 - Scan / ListPrefix 的线性语义与 Get 相同，跨 Region 扇出见 [16-scan-list-prefix](16-scan-list-prefix.md)。
 

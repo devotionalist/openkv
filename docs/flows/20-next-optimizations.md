@@ -25,6 +25,6 @@
 
 | ID | 命令 / 期望 |
 |----|-------------|
-| O1 | `ctest -R 'MetaHa\|MetaFsm\|FsmSnap\|OnePc\|ApproxAndPickSplit\|ProposalQueue\|LatchHold'` PASS |
+| O1 | `ctest -R 'MetaHa\|MetaFsm\|FsmSnap\|OnePc\|ApproxAndPickSplit\|ProposalQueue\|LatchAsync\|LatchHold'` PASS |
 | O2 | Meta：split → compact → 重启 → `GET_ROUTE` regions 仍在 |
 | O3 | 集群 put bench `fail=0`；无长期 Deadline Exceeded |

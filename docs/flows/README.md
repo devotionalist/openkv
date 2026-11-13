@@ -52,7 +52,8 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 ```
 
 短 Put/Delete：**本地 `alloc_ts(2)` → `StoreService.Propose(ONEPC)`（1 次 Propose）**。  
-多 key Txn：**Prewrite → Commit**。线性读：**TSO + Leader `TXN_GET`**。
+多 key Txn：**Prewrite → Commit**。线性读：**TSO + Leader `TXN_GET`**。  
+1PC / 2PC 对照：[37-onepc-vs-2pc.md](37-onepc-vs-2pc.md)。
 
 组件对照：[COMPONENT_MAP.md](../architecture/COMPONENT_MAP.md)。
 
@@ -63,6 +64,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 | 流程 | 文件 | 要点 |
 |------|------|------|
 | 写入 Put / Delete | [01-write-put.md](01-write-put.md) | Locate → ONEPC → 多数派 → apply → ProposalQueue |
+| **1PC vs 2PC** | [37-onepc-vs-2pc.md](37-onepc-vs-2pc.md) | ONEPC 单 key；Prewrite→Commit 多 key；MVCC L/D/W |
 | Raw vs Txn | [27-raw-vs-txn.md](27-raw-vs-txn.md) | RawPut/Get/Delete 无 TSO；与 Put 同 key 勿混用 |
 | Compute 网络优化 | [28-compute-net-opt.md](28-compute-net-opt.md) | 二进制 Get、stub 缓存、TSO async、Batch fan-in |
 | 读取 Get | [02-read-get.md](02-read-get.md) | 线性一致 vs 副本读；无 ReadIndex |
@@ -86,6 +88,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 |------|------|------|
 | Raft 选举 / 心跳 / 提交 | [06-raft-election-commit.md](06-raft-election-commit.md) | `maybe_commit`、选票、AE/SNAP |
 | **Raft 模块调用流程** | [35-raft-module-call-flows.md](35-raft-module-call-flows.md) · [raft/ARCHITECTURE.md](../../raft/ARCHITECTURE.md) | Propose→Ready→Engine；分层契约；源码地图 |
+| **Propose→ACK 落盘保证** | [36-propose-ack-durability.md](36-propose-ack-durability.md) | 调用链；ACK=apply；persist 先于 apply |
 | Storage 启动 | [07-storage-startup.md](07-storage-startup.md) | MultiRaft 工厂、WAL、tick、gRPC listen |
 | 故障恢复 | [04-fault-recovery.md](04-fault-recovery.md) | load WAL → AE 追赶 / InstallSnapshot |
 | 进程优雅关机 | [31-graceful-shutdown.md](31-graceful-shutdown.md) | SIGTERM：拒新 RPC + 排空在途 |

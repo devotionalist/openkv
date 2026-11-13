@@ -129,7 +129,7 @@
 | MvccTest | Lock、可见性、WriteConflict、悲观锁、GC、TxnScan、TxnTtl |
 | StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite** / **TxnOpsAsyncPrewriteCommitResolve**、Epoch、Split seed、幂等 Propose |
 | WatchHubTest / WatchLogTest | Watch 过滤与持久化 |
-| InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、Latch、前缀扫描 |
+| InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、`lock_async` Latch、前缀扫描 |
 | RocksRaftEngineTest / ShardEngineManagerTest | Raft 引擎、单 Store 共享引擎 |
 
 </details>

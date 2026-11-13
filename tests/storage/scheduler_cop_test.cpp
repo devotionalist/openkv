@@ -21,7 +21,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <filesystem>
+#include <future>
 #include <thread>
 #include <unistd.h>
 
@@ -31,23 +33,21 @@ TEST(SchedulerTest, LatchSerializesConflict) {
   openkv::storage::Scheduler sched;
   std::atomic<int> inflight{0};
   std::atomic<int> max_in{0};
-  sched.set_write_fn([&](uint32_t, std::string, uint64_t*, std::string*) {
+  auto run = [&] {
+    std::promise<uint64_t> p;
+    auto f = p.get_future();
+    sched.lock_key_async("k", [&p](uint64_t tok) { p.set_value(tok); });
+    const uint64_t tok = f.get();
     int v = ++inflight;
     int m = max_in.load();
     while (v > m && !max_in.compare_exchange_weak(m, v)) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     --inflight;
-    return true;
-  });
-  std::thread t1([&] {
-    uint64_t i = 0;
-    sched.schedule_write(0, "k", "a", &i, nullptr);
-  });
-  std::thread t2([&] {
-    uint64_t i = 0;
-    sched.schedule_write(0, "k", "b", &i, nullptr);
-  });
+    sched.unlock(tok);
+  };
+  std::thread t1(run);
+  std::thread t2(run);
   t1.join();
   t2.join();
   EXPECT_EQ(max_in.load(), 1);
@@ -55,34 +55,26 @@ TEST(SchedulerTest, LatchSerializesConflict) {
 
 TEST(SchedulerTest, LatchHoldUntilUnlock) {
   openkv::storage::Scheduler sched;
-  std::atomic<int> hold_writes{0};
-  sched.set_write_fn([&](uint32_t, std::string, uint64_t* idx, std::string*) {
-    if (idx) *idx = 1;
-    ++hold_writes;
-    return true;
-  });
-  uint64_t tok = 0;
-  uint64_t i = 0;
-  ASSERT_TRUE(sched.schedule_write_hold(0, "k", "a", &i, &tok, nullptr));
+  std::promise<uint64_t> first;
+  auto first_fut = first.get_future();
+  sched.lock_key_async("k", [&first](uint64_t tok) { first.set_value(tok); });
+  const uint64_t tok = first_fut.get();
   ASSERT_NE(tok, 0u);
-  EXPECT_EQ(hold_writes.load(), 1);
+
   std::atomic<bool> second_done{false};
+  std::promise<uint64_t> second;
+  auto second_fut = second.get_future();
+  sched.lock_key_async("k", [&second](uint64_t t) { second.set_value(t); });
   std::thread t2([&] {
-    uint64_t j = 0;
-    uint64_t tok2 = 0;
-    // 阻塞直到主线程 unlock
-    if (sched.schedule_write_hold(0, "k", "b", &j, &tok2, nullptr)) {
-      sched.unlock(tok2);
-      second_done.store(true);
-    }
+    const uint64_t tok2 = second_fut.get();
+    sched.unlock(tok2);
+    second_done.store(true);
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(40));
   EXPECT_FALSE(second_done.load());
-  EXPECT_EQ(hold_writes.load(), 1);
   sched.unlock(tok);
   t2.join();
   EXPECT_TRUE(second_done.load());
-  EXPECT_EQ(hold_writes.load(), 2);
 }
 
 TEST(SchedulerTest, LatchAsyncDoesNotBlockCaller) {

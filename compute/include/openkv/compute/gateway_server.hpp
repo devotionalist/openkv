@@ -266,8 +266,6 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
 
   // ---- Routing / Leader ----
 
-  /// 同步分配 n 个 ts（遗留对照）；热路径用 with_start_commit_ts / alloc_async。
-  uint64_t alloc_ts(uint32_t n);
   /// key → region_id；未命中依赖 Router（可能为 0）。Propose 字段名仍叫 shard_id。
   uint32_t region_of(std::string_view key) const;
   /// 本地缓存的 Region conf epoch。
