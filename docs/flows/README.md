@@ -72,7 +72,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 | 版本 CAS | [13-version-cas.md](13-version-cas.md) | apply 内校验；MVCC commit_ts vs plain revision |
 | KV TTL | [14-kv-ttl.md](14-kv-ttl.md) | `expire_at_ms`；读过滤 + TTL Checker |
 | Scan / ListPrefix | [16-scan-list-prefix.md](16-scan-list-prefix.md) | 跨 Region `TXN_SCAN`；无旁路索引 |
-| 多语言 SDK | [15-multi-client-sdk.md](15-multi-client-sdk.md) | 独立仓 `openkv-client-{go,rust,java,typescript}` |
+| Go SDK | [15-multi-client-sdk.md](15-multi-client-sdk.md) | 独立仓 `openkv-client-go`（其余语言仓已删） |
 
 错误码总表：[ERROR_CODES.md](../architecture/ERROR_CODES.md)。
 

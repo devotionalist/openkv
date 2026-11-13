@@ -11,7 +11,7 @@ OpenKV 在 **gRPC `kv.v1.DSService`** 上提供 Hash / Set / List / ZSet。
 
 | 做 | 不做 |
 |----|------|
-| Gateway gRPC DS API + 多语言 SDK | 独立线协议客户端 |
+| Gateway gRPC DS API + Go SDK | 独立线协议客户端 |
 | Hash → Set → List → ZSet（分期） | 全量命令面一次做完 |
 | 与普通 `Get`/`Put` 命名空间隔离 | 跨 Region 单对象（见路由） |
 | 短事务写（同 Put） | 一期 TTL（meta 预留字段） |

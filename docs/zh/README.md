@@ -10,7 +10,7 @@
 
 | 你想… | 去 |
 |-------|-----|
-| **接客户端（Go/Rust/Java/TS）** | [独立 SDK 仓](#0-客户端独立仓库) · [15-multi-client-sdk](../flows/15-multi-client-sdk.md) |
+| **接客户端（Go SDK）** | [独立 SDK 仓](#0-客户端独立仓库) · [15-multi-client-sdk](../flows/15-multi-client-sdk.md) |
 | 本地 / Helm 怎么用 | [USER_GUIDE.md](../USER_GUIDE.md) · 英文 [user-guide](../en/user-guide.md) |
 | gRPC 网络 | [NETWORKING.md](../NETWORKING.md) · 英文 [networking](../en/networking.md) |
 | 架构长什么样 | [architecture/](#1-架构与模型) · 英文摘要 [architecture](../en/architecture.md) |
@@ -24,16 +24,9 @@
 
 ## 0. 客户端（独立仓库）
 
-对外 SDK **不在本仓**，请用：
+对外 SDK **不在本仓**，官方仅保留 **Go**：[openkv-client-go](https://github.com/devotionalist/openkv-client-go)。
 
-| 语言 | 仓库 |
-|------|------|
-| Go | [openkv-client-go](https://github.com/devotionalist/openkv-client-go) |
-| Rust | [openkv-client-rust](https://github.com/devotionalist/openkv-client-rust) |
-| Java | [openkv-client-java](https://github.com/devotionalist/openkv-client-java) |
-| TypeScript | [openkv-client-typescript](https://github.com/devotionalist/openkv-client-typescript) |
-
-本仓 `client/go` 仅 **examples / 工具**（对外 SDK 见独立仓）。说明：[flows/15-multi-client-sdk.md](../flows/15-multi-client-sdk.md)。
+本仓 `client/go` 仅 **examples / 工具**。说明：[flows/15-multi-client-sdk.md](../flows/15-multi-client-sdk.md)。
 
 ---
 

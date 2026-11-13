@@ -48,7 +48,7 @@ flowchart LR
 | Proto | `kv.v1.KVService.RawPut/RawGet/RawDelete` |
 | Gateway | `raw_put_async` / `raw_get_async` / `store_propose_plain_async` |
 | Storage | `StoreFacade::propose`（kPut/kDelete）· `StoreFacade::get` |
-| SDK | Go/Rust/Java/TS：`Raw*` / `raw_*`（见 [15-multi-client-sdk](15-multi-client-sdk.md)） |
+| SDK | Go：`Raw*`（见 [15-multi-client-sdk](15-multi-client-sdk.md)） |
 
 ---
 

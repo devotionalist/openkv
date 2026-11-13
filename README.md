@@ -8,38 +8,25 @@ Distributed KV store with compute/storage separation: **Multi-Raft + RocksDB + g
 
 ## Clients
 
-Official SDKs live in **separate repositories** (Gateway gRPC `:19000`):
+Official SDK is **Go only**, in a separate repository (Gateway gRPC `:19000`):
 
 | Language | Repository | Package |
 |----------|------------|---------|
 | **Go** | [openkv-client-go](https://github.com/devotionalist/openkv-client-go) | `github.com/devotionalist/openkv-client-go` |
-| **Rust** | [openkv-client-rust](https://github.com/devotionalist/openkv-client-rust) | crate `openkv-client-rust` |
-| **Java** | [openkv-client-java](https://github.com/devotionalist/openkv-client-java) | `io.openkv:openkv-client-java` |
-| **TypeScript** | [openkv-client-typescript](https://github.com/devotionalist/openkv-client-typescript) | npm `openkv-client-typescript` |
 
 ```bash
-# Go
 go get github.com/devotionalist/openkv-client-go@latest
-
-# Rust
-# Cargo.toml → openkv-client-rust = "0.1"
-
-# Java (Maven)
-# io.openkv:openkv-client-java:0.1.0
-
-# TypeScript
-npm install openkv-client-typescript
 ```
 
-API surface (v0.1): `Dial`/`connect` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `RawGet`/`RawPut`/`RawDelete` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist` · DS (Hash/Set/List/ZSet).  
+API surface (v0.1): `Dial` · `Get` · `Put`/`PutTTL` · `PutCAS` · `Delete`/`DeleteCAS` · `RawGet`/`RawPut`/`RawDelete` · `BatchGet`/`BatchPut` · `Scan`/`ListPrefix` · `TTL`/`Expire`/`Persist` · DS (Hash/Set/List/ZSet).  
 Design notes: [docs/flows/15-multi-client-sdk.md](docs/flows/15-multi-client-sdk.md).
 
-> This repo’s `client/go` is **in-tree tools only** (examples / e2e / Meta·Storage stubs). Applications must use the SDK repos above.
+> This repo’s `client/go` is **in-tree tools only** (examples / e2e / Meta·Storage stubs). Applications must use [openkv-client-go](https://github.com/devotionalist/openkv-client-go).
 
 ## Topology
 
 ```
-openkv-client-{go,rust,java,typescript} / skv
+openkv-client-go / skv
       │ gRPC :19000
       ▼
 Compute Gateway (C++ gateway_node)  ←── MetaService gRPC ──→  Meta Raft ×3 (:8500–8502)
@@ -102,7 +89,7 @@ gRPC C++ is **required**. Details: [Networking](docs/en/networking.md).
 - **Range Region** sharding with Multi-Raft (default RF=3)
 - Stateless **C++ Gateway** + C++ **Meta** (Raft×3) / **Storage** (RocksDB)
 - Single-key **version CAS** and **KV TTL**
-- Multi-language clients (Go / Rust / Java / TypeScript) in sibling repos
+- Official Go client in sibling repo `openkv-client-go`
 - Online split / merge / place / scale-out SOPs
 - Web console (`:19100`) and `skv` ops CLI
 - Helm charts under `deploy/helm/`
@@ -133,7 +120,7 @@ deploy/    Docker / Helm
 conf/      local configs
 ```
 
-Sibling client repos (not in this tree): `openkv-client-go` · `openkv-client-rust` · `openkv-client-java` · `openkv-client-typescript`.
+Sibling client repo (not in this tree): `openkv-client-go`.
 
 ## License
 
@@ -149,13 +136,7 @@ Licensed under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2
 
 ## 客户端（独立仓库）
 
-| 语言 | 仓库 |
-|------|------|
-| Go | [openkv-client-go](https://github.com/devotionalist/openkv-client-go) |
-| Rust | [openkv-client-rust](https://github.com/devotionalist/openkv-client-rust) |
-| Java | [openkv-client-java](https://github.com/devotionalist/openkv-client-java) |
-| TypeScript | [openkv-client-typescript](https://github.com/devotionalist/openkv-client-typescript) |
-
+官方 SDK **仅 Go**：[openkv-client-go](https://github.com/devotionalist/openkv-client-go)。  
 说明：[docs/flows/15-multi-client-sdk.md](docs/flows/15-multi-client-sdk.md)
 
 **文档：** [English](docs/en/README.md) · [中文](docs/zh/README.md)
