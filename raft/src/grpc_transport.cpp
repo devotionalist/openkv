@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file grpc_transport.cpp
-// Raft 出站 gRPC：Unary / InstallSnapshot 一律 Callback API（async / ClientWriteReactor）。
+// 实现：出站 Unary/InstallSnapshot Callback 客户端、发送队列与 worker。
 
 #include "openkv/raft/grpc_transport.hpp"
 

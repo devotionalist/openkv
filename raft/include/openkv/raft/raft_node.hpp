@@ -13,8 +13,11 @@
 // limitations under the License.
 
 // @file raft_node.hpp
-// 单分片 Raft：选举（PreVote）、复制、提交、CheckQuorum、InstallSnapshot、
-// Joint Consensus、异步 Apply、AE inflight / 批处理。
+// 职责：单分片完整 Raft 节点——选举(PreVote)、复制、提交、CheckQuorum、InstallSnapshot、
+//       Joint Consensus、异步 Apply、AE inflight、以及相对 stable_* 的增量落盘。
+// 架构：协议核心；可 embedded（自管盘/网/apply）或 external_io（只出 Ready，由 Store 驱动）。
+// 协作：日志=RaftLog；落盘=RaftEngine；出站=TransportSend / GrpcRaftTransport；FSM=ApplyCallback。
+// 注意：persist_ready 在 mu_ 外 fsync，便于与 propose 重叠；compact 门槛看「已 apply 前缀」而非 log.size()。
 
 #pragma once
 
@@ -237,7 +240,7 @@ class RaftNode {
   uint64_t term_{0};
   std::string voted_for_;
   std::string leader_id_;
-  RaftLog log_;
+  RaftLog log_;  // 日志  
   uint64_t commit_index_{0};
   /// 状态机已 apply（含 conf）；Facade 可见。
   uint64_t last_applied_{0};

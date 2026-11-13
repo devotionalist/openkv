@@ -13,12 +13,10 @@
 // limitations under the License.
 
 // @file raft_persist.hpp
-// 旧版 per-dir 文本持久化（hard.state + log.entries）。
-// 新路径请用 RaftEngine（FileRaftEngine / RocksRaftEngine）；本类仅作迁移与 SyncMode 定义宿主。
-//
-// 布局：
-//   {dir}/hard.state   — term voted_for commit last_applied first_index snap_term
-//   {dir}/log.entries — 每行: term index hex(data)
+// 职责：① SyncMode / PersistedHardState 定义宿主；② 旧版 per-dir 文本持久化（迁移兼容）。
+// 架构：新路径一律走 RaftEngine；本类 RaftPersist 仅遗留目录导入与单测。
+// 协作：parse_sync_mode / raft_log_sync / kv_apply_sync 被 Storage / RaftNode Options 使用。
+// 布局（旧）：{dir}/hard.state · {dir}/log.entries（hex data）。
 
 #pragma once
 

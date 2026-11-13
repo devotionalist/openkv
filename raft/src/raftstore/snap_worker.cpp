@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // @file snap_worker.cpp
+// 实现：快照发送线程、同 Region coalesce、重试与统计。
 
 #include "openkv/raftstore/snap_worker.hpp"
 

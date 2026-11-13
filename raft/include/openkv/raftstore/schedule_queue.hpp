@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // @file schedule_queue.hpp
-// 有消息的 region 入队；worker 按调度处理，避免每轮扫全表。
+// 职责：待处理 region_id 队列（去重）；worker pop 时等待，避免每轮扫描全部 Peer。
+// 架构：仅头文件；每个 BatchSystem worker 各有一条 ScheduleQueue。
+// 协作：Router NotifyFn / Mailbox 投递成功 → push(region_id)。
 
 #pragma once
 

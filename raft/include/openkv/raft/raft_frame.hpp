@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // @file raft_frame.hpp
-// P1：Raft 二进制帧 — 实现已迁到 openkv::net::skv_frame（跨模块共用）。
+// 职责：历史 Raft 二进制帧 API 的兼容别名；实现已迁到 openkv::net::skv_frame。
+// 架构：无逻辑，仅 using 导出，避免旧 include 路径断裂。
+// 协作：新代码直接 #include "openkv/net/skv_frame.hpp"。
 
 #pragma once
 

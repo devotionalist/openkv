@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file store.hpp
-// Store：Router + BatchSystem + Peer 表 + StoreMeta + SnapWorker（raftstore 入口）。
+// 职责：raftstore **入口**——Router + BatchSystem + Peer 表 + StoreMeta + SnapWorker。
+// 架构：所有入站 Raft RPC / Tick / propose 后的 Ready 都汇聚于此；组 commit（ready_coalesce_*）。
+// 协作：MultiRaft 持有 Store；persist_fn→RaftNode::persist_ready；apply_*→KV；transport_fn→gRPC。
+// 注意：handle_raft_* 禁止绕过 Store 直调 RaftNode::on_*；入站用 apply_inbound_raft。
 
 #pragma once
 
@@ -35,6 +38,7 @@
 
 namespace openkv::raftstore {
 
+/// 本机 Multi-Raft 运行时中枢：调度、Ready 攒批、入站 RPC、Peer 生命周期。
 class Store {
  public:
   struct Options {

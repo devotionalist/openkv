@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // @file raft_persist.cpp
+// 实现：旧文本 hard.state/log.entries 读写与 fsync；新代码勿再依赖，仅迁移。
 
 #include "openkv/raft/raft_persist.hpp"
 #include "openkv/codec.hpp"

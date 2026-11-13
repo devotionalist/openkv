@@ -13,9 +13,11 @@
 // limitations under the License.
 
 // @file raft_engine.hpp
-// RaftEngine + RaftLogBatch（HardState/entries 同批原子落盘）。
-//
-// 读侧供 RaftNode 恢复；写侧经 LogBatch::append/put_raft_state → consume(sync)。
+// 职责：Raft 持久化抽象——RaftLocalState + RaftLogBatch + RaftEngine::consume(sync)。
+// 架构：写路径 append/cut/put_raft_state 进 Batch，一次 consume 原子落盘；读路径供恢复。
+// 协作：RaftNode::engine_flush_locked / persist_ready 调用；实现有 FileRaftEngine、
+//       storage::RocksRaftEngine；save_group_to_engine 用于整组迁移。
+// 注意：SyncMode 定义在 raft_persist.hpp；kData=Raft sync、KV apply 异步。
 
 #pragma once
 

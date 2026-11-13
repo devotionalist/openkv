@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // @file store_meta.hpp
-// Store 级 Region 元数据（epoch / range / leader）。
+// 职责：Store 级 Region 本地元数据（range / epoch / leader / destroyed）。
+// 架构：内存表；与 Meta 集群路由互补，供本机查找与运维展示。
+// 协作：Store::update_peer_meta / split-merge 路径更新。
 
 #pragma once
 

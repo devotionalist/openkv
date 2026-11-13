@@ -131,6 +131,8 @@ std::unique_ptr<raft::RaftLogBatch> RocksRaftEngine::make_log_batch(size_t) {
 }
 
 size_t RocksRaftEngine::consume(raft::RaftLogBatch& batch, bool sync) {
+  // Raft 日志生产落盘点：Store → RaftNode::persist_ready → 此处 WriteBatch。
+  // sync=true（persist_sync=data）时 RocksDB WAL fsync；与业务 KV 库分离。
   auto* rb = dynamic_cast<RocksLogBatch*>(&batch);
   if (!rb || rb->empty() || !rocks_) return 0;
 

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // @file batch_system.cpp
+// 实现：raft/apply 线程循环——pop ScheduleQueue，drain mailbox，调 Store handler。
 
 #include "openkv/raftstore/batch_system.hpp"
 
@@ -76,6 +77,7 @@ bool BatchSystem::snap_overloaded() const {
 }
 
 void BatchSystem::raft_worker_loop(size_t worker_id) {
+  // region_id % raft_workers == worker_id 的 Peer 串行跑在这里 → Store::on_raft_batch。
   auto& sched = raft_sched_[worker_id];
   while (running_.load(std::memory_order_acquire)) {
     auto rid_opt = sched.pop(opts_.poll_timeout_ms, running_);
@@ -83,7 +85,7 @@ void BatchSystem::raft_worker_loop(size_t worker_id) {
     const uint32_t rid = *rid_opt;
     auto mb = router_->peer_mailbox(rid);
     if (!mb || !raft_handler_) continue;
-    // drain-until-empty：同 Region 连续多批再让出。
+    // drain-until-empty：同 Region 连续多批再让出，减少调度抖动。
     for (;;) {
       auto batch = mb->recv_batch(opts_.batch_size, 0);
       if (batch.empty()) break;
@@ -93,6 +95,7 @@ void BatchSystem::raft_worker_loop(size_t worker_id) {
 }
 
 void BatchSystem::apply_worker_loop(size_t worker_id) {
+  // ApplyMsg / SnapTask → Store::on_apply_batch → KV WriteBatch / SnapWorker。
   auto& sched = apply_sched_[worker_id];
   while (running_.load(std::memory_order_acquire)) {
     auto rid_opt = sched.pop(opts_.poll_timeout_ms, running_);

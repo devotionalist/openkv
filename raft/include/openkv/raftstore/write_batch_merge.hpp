@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // @file write_batch_merge.hpp
-// Phase 3：跨 Region Apply 条目合并缓冲（外层一次 RocksDB WriteBatch）。
+// 职责：把多 Region 的 Apply 切片展平，便于外层一次 RocksDB WriteBatch。
+// 架构：仅头文件辅助；真正合并写在 Storage KvEngine / Apply 回调中完成。
 
 #pragma once
 

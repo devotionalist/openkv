@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file multi_raft.hpp
-// 本机托管的全部分片 Raft Group；内部委托 raftstore::Store（BatchSystem 双 FSM）。
+// 职责：本机多 Raft Group 门面（按 shard/region id）；内部完整委托 raftstore::Store。
+// 架构：薄封装——生命周期、tick、Ready 攒批、Hibernate 均在 Store / BatchSystem。
+// 协作：StorageNode 持有 MultiRaft；GroupFactory 构造各 shard 的 RaftNode。
+// 注意：新增调度参数请改 Store::Options，并在 multi_raft.cpp 映射。
 
 #pragma once
 

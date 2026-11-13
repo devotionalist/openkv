@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // @file snap_worker.hpp
-// 独立快照通道：与心跳/AE 路径隔离；同 Region 合并、失败重试、Stats。
+// 职责：出站快照**独立通道**——与 AE/心跳隔离；同 Region 合并、失败重试、Stats。
+// 架构：单独线程消费 SnapTask；Provider 拉快照，Sender 发出 InstallSnapshot。
+// 协作：Store / Apply 路径投递 SnapTask；勿在 raft worker 里同步生成大快照。
 
 #pragma once
 

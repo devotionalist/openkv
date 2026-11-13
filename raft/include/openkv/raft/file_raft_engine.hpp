@@ -13,8 +13,10 @@
 // limitations under the License.
 
 // @file file_raft_engine.hpp
-// 便携 RaftEngine：共享根目录 + per-group 子目录；LogBatch 内 state+log 同批 tmp/rename。
-// Meta / UT / 无 RocksDB 场景使用；Storage 生产路径优先 RocksRaftEngine。
+// 职责：便携文件版 RaftEngine——共享 root，按 group 子目录存放 state + log。
+// 架构：Meta / 单测 / 无 RocksDB 场景；生产 Storage 使用 storage::RocksRaftEngine。
+// 协作：实现 RaftEngine；容器格式见 raft_log_file；布局见 raft/ARCHITECTURE.md §5。
+// 注意：consume 在单锁内提交；IO 失败返回 0 且打日志，调用方不得推进持久化游标。
 
 #pragma once
 
@@ -22,13 +24,16 @@
 
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace openkv::raft {
 
-class FileRaftEngine : public RaftEngine {
+class FileRaftEngine final : public RaftEngine {
  public:
+  /// root_dir 为空则所有写操作 no-op（disabled）。
   explicit FileRaftEngine(std::string root_dir, SyncMode sync = SyncMode::kData);
 
   const std::string& root_dir() const { return root_; }
@@ -48,28 +53,52 @@ class FileRaftEngine : public RaftEngine {
   SyncMode sync_mode() const override { return sync_; }
   void set_sync_mode(SyncMode m) override { sync_ = m; }
 
-  /// 若存在旧版 RaftPersist（hard.state / log.entries）则导入为 group 0。
+  /// 导入旧版 RaftPersist 目录（hard.state / log.entries）到指定 group。
   bool migrate_legacy_persist_dir(const std::string& legacy_dir, uint64_t raft_group_id = 0);
 
  private:
   friend class FileLogBatch;
 
+  /// 单 group 在一次 LogBatch 内的累积变更。
   struct GroupMut {
     std::optional<RaftLocalState> state;
     std::vector<LogEntry> appends;
     std::vector<std::pair<uint64_t, uint64_t>> cuts;  // [from, to)
   };
 
-  std::filesystem::path group_dir(uint64_t id) const;
-  void sync_path(const std::string& path) const;
-  void sync_dir() const;
-  bool read_state(uint64_t id, RaftLocalState* out) const;
-  bool write_state(uint64_t id, const RaftLocalState& st, bool sync) const;
-  bool read_all_entries(uint64_t id, std::vector<LogEntry>* out) const;
-  bool write_all_entries(uint64_t id, const std::vector<LogEntry>& ents, bool sync) const;
-  /// RLG2 纯追加；非 RLG2 返回 false（调用方应 rewrite）。
-  bool append_entries_file(uint64_t id, const std::vector<LogEntry>& ents, bool sync) const;
-  size_t apply_group_mut(uint64_t id, GroupMut& mut, bool sync);
+  /// per-group 路径布局（相对 root_）。
+  struct GroupPaths {
+    std::filesystem::path dir;
+    std::filesystem::path state;
+    std::filesystem::path state_tmp;
+    std::filesystem::path log;
+    std::filesystem::path log_tmp;
+
+    static GroupPaths for_group(const std::filesystem::path& root, uint64_t group_id);
+    bool ensure_dir() const;
+  };
+
+  GroupPaths paths_for(uint64_t group_id) const;
+
+  void sync_file(const std::filesystem::path& path) const;
+  void sync_root_dir() const;
+
+  bool read_state_unlocked(const GroupPaths& p, RaftLocalState* out) const;
+  bool write_state_unlocked(const GroupPaths& p, const RaftLocalState& st, bool sync) const;
+
+  bool read_log_unlocked(const GroupPaths& p, std::vector<LogEntry>* out) const;
+  bool rewrite_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents,
+                            bool sync) const;
+  /// 纯追加 RLE 记录；文件非 RLG2 或 IO 失败返回 false。
+  bool append_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents,
+                           bool sync) const;
+
+  /// 应用单 group 突变。REQUIRES: mu_ held。失败返回 0。
+  size_t apply_group_mut_unlocked(uint64_t group_id, GroupMut& mut, bool sync);
+
+  static RaftLocalState merge_state(const GroupMut& mut, const std::vector<LogEntry>& ents,
+                                    const RaftLocalState* existing);
+  static size_t approx_entry_bytes(const LogEntry& e);
 
   std::string root_;
   SyncMode sync_{SyncMode::kData};

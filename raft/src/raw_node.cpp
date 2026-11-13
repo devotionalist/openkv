@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file raw_node.cpp
-// RawNode：RaftNode(external_io) 薄封装，对齐 raft-rs Ready/Step/Advance。
+// 实现：RaftNode(external_io) 薄封装，暴露 HasReady/Ready/Step/Advance。
 
 #include "openkv/raft/raw_node.hpp"
 

@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // @file peer.hpp
-// Peer：RawNode + Region meta + Hibernate / 冷卸载状态。
+// 职责：单 Region 运行时——协议(RawNode 或兼容 RaftNode) + PeerMeta + Hibernate/冷卸载。
+// 架构：Store 的 peers_ 表元素；活动触达 touch_activity，空闲可 hibernate / unload。
+// 协作：BatchSystem 在对应 worker 上串行处理该 Peer 的邮箱消息。
 
 #pragma once
 

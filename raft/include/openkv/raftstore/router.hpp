@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // @file router.hpp
-// 按 region_id 投递 PeerMsg / ApplyMsg。
+// 职责：按 region_id 注册/注销邮箱，并 send_raft / send_apply。
+// 架构：投递成功可选调用 NotifyFn，驱动 BatchSystem schedule。
+// 协作：Store 创建时挂接 notify；destroy Region 时 deregister。
 
 #pragma once
 

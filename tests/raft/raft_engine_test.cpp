@@ -116,6 +116,44 @@ TEST(RaftEngineTest, FilePureAppend) {
   fs::remove_all(dir);
 }
 
+TEST(RaftEngineTest, FileConflictRewrite) {
+  // 同 index 覆盖：不能走纯追加，必须 rewrite 后仍可读。
+  auto dir = fs::temp_directory_path() / ("skv_raft_cf_" + std::to_string(::getpid()));
+  fs::remove_all(dir);
+  FileRaftEngine eng(dir.string(), SyncMode::kNone);
+  {
+    auto batch = eng.make_log_batch();
+    batch->append(1, {{1, 1, "a"}, {1, 2, "b"}});
+    RaftLocalState st;
+    st.term = 1;
+    st.first_index = 1;
+    st.last_index = 2;
+    batch->put_raft_state(1, st);
+    ASSERT_GT(eng.consume(*batch, false), 0u);
+  }
+  {
+    auto batch = eng.make_log_batch();
+    batch->append(1, {{2, 2, "B2"}, {2, 3, "c"}});  // index=2 冲突
+    RaftLocalState st;
+    st.term = 2;
+    st.first_index = 1;
+    st.last_index = 3;
+    batch->put_raft_state(1, st);
+    ASSERT_GT(eng.consume(*batch, false), 0u);
+  }
+  std::vector<LogEntry> loaded;
+  ASSERT_EQ(eng.fetch_entries_to(1, 1, 4, SIZE_MAX, &loaded), 3u);
+  EXPECT_EQ(loaded[0].data, "a");
+  EXPECT_EQ(loaded[1].term, 2u);
+  EXPECT_EQ(loaded[1].data, "B2");
+  EXPECT_EQ(loaded[2].data, "c");
+  auto st = eng.get_raft_state(1);
+  ASSERT_TRUE(st);
+  EXPECT_EQ(st->term, 2u);
+  EXPECT_EQ(st->last_index, 3u);
+  fs::remove_all(dir);
+}
+
 TEST(RaftEngineTest, CutAndGc) {
   auto dir = fs::temp_directory_path() / ("skv_raft_gc_" + std::to_string(::getpid()));
   fs::remove_all(dir);

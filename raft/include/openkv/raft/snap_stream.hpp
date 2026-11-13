@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file snap_stream.hpp
-// InstallSnapshot 分片接收缓冲：按 (from, shard, last_idx) 顺序聚合。
+// 职责：InstallSnapshot **入站**分片缓冲——按 (from, shard, last_idx) 顺序聚合 blob。
+// 架构：头文件实现；与 SnapWorker（出站）对称，本类只管收齐分片。
+// 协作：Storage 入站 InstallSnapshot 分块路径使用；齐了再调 RaftNode::on_install_snapshot。
+// 注意：要求按 offset 顺序追加；乱序应拒绝或重置该 Key。
 
 #pragma once
 

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // @file peer.cpp
+// 实现：Peer 构造、活动时间戳、hibernate 标志。
 
 #include "openkv/raftstore/peer.hpp"
 

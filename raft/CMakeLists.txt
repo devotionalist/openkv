@@ -1,3 +1,6 @@
+# openkv_raft：协议核 (openkv::raft) + 运行时 (openkv::raftstore)。
+# 文件职责见 raft/README.md 与各源文件 @file 注释。
+
 # Copyright 2026 devotionalist
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

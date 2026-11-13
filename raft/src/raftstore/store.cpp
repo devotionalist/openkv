@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // @file store.cpp
-// Store：双 FSM 调度 + Hibernate + SnapWorker + 冷卸载钩子。
+// 实现：Tick / 入站 step / Ready 合并 / ready_coalesce / Hibernate / 冷卸载。
+// on_raft_batch 批末统一 process_ready；request_ready 做 group-commit 攒批。
 
 #include "openkv/raftstore/store.hpp"
 
@@ -118,7 +119,9 @@ void Store::stop() {
 }
 
 void Store::request_ready(uint32_t region_id) {
-  // 关闭攒批：立即 drive。
+  // Propose 热路径调用：把多次 propose 合成一次 Ready/persist（group commit）。
+  // 触发条件：pending>=ready_coalesce_n，或 coalesce_loop 等到 ready_coalesce_ms。
+  // 关闭攒批（n≤1 且 ms=0）：立即 drive_ready → 邮箱 kWake → on_raft_batch 批末落盘。
   if (opts_.ready_coalesce_n <= 1 && opts_.ready_coalesce_ms == 0) {
     drive_ready(region_id);
     return;
@@ -145,7 +148,7 @@ void Store::request_ready(uint32_t region_id) {
         st.deadline = dl;
       }
     }
-    // 仅计数模式且未满：继续攒。
+    // 仅计数模式且未满：继续攒，等满 N 或定时器。
   }
   if (should_flush) drive_ready(region_id);
 }
@@ -374,6 +377,8 @@ void Store::maybe_hibernate_or_unload(Peer& peer) {
 }
 
 void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
+  // BatchSystem raft worker 回调：同 Region 串行 drain 邮箱。
+  // 先 step/tick（不落盘），批末一次 process_ready → persist_fn + 发网 + 投递 ApplyMsg。
   std::shared_ptr<Peer> peer;
   {
     std::lock_guard<std::mutex> lk(mu_);

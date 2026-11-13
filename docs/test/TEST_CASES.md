@@ -110,7 +110,7 @@
 | RaftNodeTest | SingleNodeElectionAndPropose, ProposeRejectedWhenFollower, ConfChangeAddLearner, PreVoteDoesNotBumpTerm, CheckQuorumStepsDownIsolatedLeader, VoteAndAppendBetweenPeers | `raft_node_test.cpp` |
 | RaftJointTest / RaftAsyncApplyTest | PromoteUsesEnterThenLeaveJoint, RejectConfWhileJointPending, ProposeAppliesViaWorker | `raft_joint_test.cpp` |
 | RaftPersistTest | SaveAndRecoverApplied, InstallSnapshotCompactsAndApplies | `raft_persist_test.cpp` |
-| RaftEngineTest | FileLogBatchRoundTrip, EntryCrcRoundTrip, FilePureAppend, CutAndGc | `raft_engine_test.cpp` |
+| RaftEngineTest | FileLogBatchRoundTrip, EntryCrcRoundTrip, FilePureAppend, FileConflictRewrite, CutAndGc | `raft_engine_test.cpp` |
 | SnapStreamTest | HexRoundTrip, AssembleChunks, EmptySnapshot, RejectOutOfOrder | `snap_stream_test.cpp` |
 | RaftReadIndexTest / RaftFrameTest | LeaseReadOnSingleNode, SoftStateMetrics, EncodeDecodeRoundTrip | `raft_read_index_test.cpp` |
 | RawNodeTest | SingleNodeElectAndPropose, BootstrapThenPropose, ThreeNodeVoteAndProposeReady | `raw_node_test.cpp` |
@@ -216,5 +216,5 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 1. **新增 gtest**：放进 `tests/<module>/`，并加入 `tests/CMakeLists.txt` 的 `OPENKV_TEST_SOURCES`；本页 §3 用例数同步 +1。  
 2. **新增集成脚本**：在 §4.2 登记，并尽量挂到 `Makefile` / `release-gate`。  
 3. **发版前**：至少 `make release-gate`；Region scatter/Merge 数据完整性按 [INTEGRATION_TEST.md](INTEGRATION_TEST.md) I30–I33 人工或脚本卡死。  
-4. 覆盖扩展设计见 [flows/IT_COVERAGE_EXPANSION.md](../flows/IT_COVERAGE_EXPANSION.md)；周跑磁盘/分区用 `make integ-extra`。  
+4. 覆盖扩展设计见 [flows/IT_COVERAGE_EXPANSION.md](../flows/IT_COVERAGE_EXPANSION.md)；周跑磁盘/分区用 `make integ-extra`。
 5. **不要**把每次手工/压测跑分追加进本页；验收结果写在对话或对应 `docs/flows/*` 验收节即可。

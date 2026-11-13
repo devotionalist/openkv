@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file grpc_transport.hpp
-// Raft 出站：RaftService gRPC（peer 表 / 队列 / 计数一体）。
+// 职责：Raft **出站** gRPC（RaftService）——peer 地址表、发送队列、失败计数一体。
+// 架构：register_node 绑定 shard→RaftNode；bind() 得到 TransportSend 闭包交给节点。
+// 协作：入站 RPC 由 Storage/Meta 的 RaftService → Store::apply_inbound_raft，不经本类。
+// 注意：出站 Unary / InstallSnapshot 使用 Callback API，避免阻塞 worker。
 
 #pragma once
 

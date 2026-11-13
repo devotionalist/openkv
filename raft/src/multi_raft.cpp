@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file multi_raft.cpp
-// MultiRaft：薄封装，生命周期与 tick 交给 raftstore::Store。
+// 实现：把 MultiRaft::Options 映射为 Store::Options 并转发 API。
 
 #include "openkv/raft/multi_raft.hpp"
 

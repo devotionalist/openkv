@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file ready.hpp
-// raft-rs 同构的 Ready / Message / HardState（协议输出，不含 IO）。
+// 职责：协议一轮输出（HardState / Message / Ready / SnapshotMeta），不含任何 IO。
+// 架构：RawNode / RaftNode(external_io) 产出 Ready；raftstore::Store 负责 persist + 发网 + apply。
+// 协作：persist → RaftEngine；messages → GrpcRaftTransport / TransportFn；committed → Apply。
+// 注意：must_sync 提示本批 Ready 需要 durable 后再 advance。
 
 #pragma once
 

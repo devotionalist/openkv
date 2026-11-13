@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // @file router.cpp
+// 实现：邮箱注册表与 send_* + notify。
 
 #include "openkv/raftstore/router.hpp"
 

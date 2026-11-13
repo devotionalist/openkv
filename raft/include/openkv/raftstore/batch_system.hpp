@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file batch_system.hpp
-// Raft / Apply 双 worker 池；schedule 唤醒 + mailbox drain。
+// 职责：Raft / Apply **双 worker 池**；有活 Region 经 ScheduleQueue 唤醒，mailbox drain-until-empty。
+// 架构：region_id % N 映射到固定 worker，保证同 Region 串行；跨 Region 并行。
+// 协作：Router 投递成功后 notify → schedule；Store 注册 RaftHandler / ApplyHandler。
+// 注意：单 Region 热点时多 worker 帮不上——吞吐受该 Region 的 persist/apply 流水线限制。
 
 #pragma once
 
@@ -27,6 +30,7 @@
 
 namespace openkv::raftstore {
 
+/// 双池调度器：Raft 池跑协议/Ready，Apply 池跑状态机；同 Region 固定 worker 串行。
 class BatchSystem {
  public:
   struct Options {

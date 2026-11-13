@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // @file raft_node.cpp
-// RaftNode：复制/选举 + 持久化 + InstallSnapshot + Joint + 异步 Apply + inflight。
+// 实现：复制/选举/Joint/快照/异步 Apply；persist_locked、build_engine_batch、persist_ready。
+// Ready 路径 fsync 在 persist_io_mu_ 下、不持协议 mu_，便于 group commit。
 
 #include "openkv/raft/raft_node.hpp"
 #include "openkv/codec.hpp"
@@ -324,6 +325,7 @@ void RaftNode::commit_stable_locked(uint64_t first, uint64_t last) {
 }
 
 void RaftNode::engine_flush_locked(bool sync) {
+  // 非 external_io：在持 mu_ 时直接刷盘（单测/嵌入）。生产路径走 persist_ready。
   if (!engine_) return;
   uint64_t first = 0;
   uint64_t last = 0;
@@ -693,7 +695,8 @@ void RaftNode::advance(const Ready& rd) {
 }
 
 void RaftNode::persist_ready(const Ready& rd) {
-  // fsync 不占 mu_：propose 可与 sync 重叠，便于 Ready 攒批。
+  // Store persist_fn 入口：把 Ready 对应的 unstable 日志/HardState 写入 RaftEngine。
+  // 持 mu_ 只组 batch；consume/fsync 在 persist_io_mu_ 下、不占协议锁，便于与 propose 重叠。
   std::unique_ptr<RaftLogBatch> batch;
   bool sync = false;
   uint64_t first = 0;
@@ -710,13 +713,14 @@ void RaftNode::persist_ready(const Ready& rd) {
   if (!batch || batch->empty()) return;
   {
     std::lock_guard<std::mutex> io(persist_io_mu_);
-    engine_->consume(*batch, sync);
+    engine_->consume(*batch, sync);  // RocksRaftEngine / FileRaftEngine
   }
   std::lock_guard<std::mutex> lock(mu_);
-  commit_stable_locked(first, last);
+  commit_stable_locked(first, last);  // 推进 stable_*，下次只增量 append
 }
 
 void RaftNode::report_applied(uint64_t index) {
+  // Apply worker 完成 KV 写入后回告；推进 last_applied 并可能触发 log compact。
   std::lock_guard<std::mutex> lock(mu_);
   if (!opts_.external_io) return;
   if (index > last_applied_) last_applied_ = index;
@@ -782,6 +786,9 @@ bool RaftNode::decode_conf(std::string_view data, ConfChange* cc) {
 }
 
 bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
+  // Leader：只把条目追加进内存 RaftLog（并标记 unstable）。
+  // external_io（生产 Store 路径）：真正 fsync 在 Store 调 persist_ready → Engine::consume。
+  // 非 external_io：本函数内 persist_locked 直接刷 Engine（单测 / 嵌入模式）。
   uint64_t idx = 0;
   {
     std::lock_guard<std::mutex> lock(mu_);
@@ -810,7 +817,7 @@ bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
     persist_locked();
   }
   flush_transport();
-  // 单节点 / 已提交：等待异步 apply 追上，保持 propose 语义对调用方可见
+  // 嵌入模式：等待异步 apply 追上。external_io 下可见性由 Store Apply 路径负责。
   if (opts_.enable_async_apply && !opts_.external_io) {
     for (int i = 0; i < 200; ++i) {
       if (soft_state().last_applied >= idx) break;

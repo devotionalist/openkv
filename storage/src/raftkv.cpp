@@ -51,6 +51,9 @@ void RaftKV::flush_ready(uint32_t region_id) {
 
 bool RaftKV::async_write(uint32_t region_id, std::string data, uint64_t* assigned_index,
                          std::string* error) {
+  // 写路径入口（见 docs/flows/35-raft-module-call-flows.md）：
+  //   propose 只改内存 RaftLog → request_ready 攒批 → Store 批末 persist_ready → Engine::consume
+  //   → Apply worker 写 KV；客户端可见性由 apply 回调 / ProposalQueue 唤醒。
   auto* n = node(region_id);
   if (!n) {
     if (error) *error = "no_region";
@@ -64,7 +67,7 @@ bool RaftKV::async_write(uint32_t region_id, std::string data, uint64_t* assigne
     if (error) *error = "propose_failed";
     return false;
   }
-  // group commit：按 Store ready_coalesce_* 攒批后再 drive_ready。
+  // group commit：按 Store ready_coalesce_* 攒批后再 drive_ready（勿在此同步 fsync）。
   store_->request_ready(region_id);
   return true;
 }

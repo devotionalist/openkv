@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // @file store_meta.cpp
+// 实现：RegionLocalState 表的互斥读写。
 
 #include "openkv/raftstore/store_meta.hpp"
 

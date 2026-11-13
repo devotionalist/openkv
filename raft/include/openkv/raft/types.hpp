@@ -13,9 +13,10 @@
 // limitations under the License.
 
 // @file types.hpp
-// Raft 子系统公共类型：角色、日志条目、软状态、传输与成员变更回调。
-//
-// 架构位置：raft_log / raft_node / multi_raft 及 storage 层 ConfChange 编解码共用。
+// 职责：Raft 子系统公共类型（Role / Peer / LogEntry / SoftState / ConfChange 与回调别名）。
+// 架构：被 raft_log、raft_node、ready、raftstore::msg、Storage ConfChange 编解码共用。
+// 协作：无独立 .cpp；纯类型头。
+// 注意：LogEntry::data 语义由上层状态机解释（KV Command / ConfChange 等）。
 
 #pragma once
 
@@ -38,25 +39,25 @@ struct Peer {
 
 /// 已持久化/复制的一条 Raft 日志记录；data 由上层状态机解释（如 KV Command）。
 struct LogEntry {
-  uint64_t term{0};
-  uint64_t index{0};
-  std::string data;
+  uint64_t term{0}; // 日志条目的任期号
+  uint64_t index{0}; // 日志条目的索引
+  std::string data; // 日志条目的数据
 };
 
 /// 可观测的 Raft 软状态快照（不含持久化 hard state 细节）；读时需持锁或接受短暂不一致。
 struct SoftState {
-  Role role{Role::kFollower};
-  std::string leader_id;
-  uint64_t term{0};
-  uint64_t commit_index{0};
-  uint64_t last_applied{0};
+  Role role{Role::kFollower}; // 节点当前角色
+  std::string leader_id; // 当前领导者 ID
+  uint64_t term{0}; // 当前任期号
+  uint64_t commit_index{0}; // 已提交的日志索引
+  uint64_t last_applied{0}; // 最后应用的日志索引
   /// O1：选主次数 / 发送快照次数 / 复制延迟（leader last_index - min peer match）。
-  uint64_t election_count{0};
-  uint64_t snapshot_send_count{0};
-  uint64_t replication_lag{0};
-  bool in_joint{false};
+  uint64_t election_count{0}; // 选主次数
+  uint64_t snapshot_send_count{0}; // 发送快照次数
+  uint64_t replication_lag{0}; // 复制延迟（leader last_index - min peer match）
+  bool in_joint{false}; // 是否处于联合角色
   /// in_joint 或 LeaveJoint 尚未 apply（auto_leave_pending）。
-  bool conf_change_busy{false};
+  bool conf_change_busy{false}; // 是否处于配置变更繁忙状态
 };
 
 // 状态机回调：多数派提交后由 Raft Apply

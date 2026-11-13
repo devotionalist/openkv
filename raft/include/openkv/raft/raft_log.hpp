@@ -13,9 +13,10 @@
 // limitations under the License.
 
 // @file raft_log.hpp
-// 内存 Raft 日志：追加、冲突截断、快照压缩边界。
-//
-// 架构位置：每个 RaftNode 持有一份 RaftLog；不单独持久化（demo 简化，生产需 WAL）。
+// 职责：单 Group **内存** Raft 日志（append / match / truncate / compact / load）。
+// 架构：每个 RaftNode 持有一份；**本类不落盘**。
+// 协作：落盘由 RaftNode::build_engine_batch_locked → RaftEngine::consume 完成。
+// 注意：空日志时 last_index()==first_index-1（与论文一致）；compact 推进 first_index_。
 
 #pragma once
 

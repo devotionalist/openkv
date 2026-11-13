@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // @file raft_log.cpp
-// RaftLog 实现：索引换算、Follower 合并逻辑、快照边界处理。
+// 实现：索引换算、Follower append_entries 冲突截断、compact/load。
+// 详见 raft_log.hpp——本文件无 IO。
 
 #include "openkv/raft/raft_log.hpp"
 

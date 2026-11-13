@@ -13,7 +13,10 @@
 // limitations under the License.
 
 // @file raw_node.hpp
-// raft-rs 同构 RawNode：纯协议状态机，IO（盘/网/apply）由外层处理 Ready。
+// 职责：纯协议节点门面（HasReady / Ready / Step / Advance）；内部委托 RaftNode(external_io=true)。
+// 架构：协议与 IO 分离——不落盘、不发 RPC、不调业务 apply。
+// 协作：由 raftstore::Peer / Store 驱动；Ready 经 Store persist_fn / transport_fn / apply_*。
+// 注意：实现见 raw_node.cpp；生产 Storage 路径以 Store+RaftNode 适配为主。
 
 #pragma once
 

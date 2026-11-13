@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // @file mailbox.hpp
-// 每 Region 一个邮箱；BatchSystem worker 批量 poll。
+// 职责：每 Region 有界邮箱模板；try_send / recv_batch；满则丢弃并计数。
+// 架构：仅头文件；PeerMailbox=Mailbox<PeerMsg>，ApplyMailbox=Mailbox<ApplyControl>。
+// 协作：Router 持有 shared_ptr<Mailbox>；BatchSystem worker poll 批量取消息。
 
 #pragma once
 

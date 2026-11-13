@@ -85,6 +85,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 | 流程 | 文件 | 要点 |
 |------|------|------|
 | Raft 选举 / 心跳 / 提交 | [06-raft-election-commit.md](06-raft-election-commit.md) | `maybe_commit`、选票、AE/SNAP |
+| **Raft 模块调用流程** | [35-raft-module-call-flows.md](35-raft-module-call-flows.md) · [raft/ARCHITECTURE.md](../../raft/ARCHITECTURE.md) | Propose→Ready→Engine；分层契约；源码地图 |
 | Storage 启动 | [07-storage-startup.md](07-storage-startup.md) | MultiRaft 工厂、WAL、tick、gRPC listen |
 | 故障恢复 | [04-fault-recovery.md](04-fault-recovery.md) | load WAL → AE 追赶 / InstallSnapshot |
 | 进程优雅关机 | [31-graceful-shutdown.md](31-graceful-shutdown.md) | SIGTERM：拒新 RPC + 排空在途 |
