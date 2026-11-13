@@ -55,9 +55,10 @@ flowchart TB
 ### Meta
 
 - 入站：`MetaService` → **CallbackService**（已实现）
-- `GetTs`：`alloc_ts_async(count)` → apply invoke → `Finish`（不占接收线程、不经 WorkPool）
-- 廉价读（`reply` 内联 Finish）：Ping / WhoLeader / GetRoutingTable / Locate / GetSafePoint / Stats / ListNodes / SuggestPlace / StoreStatus / FindMergeRight / ListScale / ListMigrate 等（禁止 `replicate` / CV 长等 / 出站 RPC）
-- 写与长等（`defer` → WorkPool）：REGISTER / HEARTBEAT / ReportMinStartTs / 运维写 / WATCH_ROUTE / GetScale（可能 `storage_rpc`）等
+- `GetTs`：`alloc_ts_async` → Finish@apply；`REGISTER` / `ReportMinStartTs`：`replicate_cb` → Finish@apply（均不经 WorkPool）
+- `HEARTBEAT`：`replicate_async` + 接收线程 `reply`（不等 apply）
+- 廉价读（`reply` 内联）：Ping / WhoLeader / GetRoutingTable / Locate / GetSafePoint / Stats / ListNodes / …（禁止 `replicate` 等 apply / CV 长等 / 出站 RPC）
+- 仍走 WorkPool（`defer`）：运维写（SPLIT/PLACE/…）/ WATCH_ROUTE / GetScale（可能 `storage_rpc`）
 - Raft 入站保持短路径同步 Finish；出站 Transport worker
 - `SKV_META_GRPC_WORKERS`（默认 16）
 

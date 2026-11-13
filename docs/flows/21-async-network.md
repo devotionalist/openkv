@@ -13,7 +13,7 @@
 |----|------|
 | ProposalQueue | `wait_async(index, timeout, cb)`：apply `invoke` 或超时回调，不占调用方线程 |
 | Storage | `propose_async` / `one_pc_async`；`Store`/`Admin`/`Raft` → `CallbackService`；Finish@apply / reactor；**无 WorkPool** |
-| Meta | `alloc_ts_async`；廉价读 `reply` 内联；写/WATCH/`GetScale` → `WorkPool`（`SKV_META_GRPC_WORKERS`） |
+| Meta | `alloc_ts_async` / `replicate_cb`（REGISTER/ReportMin）；HB `reply`；运维写/WATCH/`GetScale` → `WorkPool` |
 | Gateway | `KV`/`DS` → `CallbackService` + `SKV_GATEWAY_WORKERS`；Put：`alloc_async` → `Propose(ONEPC)`；Get：`alloc_async` → `StoreService.Get(start_ts)`；BatchPut/Get CQ fan-in（见 [28](28-compute-net-opt.md)） |
 | Raft | 出站 worker 队列；入站 AE/Vote 短路径同步 Finish |
 

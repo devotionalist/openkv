@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <thread>
 #include <unistd.h>
 
@@ -161,4 +162,44 @@ TEST(MetaHaTest, FsmSnapSurvivesRestart) {
     srv2.stop();
   }
   fs::remove_all(dir);
+}
+
+TEST(MetaHaTest, RegisterNodeAsyncFinishOnApply) {
+  ClusterBootstrap boot;
+  boot.node_id = "meta-async";
+  boot.listen_addr = "127.0.0.1:18552";
+  boot.shard_count = 1;
+  boot.replica_factor = 1;
+  boot.storage_peers = {{"s0", "127.0.0.1:9100"}};
+  MetaNode srv(boot);
+  ASSERT_NO_THROW(srv.start());
+  for (int i = 0; i < 40; ++i) {
+    if (srv.is_leader()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  ASSERT_TRUE(srv.is_leader());
+
+  NodeInfo n;
+  n.node_id = "s-async";
+  n.address = "127.0.0.1:9122";
+  n.role = NodeRole::kStorage;
+
+  std::promise<std::string> done;
+  auto fut = done.get_future();
+  srv.register_node_async(n, [&done](std::string line) { done.set_value(std::move(line)); });
+  ASSERT_EQ(fut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  const auto line = fut.get();
+  EXPECT_EQ(line.rfind("OK REGISTER", 0), 0u) << line;
+  auto got = srv.state().get_node("s-async");
+  ASSERT_TRUE(got.has_value());
+  EXPECT_EQ(got->address, "127.0.0.1:9122");
+
+  // 幂等续租：立即回调，不经 Raft。
+  std::promise<std::string> done2;
+  auto fut2 = done2.get_future();
+  srv.register_node_async(n, [&done2](std::string line) { done2.set_value(std::move(line)); });
+  ASSERT_EQ(fut2.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+  EXPECT_EQ(fut2.get().rfind("OK REGISTER", 0), 0u);
+
+  srv.stop();
 }

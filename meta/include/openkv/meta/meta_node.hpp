@@ -83,11 +83,20 @@ class MetaNode {
   /// 避免 accept 线程在 Raft 提交上阻塞导致连接风暴拖垮 Leader。
   bool replicate_async(const MetaCommand& cmd, std::string* error, std::string* redirect_to);
 
+  /// 写路径（回调）：propose 后不占调用线程；apply / 超时回调 `make_ok()` 或 ERR。
+  void replicate_cb(const MetaCommand& cmd, std::function<std::string()> make_ok,
+                    std::function<void(std::string)> cb);
+
   /// 便捷：注册节点（内部 MetaOp::kRegister）。
   std::string register_node(NodeInfo node, std::string* error, std::string* redirect);
+  /// 异步注册（gRPC）：本地续租立即回调；需 Raft 时走 replicate_cb。
+  void register_node_async(NodeInfo node, std::function<void(std::string)> cb);
   /// 便捷：心跳（内部 MetaOp::kHeartbeat）。
   bool heartbeat(const std::string& node_id, const std::vector<uint32_t>& leaders,
                  std::string* error, std::string* redirect);
+  /// 异步 ReportMinStartTs（gRPC）。
+  void report_min_start_ts_async(uint64_t min_start_ts, std::string reporter,
+                                 std::function<void(std::string)> cb);
   /// 读路由表（Follower 可读，不强制 Leader）。
   RoutingTable routing_table(std::string* error, std::string* redirect) const;
 
@@ -162,6 +171,12 @@ class MetaNode {
   std::unordered_map<uint64_t, uint64_t> ts_alloc_by_index_;
   /// 异步 GET_TS waiters：raft index → 回调列表
   std::unordered_map<uint64_t, std::vector<std::function<void(std::string)>>> ts_async_waiters_;
+  /// 通用写 apply waiters（REGISTER / ReportMinStart / …）
+  struct ApplyWaiter {
+    std::function<void(std::string)> cb;
+    std::function<std::string()> make_ok;
+  };
+  std::unordered_map<uint64_t, std::vector<ApplyWaiter>> apply_waiters_;
   mutable std::mutex route_mu_;             ///< WATCH_ROUTE
   std::condition_variable route_cv_;
   uint64_t route_version_notify_{0};        ///< 最近一次路由版本（on_apply 更新）

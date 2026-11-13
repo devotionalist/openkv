@@ -123,6 +123,7 @@ void MetaNode::on_apply(uint64_t index, const std::string& data) {
 
   std::vector<std::function<void(std::string)>> ts_cbs;
   std::string ts_line;
+  std::vector<ApplyWaiter> waiters;
   {
     std::lock_guard<std::mutex> lock(apply_mu_);
     if (cmd.op == MetaOp::kAllocTs) {
@@ -140,10 +141,19 @@ void MetaNode::on_apply(uint64_t index, const std::string& data) {
         ts_alloc_by_index_[index] = start;
       }
     }
+    auto aw = apply_waiters_.find(index);
+    if (aw != apply_waiters_.end()) {
+      waiters = std::move(aw->second);
+      apply_waiters_.erase(aw);
+    }
     last_applied_wait_ = index;
   }
   apply_cv_.notify_all();
   fire_line_cbs(ts_cbs, ts_line);
+  for (auto& w : waiters) {
+    if (!w.cb) continue;
+    w.cb(w.make_ok ? w.make_ok() : "OK");
+  }
 
   const uint64_t ver = state_->routing_table().version;
   {
@@ -245,6 +255,88 @@ bool MetaNode::replicate_async(const MetaCommand& cmd, std::string* error,
     return false;
   }
   return true;
+}
+
+void MetaNode::replicate_cb(const MetaCommand& cmd, std::function<std::string()> make_ok,
+                            std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (!raft_) {
+    cb("ERR raft_not_ready");
+    return;
+  }
+  if (!raft_->is_leader()) {
+    const auto a = leader_address();
+    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    return;
+  }
+  uint64_t idx = 0;
+  if (!raft_->propose(encode_meta_command(cmd), &idx)) {
+    cb("ERR propose_failed");
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> lock(apply_mu_);
+    if (last_applied_wait_ >= idx) {
+      lock.unlock();
+      cb(make_ok ? make_ok() : "OK");
+      return;
+    }
+    apply_waiters_[idx].push_back(ApplyWaiter{std::move(cb), std::move(make_ok)});
+  }
+  std::thread([this, idx] {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::vector<ApplyWaiter> waiters;
+    {
+      std::lock_guard<std::mutex> lock(apply_mu_);
+      auto it = apply_waiters_.find(idx);
+      if (it == apply_waiters_.end()) return;
+      waiters = std::move(it->second);
+      apply_waiters_.erase(it);
+    }
+    for (auto& w : waiters) {
+      if (w.cb) w.cb("ERR apply_timeout");
+    }
+  }).detach();
+}
+
+void MetaNode::register_node_async(NodeInfo n, std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (!is_leader()) {
+    const auto a = leader_address();
+    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    return;
+  }
+  MetaCommand cmd;
+  cmd.op = MetaOp::kRegister;
+  cmd.node = n;
+  const auto existing = state_->get_node(n.node_id);
+  const bool known_same =
+      existing && existing->address == n.address && existing->role == n.role;
+  if (known_same) {
+    if (existing->state == NodeState::kOffline || existing->state == NodeState::kJoining) {
+      const std::string id = n.node_id;
+      replicate_cb(cmd, [id] { return "OK REGISTER " + id; }, std::move(cb));
+      return;
+    }
+    state_->touch_lease(n.node_id);
+    cb("OK REGISTER " + n.node_id);
+    return;
+  }
+  const std::string id = n.node_id;
+  replicate_cb(cmd, [id] { return "OK REGISTER " + id; }, std::move(cb));
+}
+
+void MetaNode::report_min_start_ts_async(uint64_t min_start_ts, std::string reporter,
+                                         std::function<void(std::string)> cb) {
+  if (!cb) return;
+  MetaCommand cmd;
+  cmd.op = MetaOp::kReportMinStartTs;
+  cmd.ts_value = min_start_ts;
+  cmd.node.node_id = std::move(reporter);
+  replicate_cb(
+      cmd,
+      [this] { return "OK MIN_START " + std::to_string(state_->min_start_ts_hint()); },
+      std::move(cb));
 }
 
 std::string MetaNode::register_node(NodeInfo node, std::string* error, std::string* redirect) {

@@ -14,9 +14,10 @@
 
 // @file grpc_server.cpp
 // Meta gRPC：CallbackService。
-// - GetTs：alloc_ts_async（不经池）
-// - 廉价读：接收线程 reply() 内联 Finish（禁止 replicate / CV 长等）
-// - 写 / REGISTER / HEARTBEAT / WATCH_ROUTE：WorkPool defer（可能等 apply）
+// - GetTs / REGISTER / ReportMinStartTs：*_async → Finish@apply（不经池）
+// - HEARTBEAT：replicate_async，接收线程 reply（不等 apply）
+// - 廉价读：reply() 内联 Finish
+// - 运维写 / WATCH_ROUTE / GetScale：WorkPool defer
 
 #include "openkv/meta/grpc_server.hpp"
 
@@ -119,29 +120,32 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* RegisterNode(CallbackServerContext* ctx, const pb::RegisterNodeRequest* req,
                                    pb::RegisterNodeResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
-      const auto& n = req->node();
-      const char* role = n.role() == pb::COMPUTE ? "compute" : "storage";
-      std::ostringstream oss;
-      oss << "REGISTER " << role << " " << n.node_id() << " " << n.address();
-      auto line = meta_.handle_line(oss.str());
+    auto* reactor = ctx->DefaultReactor();
+    NodeInfo n;
+    n.role = req->node().role() == pb::COMPUTE ? NodeRole::kCompute : NodeRole::kStorage;
+    n.node_id = req->node().node_id();
+    n.address = req->node().address();
+    const std::string id = n.node_id;
+    meta_.register_node_async(std::move(n), [reactor, resp, id](std::string line) {
       resp->set_ok(line_ok(line));
-      resp->set_assigned_id(n.node_id());
+      resp->set_assigned_id(id);
       if (!resp->ok()) resp->set_error(line);
+      reactor->Finish(Status::OK);
     });
+    return reactor;
   }
 
   ServerUnaryReactor* Heartbeat(CallbackServerContext* ctx, const pb::HeartbeatRequest* req,
                                 pb::HeartbeatResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
-      std::ostringstream oss;
-      oss << "HEARTBEAT " << req->node_id() << " " << req->leader_shards_size();
-      for (uint32_t s : req->leader_shards()) oss << " " << s;
-      for (const auto& kv : req->metrics()) oss << " " << kv.first << "=" << kv.second;
-      auto line = meta_.handle_line(oss.str());
-      resp->set_ok(line_ok(line));
-      if (!resp->ok()) resp->set_error(line);
+    // heartbeat() → replicate_async：仅 propose，可在接收线程 reply。
+    return reply(ctx, false, [this, req, resp] {
+      std::vector<uint32_t> leaders(req->leader_shards().begin(), req->leader_shards().end());
       std::string err, redir;
+      const bool ok = meta_.heartbeat(req->node_id(), leaders, &err, &redir);
+      resp->set_ok(ok);
+      if (!ok) {
+        resp->set_error(err + (redir.empty() ? "" : (" redirect=" + redir)));
+      }
       auto rt = meta_.routing_table(&err, &redir);
       resp->set_routing_version(rt.version);
     });
@@ -490,13 +494,14 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
   ServerUnaryReactor* ReportMinStartTs(CallbackServerContext* ctx,
                                        const pb::ReportMinStartTsRequest* req,
                                        pb::SimpleResponse* resp) override {
-    return defer(ctx, false, [this, req, resp] {
-      std::ostringstream oss;
-      oss << "REPORT_MIN_START_TS " << req->min_start_ts() << " " << req->node_id();
-      auto line = meta_.handle_line(oss.str());
-      resp->set_ok(line_ok(line));
-      resp->set_message(line);
-    });
+    auto* reactor = ctx->DefaultReactor();
+    meta_.report_min_start_ts_async(req->min_start_ts(), req->node_id(),
+                                    [reactor, resp](std::string line) {
+                                      resp->set_ok(line_ok(line));
+                                      resp->set_message(line);
+                                      reactor->Finish(Status::OK);
+                                    });
+    return reactor;
   }
 
   ServerUnaryReactor* Locate(CallbackServerContext* ctx, const pb::LocateRequest* req,
