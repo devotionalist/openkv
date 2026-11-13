@@ -14,9 +14,10 @@
 
 // @file grpc_server.cpp
 // Meta gRPC：CallbackService。
-// - GetTs / REGISTER / ReportMin / 运维 Raft 写：*_async → Finish@apply（不经池）
+// - GetTs / REGISTER / ReportMin / 运维 Raft 写：*_async → Finish@apply
+// - WATCH / GetScale / Activate·Join：watch_route_async / get_scale_task_async /
+//   activate_or_join_async（不经 WorkPool）
 // - HEARTBEAT / 调度器内存任务 / 廉价读：reply 内联
-// - WorkPool defer：WATCH_ROUTE / GetScale / Activate·Join（出站 Ping）
 
 #include "openkv/meta/grpc_server.hpp"
 
@@ -28,9 +29,7 @@
 #include "openkv/peer_counter.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/raft/raft_node.hpp"
-#include "openkv/work_pool.hpp"
 
-#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -70,8 +69,7 @@ void fill_ts_response(pb::GetTsResponse* resp, std::string_view line) {
 
 class MetaServiceImpl final : public pb::MetaService::CallbackService {
  public:
-  MetaServiceImpl(MetaNode& m, std::string token, openkv::WorkPool& pool)
-      : meta_(m), token_(std::move(token)), pool_(pool) {}
+  MetaServiceImpl(MetaNode& m, std::string token) : meta_(m), token_(std::move(token)) {}
 
   Status auth_write(CallbackServerContext* ctx) {
     if (!grpc_admin_allowed(*ctx, token_)) {
@@ -80,7 +78,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return Status::OK;
   }
 
-  /// 廉价读：接收线程同步跑完再 Finish。fn 内禁止 replicate / route_cv_ 长等。
+  /// 廉价读：接收线程同步跑完再 Finish。fn 内禁止长等 / 出站阻塞 RPC。
   template <typename Fn>
   ServerUnaryReactor* reply(CallbackServerContext* ctx, bool need_auth, Fn&& fn) {
     auto* reactor = ctx->DefaultReactor();
@@ -92,23 +90,6 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     }
     fn();
     reactor->Finish(Status::OK);
-    return reactor;
-  }
-
-  /// 可能阻塞（replicate 等 apply / WATCH_ROUTE）：丢 WorkPool 再 Finish。
-  template <typename Fn>
-  ServerUnaryReactor* defer(CallbackServerContext* ctx, bool need_auth, Fn&& fn) {
-    auto* reactor = ctx->DefaultReactor();
-    if (need_auth) {
-      if (auto st = auth_write(ctx); !st.ok()) {
-        reactor->Finish(st);
-        return reactor;
-      }
-    }
-    pool_.post([reactor, fn = std::forward<Fn>(fn)]() mutable {
-      fn();
-      reactor->Finish(Status::OK);
-    });
     return reactor;
   }
 
@@ -150,10 +131,8 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     });
   }
 
-  void fill_routing_table(pb::RoutingTable* resp) {
-    auto line = meta_.handle_line("GET_ROUTE");
-    std::string err, redir;
-    auto rt = meta_.routing_table(&err, &redir);
+  void fill_routing_table(pb::RoutingTable* resp, const RoutingTable& rt) {
+    resp->Clear();
     resp->set_version(rt.version);
     resp->set_shard_count(static_cast<uint32_t>(rt.regions.size()));
     for (const auto& region : rt.regions) {
@@ -171,17 +150,18 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
         rp->set_is_learner(r.is_learner);
       }
     }
-    (void)line;
   }
 
   ServerUnaryReactor* GetRoutingTable(CallbackServerContext* ctx, const pb::GetRoutingTableRequest*,
                                       pb::RoutingTable* resp) override {
-    return reply(ctx, false, [this, resp] { fill_routing_table(resp); });
+    return reply(ctx, false, [this, resp] {
+      std::string err, redir;
+      fill_routing_table(resp, meta_.routing_table(&err, &redir));
+    });
   }
 
   ServerWriteReactor<pb::RoutingTable>* WatchRoutingTable(
       CallbackServerContext*, const pb::WatchRoutingRequest* req) override {
-    // WATCH_ROUTE 可能长等 route_cv_：丢到 WorkPool，勿堵 callback 接收线程。
     class Reactor final : public ServerWriteReactor<pb::RoutingTable> {
      public:
       pb::RoutingTable tbl;
@@ -189,16 +169,11 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       void OnDone() override { delete this; }
     };
     auto* reactor = new Reactor();
-    const uint64_t from_version = req->from_version();
-    const int timeout_ms = req->timeout_ms();
-    pool_.post([this, reactor, from_version, timeout_ms] {
-      std::ostringstream oss;
-      oss << "WATCH_ROUTE " << from_version;
-      if (timeout_ms > 0) oss << " " << timeout_ms;
-      meta_.handle_line(oss.str());
-      fill_routing_table(&reactor->tbl);
-      reactor->StartWrite(&reactor->tbl);
-    });
+    meta_.watch_route_async(req->from_version(), req->timeout_ms(),
+                            [this, reactor](RoutingTable rt) {
+                              fill_routing_table(&reactor->tbl, rt);
+                              reactor->StartWrite(&reactor->tbl);
+                            });
     return reactor;
   }
 
@@ -222,12 +197,14 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   ServerUnaryReactor* GetScaleTask(CallbackServerContext* ctx, const pb::GetScaleTaskRequest* req,
                                    pb::ScaleTask* resp) override {
-    // GET_SCALE 在 CatchingUp 时可能同步 storage_rpc，须走 WorkPool。
-    return defer(ctx, false, [this, req, resp] {
-      auto line = meta_.handle_line("GET_SCALE " + req->task_id());
-      resp->set_task_id(req->task_id());
+    auto* reactor = ctx->DefaultReactor();
+    const std::string tid = req->task_id();
+    meta_.get_scale_task_async(tid, [reactor, resp, tid](std::string line) {
+      resp->set_task_id(tid);
       resp->set_error(line_ok(line) ? "" : line);
+      reactor->Finish(Status::OK);
     });
+    return reactor;
   }
 
   ServerUnaryReactor* ListScaleTasks(CallbackServerContext* ctx, const pb::ListScaleTasksRequest*,
@@ -277,24 +254,35 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     });
   }
 
-  /// Activate/Join：出站 Ping + 心跳检查，仍走 WorkPool。
   ServerUnaryReactor* ActivateNode(CallbackServerContext* ctx, const pb::NodeIdRequest* req,
                                    pb::SimpleResponse* resp) override {
-    return defer(ctx, true, [this, req, resp] {
-      auto line = meta_.handle_line("ACTIVATE_NODE " + req->node_id());
+    auto* reactor = ctx->DefaultReactor();
+    if (auto st = auth_write(ctx); !st.ok()) {
+      reactor->Finish(st);
+      return reactor;
+    }
+    meta_.activate_or_join_async(false, req->node_id(), [reactor, resp](std::string line) {
       resp->set_ok(line_ok(line));
       resp->set_message(line);
       if (!resp->ok()) resp->set_error(line);
+      reactor->Finish(Status::OK);
     });
+    return reactor;
   }
   ServerUnaryReactor* JoinNode(CallbackServerContext* ctx, const pb::NodeIdRequest* req,
                                pb::SimpleResponse* resp) override {
-    return defer(ctx, true, [this, req, resp] {
-      auto line = meta_.handle_line("JOIN_NODE " + req->node_id());
+    auto* reactor = ctx->DefaultReactor();
+    if (auto st = auth_write(ctx); !st.ok()) {
+      reactor->Finish(st);
+      return reactor;
+    }
+    meta_.activate_or_join_async(true, req->node_id(), [reactor, resp](std::string line) {
       resp->set_ok(line_ok(line));
       resp->set_message(line);
       if (!resp->ok()) resp->set_error(line);
+      reactor->Finish(Status::OK);
     });
+    return reactor;
   }
 
   ServerUnaryReactor* DrainNode(CallbackServerContext* ctx, const pb::NodeIdRequest* req,
@@ -642,7 +630,6 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
  private:
   MetaNode& meta_;
   std::string token_;
-  openkv::WorkPool& pool_;
 };
 
 void parse_vote_line(std::string_view line, ::storage::v1::RequestVoteResponse* resp) {
@@ -791,7 +778,6 @@ class MetaRaftServiceImpl final : public ::storage::v1::RaftService::CallbackSer
 
 struct MetaGrpcServer::Impl {
   std::unique_ptr<grpc::Server> server;
-  std::unique_ptr<openkv::WorkPool> pool;
   std::unique_ptr<MetaServiceImpl> svc;
   std::unique_ptr<MetaRaftServiceImpl> raft;
 };
@@ -806,13 +792,7 @@ MetaGrpcServer::~MetaGrpcServer() { stop(); }
 
 void MetaGrpcServer::start() {
   if (running_.exchange(true)) return;
-  size_t pool_n = 16;
-  if (const char* e = std::getenv("SKV_META_GRPC_WORKERS")) {
-    const auto v = std::strtoul(e, nullptr, 10);
-    if (v > 0) pool_n = v;
-  }
-  impl_->pool = std::make_unique<openkv::WorkPool>(pool_n);
-  impl_->svc = std::make_unique<MetaServiceImpl>(meta_, admin_token_, *impl_->pool);
+  impl_->svc = std::make_unique<MetaServiceImpl>(meta_, admin_token_);
   impl_->raft = std::make_unique<MetaRaftServiceImpl>(meta_);
   grpc::ServerBuilder builder;
   builder.SetMaxReceiveMessageSize(64 << 20);
@@ -825,12 +805,12 @@ void MetaGrpcServer::start() {
     running_ = false;
     throw std::runtime_error("MetaGrpcServer failed to listen on " + listen_addr_);
   }
-  SKV_INFO << "meta gRPC listening " << listen_addr_ << " (callback + workers=" << pool_n << ")";
+  SKV_INFO << "meta gRPC listening " << listen_addr_ << " (callback)";
 }
 
 void MetaGrpcServer::stop() {
   if (!running_.exchange(false)) return;
-  // 先拒新 RPC 并排空在途；WorkPool 须在 Wait 完成前仍可用。
+  // 先拒新 RPC 并排空在途（Watch/async Finish 须在 Wait 前仍可跑）。
   if (impl_ && impl_->server) {
     openkv::graceful_grpc_shutdown(impl_->server);
     impl_->server.reset();
@@ -838,7 +818,6 @@ void MetaGrpcServer::stop() {
   if (impl_) {
     impl_->svc.reset();
     impl_->raft.reset();
-    impl_->pool.reset();
   }
 }
 

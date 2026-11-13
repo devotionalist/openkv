@@ -161,6 +161,7 @@ void MetaNode::on_apply(uint64_t index, const std::string& data) {
     if (ver > route_version_notify_) route_version_notify_ = ver;
   }
   route_cv_.notify_all();
+  fire_route_watches(false);
 }
 
 void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> cb) {
@@ -453,6 +454,180 @@ void MetaNode::set_node_state_async(std::string node_id, NodeState state, std::s
   const auto id = node_id;
   const auto op = std::move(ok_op);
   replicate_cb(cmd, [op, id] { return "OK " + op + " " + id; }, std::move(cb));
+}
+
+void MetaNode::fire_route_watches(bool force_all) {
+  RoutingTable rt = state_->routing_table();
+  const auto now = std::chrono::steady_clock::now();
+  std::vector<std::function<void(RoutingTable)>> cbs;
+  {
+    std::lock_guard<std::mutex> lock(route_mu_);
+    if (rt.version > route_version_notify_) route_version_notify_ = rt.version;
+    for (auto it = route_watches_.begin(); it != route_watches_.end();) {
+      if (force_all || rt.version > it->since || now >= it->deadline) {
+        cbs.push_back(std::move(it->cb));
+        it = route_watches_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  for (auto& cb : cbs) {
+    if (!cb) continue;
+    try {
+      cb(rt);
+    } catch (...) {
+    }
+  }
+}
+
+void MetaNode::watch_route_async(uint64_t since, int timeout_ms,
+                                 std::function<void(RoutingTable)> cb) {
+  if (!cb) return;
+  if (timeout_ms < 0) timeout_ms = 0;
+  if (timeout_ms > 60000) timeout_ms = 60000;
+  route_watch_waits_.fetch_add(1, std::memory_order_relaxed);
+  {
+    auto rt = state_->routing_table();
+    if (rt.version > since) {
+      {
+        std::lock_guard<std::mutex> lock(route_mu_);
+        if (rt.version > route_version_notify_) route_version_notify_ = rt.version;
+      }
+      cb(std::move(rt));
+      return;
+    }
+  }
+  RouteWatch w;
+  w.id = ++route_watch_seq_;
+  w.since = since;
+  w.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  w.cb = std::move(cb);
+  {
+    std::lock_guard<std::mutex> lock(route_mu_);
+    route_watches_.push_back(std::move(w));
+  }
+}
+
+void MetaNode::get_scale_task_async(std::string task_id, std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (!scaler_) {
+    cb("ERR no_scaler");
+    return;
+  }
+  if (!is_leader()) {
+    const auto a = leader_address();
+    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    return;
+  }
+  auto t = scaler_->get_task(task_id);
+  if (!t) {
+    cb("ERR no_task");
+    return;
+  }
+  std::ostringstream oss;
+  oss << "OK SCALE " << t->task_id << ' ' << static_cast<int>(t->state) << ' ' << t->progress
+      << " node=" << t->new_node_id << " shards=";
+  for (size_t i = 0; i < t->shard_ids.size(); ++i) {
+    if (i) oss << ',';
+    oss << t->shard_ids[i];
+  }
+  if (t->state != ScaleTaskState::kCatchingUp || t->shard_ids.empty()) {
+    if (!t->error.empty()) oss << " error=" << t->error;
+    cb(oss.str());
+    return;
+  }
+  const uint32_t sid = t->shard_ids.front();
+  auto addr = region_leader_addr(sid);
+  if (!addr) {
+    if (!t->error.empty()) oss << " error=" << t->error;
+    cb(oss.str());
+    return;
+  }
+  const std::string err_suffix = t->error.empty() ? "" : (" error=" + t->error);
+  const std::string base = oss.str();
+  const std::string node = t->new_node_id;
+  openkv::admin_peer_progress_async(
+      *addr, sid, node, admin_token_, proto::timeout_ms::kStorageRpcAdmin, 4,
+      [cb = std::move(cb), base, err_suffix](std::string resp) {
+        std::ostringstream out;
+        out << base;
+        std::istringstream iss(resp);
+        std::string ok, tag;
+        uint64_t match = 0, commit = 0, last = 0;
+        int caught = 0;
+        if ((iss >> ok >> tag >> match >> commit >> last >> caught) && ok == "OK") {
+          out << " match=" << match << " commit=" << commit << " caught=" << caught;
+        }
+        out << err_suffix;
+        cb(out.str());
+      });
+}
+
+void MetaNode::activate_or_join_async(bool join, std::string node_id,
+                                      std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (!is_leader()) {
+    const auto a = leader_address();
+    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    return;
+  }
+  auto cur = state_->get_node(node_id);
+  if (!cur) {
+    cb("ERR unknown_node");
+    return;
+  }
+  if (cur->state != NodeState::kJoining && cur->state != NodeState::kOffline) {
+    cb("ERR not_pending");
+    return;
+  }
+  if (cur->address.empty()) {
+    cb("ERR no_address");
+    return;
+  }
+  const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+  if (cur->last_heartbeat_ms <= 0) {
+    cb("ERR no_heartbeat");
+    return;
+  }
+  const int64_t age = now - cur->last_heartbeat_ms;
+  if (age > static_cast<int64_t>(store_ttl_ms_)) {
+    cb("ERR heartbeat_stale age_ms=" + std::to_string(age) +
+       " ttl_ms=" + std::to_string(store_ttl_ms_));
+    return;
+  }
+  const std::string addr = cur->address;
+  const std::string op = join ? "JOIN_NODE" : "ACTIVATE_NODE";
+  const std::string id = std::move(node_id);
+  openkv::admin_ping_async(addr, admin_token_, proto::timeout_ms::kStorageRpcDefault,
+                           [this, id, op, cb = std::move(cb)](std::string pong) {
+                             if (!proto::starts_with_ok(pong)) {
+                               cb("ERR unreachable ping=" + pong);
+                               return;
+                             }
+                             // Ping 后复核租约（异步间隙可能过期）。
+                             auto again = state_->get_node(id);
+                             if (!again) {
+                               cb("ERR unknown_node");
+                               return;
+                             }
+                             const int64_t now2 = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                     std::chrono::system_clock::now().time_since_epoch())
+                                                     .count();
+                             if (again->last_heartbeat_ms <= 0) {
+                               cb("ERR no_heartbeat");
+                               return;
+                             }
+                             const int64_t age2 = now2 - again->last_heartbeat_ms;
+                             if (age2 > static_cast<int64_t>(store_ttl_ms_)) {
+                               cb("ERR heartbeat_stale age_ms=" + std::to_string(age2) +
+                                  " ttl_ms=" + std::to_string(store_ttl_ms_));
+                               return;
+                             }
+                             set_node_state_async(id, NodeState::kActive, op, std::move(cb));
+                           });
 }
 
 void MetaNode::kick_node_async(std::string node_id, std::function<void(std::string)> cb) {
@@ -1637,11 +1812,13 @@ MetaNode::StatsSnapshot MetaNode::stats_snapshot() const {
 
 void MetaNode::stop() {
   if (!running_.exchange(false)) return;
+  fire_route_watches(true);  // 先放行挂起 Watch，便于 gRPC Wait 收尾
   if (grpc_server_) {
     grpc_server_->stop();
     grpc_server_.reset();
   }
   if (tick_thread_.joinable()) tick_thread_.join();
+  fire_route_watches(true);
   transport_.stop();
   scheduler_.reset();
   scaler_.reset();
@@ -1651,6 +1828,7 @@ void MetaNode::stop() {
 void MetaNode::tick_loop() {
   while (running_) {
     if (raft_) raft_->tick();
+    fire_route_watches(false);  // WATCH 超时扫（~50ms 粒度）
     // ~5s：Leader 推进 GC safe point（50ms * 100）
     if (is_leader() && ++gc_advance_ticks_ >= 100) {
       gc_advance_ticks_ = 0;

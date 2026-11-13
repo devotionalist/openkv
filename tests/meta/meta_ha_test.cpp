@@ -209,3 +209,70 @@ TEST(MetaHaTest, RegisterNodeAsyncFinishOnApply) {
 
   srv.stop();
 }
+
+TEST(MetaHaTest, WatchRouteAsyncAndActivatePrecheck) {
+  ClusterBootstrap boot;
+  boot.node_id = "meta-watch";
+  boot.listen_addr = "127.0.0.1:18553";
+  boot.shard_count = 1;
+  boot.replica_factor = 1;
+  boot.storage_peers = {{"s0", "127.0.0.1:9100"}};
+  MetaNode srv(boot);
+  ASSERT_NO_THROW(srv.start());
+  for (int i = 0; i < 40; ++i) {
+    if (srv.is_leader()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  ASSERT_TRUE(srv.is_leader());
+
+  std::string err, redir;
+  const auto base = srv.routing_table(&err, &redir);
+
+  // since < ver：立即回调
+  {
+    std::promise<openkv::meta::RoutingTable> done;
+    auto fut = done.get_future();
+    srv.watch_route_async(0, 5000, [&done](openkv::meta::RoutingTable rt) {
+      done.set_value(std::move(rt));
+    });
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_GE(fut.get().version, base.version);
+  }
+
+  // since == ver：等 bump 唤醒（version 严格大于 since）
+  {
+    std::promise<openkv::meta::RoutingTable> done;
+    auto fut = done.get_future();
+    srv.watch_route_async(base.version, 5000,
+                           [&done](openkv::meta::RoutingTable rt) { done.set_value(std::move(rt)); });
+    std::promise<std::string> bump_done;
+    auto bump_fut = bump_done.get_future();
+    srv.bump_route_async([&bump_done](std::string line) { bump_done.set_value(std::move(line)); });
+    ASSERT_EQ(bump_fut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    EXPECT_EQ(bump_fut.get().rfind("OK BUMP_ROUTE", 0), 0u);
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    EXPECT_GT(fut.get().version, base.version);
+  }
+
+  // Activate 预检：未知节点不发起 Ping
+  {
+    std::promise<std::string> done;
+    auto fut = done.get_future();
+    srv.activate_or_join_async(false, "no-such-node",
+                                [&done](std::string line) { done.set_value(std::move(line)); });
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(fut.get(), "ERR unknown_node");
+  }
+
+  // GetScale：无任务
+  {
+    std::promise<std::string> done;
+    auto fut = done.get_future();
+    srv.get_scale_task_async("missing-task",
+                              [&done](std::string line) { done.set_value(std::move(line)); });
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(fut.get(), "ERR no_task");
+  }
+
+  srv.stop();
+}

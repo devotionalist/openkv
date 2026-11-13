@@ -13,8 +13,8 @@
 |----|------|
 | ProposalQueue | `wait_async(index, timeout, cb)`：apply `invoke` 或超时回调，不占调用方线程 |
 | Storage | `propose_async` / `one_pc_async`；`Store`/`Admin`/`Raft` → `CallbackService`；Finish@apply / reactor；**无 WorkPool** |
-| Meta | `replicate_cb` 运维 Raft 写 + GetTs/REGISTER；调度/读 `reply`；WATCH/GetScale/Activate·Join → `WorkPool` |
-| Gateway | `KV`/`DS` → `CallbackService` + `SKV_GATEWAY_WORKERS`；Put：`alloc_async` → `Propose(ONEPC)`；Get：`alloc_async` → `StoreService.Get(start_ts)`；BatchPut/Get CQ fan-in（见 [28](28-compute-net-opt.md)） |
+| Meta | 全部 Callback：`replicate_cb` / `watch_route_async` / `get_scale_task_async` / `activate_or_join_async`；调度/读 `reply`；**无 WorkPool** |
+| Gateway | `KV`/`DS` → `CallbackService` + `SKV_GATEWAY_WORKERS`（仅 Watch）；Put：`alloc_async` → `Propose(ONEPC)`；Get：`alloc_async` → `StoreService.Get(start_ts)`；BatchPut/Get CQ fan-in（见 [28](28-compute-net-opt.md)） |
 | Raft | 出站 worker 队列；入站 AE/Vote 短路径同步 Finish |
 
 ```mermaid
@@ -36,7 +36,7 @@ sequenceDiagram
 ## 边界
 
 - Admin 低频 RPC、Raft 入站：Callback 包装后立即 `Finish`（不阻塞 sync 线程池即可）。
-- WATCH 流式：仍用 server writer；长等走 `route_cv_`，后续可再迁 `ServerWriteReactor`。
+- WATCH 流式：`ServerWriteReactor` + `watch_route_async`（行协议仍可 `route_cv_`）。
 - 同步 `propose()`/`handle_line()` 保留给单测与行协议 CLI。
 
 ## 失败与回滚

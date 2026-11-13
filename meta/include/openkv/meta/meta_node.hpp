@@ -35,6 +35,7 @@
 #include "openkv/raft/snap_stream.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -109,6 +110,12 @@ class MetaNode {
   void set_node_state_async(std::string node_id, NodeState state, std::string ok_op,
                             std::function<void(std::string)> cb);
   void kick_node_async(std::string node_id, std::function<void(std::string)> cb);
+  /// Activate/Join：异步 Ping + 心跳检查后 SetNodeState（不经 WorkPool）。
+  void activate_or_join_async(bool join, std::string node_id, std::function<void(std::string)> cb);
+  /// WATCH_ROUTE 异步：version 已新则立即回调；否则挂起至 bump / 超时（tick 扫）。
+  void watch_route_async(uint64_t since, int timeout_ms, std::function<void(RoutingTable)> cb);
+  /// GET_SCALE 异步：CatchingUp 时异步 PeerProgress，其余同步拼行。
+  void get_scale_task_async(std::string task_id, std::function<void(std::string)> cb);
   /// 读路由表（Follower 可读，不强制 Leader）。
   RoutingTable routing_table(std::string* error, std::string* redirect) const;
 
@@ -161,6 +168,8 @@ class MetaNode {
   std::optional<std::string> region_leader_addr(uint32_t region_id) const;
   /// A2/A3：编码 `OK ROUTE …`（不要求本节点是 Leader）。
   std::string format_route(const RoutingTable& rt) const;
+  /// 唤醒到期 / 版本已新的 watch_route_async 回调；force_all 用于 stop。
+  void fire_route_watches(bool force_all = false);
 
   ClusterBootstrap bootstrap_;              ///< 启动配置副本
   std::string self_id_;                     ///< 本 Meta 节点 ID
@@ -192,6 +201,15 @@ class MetaNode {
   mutable std::mutex route_mu_;             ///< WATCH_ROUTE
   std::condition_variable route_cv_;
   uint64_t route_version_notify_{0};        ///< 最近一次路由版本（on_apply 更新）
+  /// gRPC watch_route_async 挂起表（行协议仍用 route_cv_）。
+  struct RouteWatch {
+    uint64_t id{0};
+    uint64_t since{0};
+    std::chrono::steady_clock::time_point deadline{};
+    std::function<void(RoutingTable)> cb;
+  };
+  std::vector<RouteWatch> route_watches_;
+  std::atomic<uint64_t> route_watch_seq_{0};
   uint32_t gc_advance_ticks_{0};            ///< tick 计数：满则 Leader ADVANCE_SAFE_POINT
   uint32_t stale_sweep_ticks_{0};           ///< tick 计数：满则 Leader SWEEP_STALE
   bool was_leader_{false};                  ///< 用于检测新晋 Leader，宽限租约

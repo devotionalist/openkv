@@ -21,6 +21,8 @@
 #include "openkv/protocol.hpp"
 
 #include <chrono>
+#include <functional>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -307,6 +309,92 @@ inline std::string admin_typed_rpc(std::string addr, std::string_view req, std::
     return body;
   }
   throw std::runtime_error("admin_typed_rpc redirect loop");
+}
+
+/// 异步 Admin Ping（不占调用线程；回调在 gRPC CQ）。
+inline void admin_ping_async(std::string addr, std::string_view token, int timeout_ms,
+                             std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (addr.rfind("0.0.0.0", 0) == 0) addr.replace(0, 7, "127.0.0.1");
+  struct Call {
+    std::shared_ptr<grpc::Channel> ch;
+    std::unique_ptr<::storage::v1::AdminService::Stub> stub;
+    grpc::ClientContext ctx;
+    ::storage::v1::PingRequest req;
+    ::storage::v1::PingResponse resp;
+  };
+  auto call = std::make_shared<Call>();
+  call->ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+  call->stub = ::storage::v1::AdminService::NewStub(call->ch);
+  call->ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
+  grpc_attach_admin_token(&call->ctx, std::string(token));
+  call->stub->async()->Ping(&call->ctx, &call->req, &call->resp,
+                            [call, cb = std::move(cb)](grpc::Status st) {
+                              if (!st.ok()) {
+                                cb("ERR unreachable " + st.error_message());
+                                return;
+                              }
+                              cb("OK PONG");
+                            });
+}
+
+/// 异步 PeerProgress；跟随 not_leader redirect（最多数跳）。
+inline void admin_peer_progress_async(std::string addr, uint32_t region_id, std::string node_id,
+                                      std::string_view token, int timeout_ms, int hops_left,
+                                      std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (hops_left <= 0) {
+    cb("ERR admin_typed_rpc redirect loop");
+    return;
+  }
+  if (addr.rfind("0.0.0.0", 0) == 0) addr.replace(0, 7, "127.0.0.1");
+  struct Call {
+    std::shared_ptr<grpc::Channel> ch;
+    std::unique_ptr<::storage::v1::AdminService::Stub> stub;
+    grpc::ClientContext ctx;
+    ::storage::v1::PeerOpRequest req;
+    ::storage::v1::PeerProgressResponse resp;
+  };
+  auto call = std::make_shared<Call>();
+  call->ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+  call->stub = ::storage::v1::AdminService::NewStub(call->ch);
+  call->ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
+  grpc_attach_admin_token(&call->ctx, std::string(token));
+  call->req.set_region_id(region_id);
+  call->req.set_node_id(node_id);
+  const std::string tok(token);
+  call->stub->async()->PeerProgress(
+      &call->ctx, &call->req, &call->resp,
+      [call, cb = std::move(cb), region_id, node_id = std::move(node_id), tok, timeout_ms,
+       hops_left](grpc::Status st) mutable {
+        if (!st.ok()) {
+          cb("ERR " + st.error_message());
+          return;
+        }
+        std::string body;
+        if (!call->resp.message().empty()) {
+          body = call->resp.message();
+        } else if (!call->resp.redirect_to().empty()) {
+          body = "ERR not_leader redirect=" + call->resp.redirect_to();
+        } else {
+          std::ostringstream oss;
+          oss << "OK PROGRESS " << call->resp.match_index() << ' ' << call->resp.commit_index()
+              << ' ' << call->resp.last_index() << ' ' << (call->resp.caught_up() ? 1 : 0) << ' '
+              << (call->resp.is_learner() ? 1 : 0);
+          body = oss.str();
+        }
+        if (body.find("not_leader") != std::string::npos) {
+          auto next = admin_follow_redirect_body(body);
+          if (next.empty()) {
+            cb(std::move(body));
+            return;
+          }
+          admin_peer_progress_async(std::move(next), region_id, std::move(node_id), tok, timeout_ms,
+                                    hops_left - 1, std::move(cb));
+          return;
+        }
+        cb(std::move(body));
+      });
 }
 
 }  // namespace openkv

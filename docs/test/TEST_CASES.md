@@ -142,7 +142,7 @@
 | ClusterStateTest | TSO、GC safe point、Split/Merge、Joining→Active、Drain、Learner Promote、Place、Snapshot |
 | ScalerTest | ScaleOut 完成、未知节点失败、CatchUp 门闩、**ConcurrentScaleOutQueues**、**CancelInflight** |
 | RegionSchedulerTest | 提交/恢复任务、扫描欠副本 |
-| MetaFsmTest / MetaHaTest | FSM 编解码、单副本 Leader Register、`RegisterNodeAsyncFinishOnApply` |
+| MetaFsmTest / MetaHaTest | FSM 编解码、单副本 Leader Register、`RegisterNodeAsyncFinishOnApply`、`WatchRouteAsyncAndActivatePrecheck` |
 
 </details>
 

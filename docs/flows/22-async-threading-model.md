@@ -8,7 +8,7 @@
 1. **协议栈**：继续 gRPC，全面采用 **CallbackService + ServerUnaryReactor**（reaction 内禁止同步 RPC / 等 CV）。
 2. **线程角色**：  
    - **接收线程** = gRPC callback/CQ 线程（只投递 / 发起 async / `Finish`）  
-   - **工作线程** = `WorkPool`（Gateway Watch / Meta 非热路径）+ BatchSystem / Transport worker  
+   - **工作线程** = `WorkPool`（仅 Gateway Watch）+ BatchSystem / Transport worker  
    - **完成回调** = client async / `ProposalQueue::invoke`（续跑状态机）
 3. **热路径零同步等待**：接收线程与 gRPC reaction 上禁止 `stub->Foo()`、`future.get()`、`wait_apply`；下游一律 async stub 或 `propose_async`→`wait_async`。
 
@@ -21,10 +21,10 @@
 | 角色 | 谁 | 允许做什么 | 禁止做什么 |
 |------|-----|------------|------------|
 | **接收线程** | gRPC Callback CQ / reactor 回调 | 解析请求、发起 async stub、必要时 `WorkPool::post`、`Finish` | 等 Raft apply、等下游 RPC、睡 CV |
-| **工作线程** | `openkv::WorkPool`（Gateway/Meta） | 卸阻塞/长等：Watch sleep、Meta `handle_line`、WATCH_ROUTE | 热路径同步 gRPC stub |
+| **工作线程** | `openkv::WorkPool`（仅 Gateway） | 卸阻塞/长等：Watch 间隔 sleep / `write_ev` | 热路径同步 gRPC stub |
 | **完成回调** | client async / apply `invoke` | 续跑状态机、再投递或 `Finish` | — |
 
-Raft 出站另有 **Transport worker**（已有），不占用 BatchSystem / 接收线程。Storage **不再建 WorkPool**。
+Raft 出站另有 **Transport worker**（已有），不占用 BatchSystem / 接收线程。Meta / Storage **不再建 WorkPool**。
 
 ```mermaid
 flowchart TB
@@ -32,8 +32,8 @@ flowchart TB
     A[Accept / Read RPC] --> B[DefaultReactor]
     B -->|post 或 start async| C{路径}
   end
-  C -->|Put/GetTs/Propose| D[async stub / propose_async]
-  C -->|Gateway Watch / Meta 其它| E[WorkPool]
+  C -->|Put/GetTs/Propose/Meta| D[async stub / propose_async / replicate_cb]
+  C -->|Gateway Watch 间隔| E[WorkPool]
   E --> D
   D --> F[完成回调线程]
   F -->|状态机续跑| D
@@ -55,11 +55,11 @@ flowchart TB
 ### Meta
 
 - 入站：`MetaService` → **CallbackService**（已实现）
-- Finish@apply（不经池）：`GetTs` / `REGISTER` / `ReportMin` / Split·Merge·Place / Drain·Offline·Kick / BumpRoute / AdvanceSafePoint
-- `reply` 内联：`HEARTBEAT`、廉价读、ScaleOut/Balance/Migrate 等内存调度（禁止等 apply / CV / 出站 RPC）
-- WorkPool（`defer`/`post`）：WATCH_ROUTE、GetScale、Activate/Join（出站 Ping）
+- Finish@apply：`GetTs` / `REGISTER` / `ReportMin` / Split·Merge·Place / Drain·Offline·Kick / BumpRoute / AdvanceSafePoint / Activate·Join（Ping 后）
+- `watch_route_async`：挂起至 route bump / tick 超时；`get_scale_task_async`：CatchingUp 时 `admin_peer_progress_async`
+- `reply` 内联：`HEARTBEAT`、廉价读、ScaleOut/Balance/Migrate 等内存调度
+- **无 WorkPool** / 已废 `SKV_META_GRPC_WORKERS`；日志 `callback`（无 `workers=`）
 - Raft 入站保持短路径同步 Finish；出站 Transport worker
-- `SKV_META_GRPC_WORKERS`（默认 16）
 
 ### Storage
 
@@ -76,7 +76,7 @@ flowchart TB
 | T1 | 设计本文 + ARCHITECTURE / 21 文档交叉引用 | **PASS** |
 | T2 | Gateway/Meta/Storage 热路径代码无同步 stub wait / `promise.get` 等 apply | **PASS** |
 | T3 | `ctest -R 'ProposalQueue\|OnePc\|TsoTest\|RouterTest\|StoreFacade'` PASS | **PASS** |
-| T4 | put bench fail=0；Storage 日志 `callback`；Gateway/Meta 仍可见 `workers=` | **PASS**（2026-11-14：`callback`；`-mode all` exit 0） |
+| T4 | put bench fail=0；Storage/Meta 日志 `callback`；Gateway Watch 仍可见 `workers=` | **PASS**（见对话 bench） |
 
 ## 失败与回滚
 
