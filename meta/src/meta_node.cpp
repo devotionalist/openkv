@@ -339,6 +339,144 @@ void MetaNode::report_min_start_ts_async(uint64_t min_start_ts, std::string repo
       std::move(cb));
 }
 
+void MetaNode::advance_safe_point_async(uint32_t retain, std::function<void(std::string)> cb) {
+  if (!cb) return;
+  MetaCommand cmd;
+  cmd.op = MetaOp::kAdvanceSafePoint;
+  cmd.ts_count = retain;
+  replicate_cb(
+      cmd,
+      [this] {
+        return "OK SAFE " + std::to_string(state_->gc_safe_ts()) + " " +
+               std::to_string(state_->next_ts()) + " " +
+               std::to_string(state_->min_start_ts_hint());
+      },
+      std::move(cb));
+}
+
+void MetaNode::bump_route_async(std::function<void(std::string)> cb) {
+  if (!cb) return;
+  MetaCommand cmd;
+  cmd.op = MetaOp::kBumpRoute;
+  replicate_cb(cmd,
+               [this] {
+                 return "OK BUMP_ROUTE " + std::to_string(state_->routing_table().version);
+               },
+               std::move(cb));
+}
+
+void MetaNode::split_region_async(uint32_t left_region_id, std::string split_key,
+                                  std::function<void(std::string)> cb) {
+  if (!cb) return;
+  MetaCommand cmd;
+  cmd.op = MetaOp::kSplitRegion;
+  cmd.shard_id = left_region_id;
+  cmd.split_key = std::move(split_key);
+  const auto left = left_region_id;
+  const auto sk = cmd.split_key;
+  replicate_cb(
+      cmd,
+      [this, left, sk] {
+        for (const auto& r : state_->routing_table().regions) {
+          if (r.range.start_key == sk) {
+            return "OK SPLIT " + std::to_string(left) + " " + std::to_string(r.region_id);
+          }
+        }
+        return std::string("ERR split_apply_missing");
+      },
+      std::move(cb));
+}
+
+void MetaNode::merge_regions_async(uint32_t left_region_id, uint32_t right_region_id,
+                                   std::function<void(std::string)> cb) {
+  if (!cb) return;
+  MetaCommand cmd;
+  cmd.op = MetaOp::kMergeRegions;
+  cmd.shard_id = left_region_id;
+  cmd.merge_right_id = right_region_id;
+  const auto l = left_region_id;
+  const auto r = right_region_id;
+  replicate_cb(
+      cmd,
+      [this, l, r] {
+        if (!state_->find_region(l)) return std::string("ERR merge_lost_left");
+        if (state_->find_region(r)) return std::string("ERR merge_right_still_present");
+        return "OK MERGE " + std::to_string(l) + " " + std::to_string(r);
+      },
+      std::move(cb));
+}
+
+void MetaNode::place_region_async(uint32_t region_id, std::vector<std::string> peer_node_ids,
+                                  std::function<void(std::string)> cb) {
+  if (!cb) return;
+  MetaCommand cmd;
+  cmd.op = MetaOp::kPlaceRegion;
+  cmd.shard_id = region_id;
+  for (const auto& id : peer_node_ids) {
+    auto node = state_->get_node(id);
+    if (!node) {
+      cb("ERR unknown_node " + id);
+      return;
+    }
+    Replica rep;
+    rep.node_id = node->node_id;
+    rep.address = node->address;
+    cmd.place_replicas.push_back(std::move(rep));
+  }
+  if (cmd.place_replicas.empty()) {
+    cb("ERR empty_peers");
+    return;
+  }
+  const auto n = cmd.place_replicas.size();
+  const auto rid = region_id;
+  replicate_cb(cmd,
+               [rid, n] { return "OK PLACE " + std::to_string(rid) + " " + std::to_string(n); },
+               std::move(cb));
+}
+
+void MetaNode::set_node_state_async(std::string node_id, NodeState state, std::string ok_op,
+                                    std::function<void(std::string)> cb) {
+  if (!cb) return;
+  if (!is_leader()) {
+    const auto a = leader_address();
+    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    return;
+  }
+  if (!state_->get_node(node_id)) {
+    cb("ERR unknown_node");
+    return;
+  }
+  MetaCommand cmd;
+  cmd.op = MetaOp::kSetNodeState;
+  cmd.node.node_id = node_id;
+  cmd.ts_value = static_cast<uint64_t>(state);
+  const auto id = node_id;
+  const auto op = std::move(ok_op);
+  replicate_cb(cmd, [op, id] { return "OK " + op + " " + id; }, std::move(cb));
+}
+
+void MetaNode::kick_node_async(std::string node_id, std::function<void(std::string)> cb) {
+  if (!cb) return;
+  auto n = state_->get_node(node_id);
+  if (!n) {
+    cb("ERR unknown_node");
+    return;
+  }
+  if (n->state == NodeState::kActive) {
+    cb("ERR still_active");
+    return;
+  }
+  if (state_->region_count_on(node_id) > 0) {
+    cb("ERR still_has_regions");
+    return;
+  }
+  MetaCommand cmd;
+  cmd.op = MetaOp::kEraseTombstone;
+  cmd.node.node_id = node_id;
+  const auto id = std::move(node_id);
+  replicate_cb(cmd, [id] { return "OK KICK_NODE " + id; }, std::move(cb));
+}
+
 std::string MetaNode::register_node(NodeInfo node, std::string* error, std::string* redirect) {
   MetaCommand cmd;
   cmd.op = MetaOp::kRegister;

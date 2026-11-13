@@ -97,6 +97,18 @@ class MetaNode {
   /// 异步 ReportMinStartTs（gRPC）。
   void report_min_start_ts_async(uint64_t min_start_ts, std::string reporter,
                                  std::function<void(std::string)> cb);
+  void advance_safe_point_async(uint32_t retain, std::function<void(std::string)> cb);
+  void bump_route_async(std::function<void(std::string)> cb);
+  void split_region_async(uint32_t left_region_id, std::string split_key,
+                          std::function<void(std::string)> cb);
+  void merge_regions_async(uint32_t left_region_id, uint32_t right_region_id,
+                           std::function<void(std::string)> cb);
+  void place_region_async(uint32_t region_id, std::vector<std::string> peer_node_ids,
+                          std::function<void(std::string)> cb);
+  /// Drain / Offline / StoreDelete 等纯 SetNodeState（不含 Activate/Join 出站 Ping）。
+  void set_node_state_async(std::string node_id, NodeState state, std::string ok_op,
+                            std::function<void(std::string)> cb);
+  void kick_node_async(std::string node_id, std::function<void(std::string)> cb);
   /// 读路由表（Follower 可读，不强制 Leader）。
   RoutingTable routing_table(std::string* error, std::string* redirect) const;
 

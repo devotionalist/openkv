@@ -201,5 +201,11 @@ TEST(MetaHaTest, RegisterNodeAsyncFinishOnApply) {
   ASSERT_EQ(fut2.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   EXPECT_EQ(fut2.get().rfind("OK REGISTER", 0), 0u);
 
+  std::promise<std::string> bump_done;
+  auto bump_fut = bump_done.get_future();
+  srv.bump_route_async([&bump_done](std::string line) { bump_done.set_value(std::move(line)); });
+  ASSERT_EQ(bump_fut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_EQ(bump_fut.get().rfind("OK BUMP_ROUTE", 0), 0u);
+
   srv.stop();
 }

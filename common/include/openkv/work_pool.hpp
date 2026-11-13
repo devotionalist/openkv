@@ -15,7 +15,7 @@
 // @file work_pool.hpp
 // 有界工作线程池：卸掉 Callback 接收线程上的阻塞/长等。
 // 现状：Gateway Watch（间隔 sleep / write_ev）；
-// Meta 运维写 / WATCH_ROUTE / GetScale；热路径 GetTs/REGISTER/HB/ReportMin 已不经池。
+// Meta：仅 WATCH_ROUTE / GetScale / Activate·Join；其余热路径与运维 Raft 写已不经池。
 // Storage 热路径已纯 Callback + apply 回调 Finish，不再建池。
 
 #pragma once
