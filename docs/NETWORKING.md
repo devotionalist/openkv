@@ -12,6 +12,7 @@
 | 协议 | **gRPC**（强制）；生产与本地默认路径 |
 | CMake | `OPENKV_USE_GRPC` 固定 `ON`（无需也不应再 OFF） |
 | 线程 | Callback/CQ 接收线程 + `WorkPool` / BatchSystem / Transport worker（见 [22-async-threading-model](./flows/22-async-threading-model.md)） |
+| 关机 | SIGTERM：拒新 RPC + 排空在途（见 [31-graceful-shutdown](./flows/31-graceful-shutdown.md)；`SKV_GRPC_SHUTDOWN_MS`） |
 
 ```
 Client / skv / Web

@@ -76,7 +76,7 @@ TSO 批缓存说明：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。
 2. `propose` 后按 index 挂 **ProposalQueue**；apply `invoke`（或 `wait_async` 回调）唤醒。
 3. 仅当前 term 日志可 commit；空心跳 / 写触发的 AE 都会推进复制。
 4. 撞 `locked` → Lock Resolver 后重试；`splitting` / `epoch_not_match` → 刷路由重试。
-5. Latch：用户 key 在 propose 前锁定，**持到 apply 结束**（[19](19-architecture-hardening.md)）。
+5. Latch：ONEPC/CAS 用 `lock_key_async` 持到 apply；非 CAS Raw Put/Delete 跳过（[19](19-architecture-hardening.md) · [27](27-raw-vs-txn.md)）。
 
 ---
 

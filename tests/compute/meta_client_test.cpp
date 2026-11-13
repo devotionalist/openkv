@@ -66,14 +66,32 @@ TEST(MetaClientTest, ParseRouteEmptyFallsBack) {
 }
 
 TEST(TsoTest, AllocMonotonicLocal) {
-  TSOracle o({}, 100);
+  // 空 meta：低于水位也不会预取，避免打空地址。
+  TSOracle o({}, 100, /*low_watermark=*/1);
   o.inject_cache_for_test(1000, 1100);
   EXPECT_EQ(o.alloc(1), 1000u);
   EXPECT_EQ(o.alloc(2), 1001u);
+  EXPECT_EQ(o.remaining_for_test(), 97u);
+}
+
+TEST(TsoTest, DefaultBatchAndWatermark) {
+  TSOracle o({}, 0, 0);
+  EXPECT_EQ(o.batch_size(), openkv::compute::kDefaultTsoBatch);
+  EXPECT_EQ(o.low_watermark(), openkv::compute::kDefaultTsoLowWatermark);
+}
+
+TEST(TsoTest, QueueDrainOrder) {
+  TSOracle o({}, 5000, 2000);
+  o.inject_cache_for_test(100, 102);
+  o.inject_range_for_test(500, 600);
+  EXPECT_EQ(o.remaining_for_test(), 102u);  // 2 + 100
+  EXPECT_EQ(o.alloc(2), 100u);
+  EXPECT_EQ(o.alloc(1), 500u);
+  EXPECT_EQ(o.remaining_for_test(), 99u);
 }
 
 TEST(TsoTest, AllocAsyncLocalHit) {
-  TSOracle o({}, 100);
+  TSOracle o({}, 100, 1);
   o.inject_cache_for_test(2000, 2100);
   std::mutex mu;
   std::condition_variable cv;
@@ -98,7 +116,7 @@ TEST(TsoTest, AllocAsyncLocalHit) {
 }
 
 TEST(TsoTest, ConcurrentUnique) {
-  TSOracle o({}, 10000);
+  TSOracle o({}, 10000, 1);
   o.inject_cache_for_test(1, 10001);
   constexpr int kN = 2000;
   std::vector<uint64_t> got(kN);

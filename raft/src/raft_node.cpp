@@ -1380,19 +1380,24 @@ void RaftNode::restore_local_fsm_snapshot() {
 void RaftNode::maybe_compact() {
   if (opts_.compact_threshold == 0) return;
   if (!snap_provider_) return;
-  if (log_.size() <= opts_.compact_threshold) return;
-  if (last_applied_ < log_.first_index()) return;
-  const uint64_t old_first = log_.first_index();
+  const uint64_t first = log_.first_index();
+  if (last_applied_ < first) return;
+  // 按「已 apply 仍占内存的前缀」判断，勿用 log_.size()（含未 apply 尾部），
+  // 否则高写入时每条 report_applied 都会空转 compact + INFO 刷屏，并放大堆压力。
+  const uint64_t applied_in_log = last_applied_ - first + 1;
+  if (applied_in_log <= opts_.compact_threshold) return;
+  const uint64_t old_first = first;
   // 先落 FSM，再砍日志——否则重启无法重建状态机。
   save_local_fsm_snapshot_locked();
   uint64_t term = log_.snapshot_term();
   if (auto e = log_.entry(last_applied_)) term = e->term;
   log_.compact_to(last_applied_, term);
   // 前缀删除交给 engine_flush_locked 的 cut；避免与 flush 双删竞态。
-  (void)old_first;
   persist_locked();
-  SKV_INFO << "shard=" << opts_.shard_id << " compacted to index=" << last_applied_
-           << " first=" << log_.first_index();
+  if (log_.first_index() != old_first) {
+    SKV_DEBUG << "shard=" << opts_.shard_id << " compacted to index=" << last_applied_
+              << " first=" << log_.first_index();
+  }
 }
 
 void RaftNode::on_append_entries(const std::string& from, uint64_t term, uint64_t prev_idx,

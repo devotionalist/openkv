@@ -736,6 +736,7 @@ void GatewayServer::raw_put_async(const kv::v1::RawPutRequest* req, kv::v1::RawP
   args.key = req->key();
   args.value = req->value();
   args.ttl_ms = req->ttl_ms();
+  args.epoch = epoch_of(region);
   args.cas = req->cas();
   args.expected_revision = req->expected_revision();
   note_to_store(addr);
@@ -790,6 +791,7 @@ void GatewayServer::raw_delete_async(const kv::v1::RawDeleteRequest* req,
   args.shard_id = region;
   args.is_delete = true;
   args.key = req->key();
+  args.epoch = epoch_of(region);
   args.cas = req->cas();
   args.expected_revision = req->expected_revision();
   note_to_store(addr);

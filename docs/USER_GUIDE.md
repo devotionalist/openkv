@@ -86,8 +86,8 @@ Chart：[`deploy/helm/openkv`](../deploy/helm/openkv)。默认 **Meta×3 + Stora
 k3s 使用 containerd，需把 Docker 镜像导入后再装：
 
 ```bash
-docker build -f deploy/Dockerfile -t openkv:dev .
-docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
+# 推荐：builder 基础镜像 + BuildKit 增量（docs/flows/32-docker-builder-cache.md）
+./scripts/docker-build-dev.sh          # builder(如缺) + openkv + gateway
 docker build -f deploy/Dockerfile.web --build-context sdk=../openkv-client-go -t openkv-web:dev .
 
 docker save openkv:dev         | colima ssh -- sudo k3s ctr images import -

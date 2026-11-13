@@ -19,14 +19,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <thread>
 #include <unistd.h>
 
 using openkv::NodeConfig;
-using openkv::storage::CmdOp;
-using openkv::storage::Command;
 using openkv::storage::KvEngine;
 using openkv::storage::StorageNode;
 using openkv::storage::StoreFacade;
@@ -86,7 +85,7 @@ TEST(WatchLogTest, TrimCapacity) {
   std::filesystem::remove_all(dir);
 }
 
-TEST(WatchLogTest, CommitRevisionIsRaftIndex) {
+TEST(WatchLogTest, OnePcWatchPersistsAcrossRestart) {
   auto dir =
       std::filesystem::temp_directory_path() / ("skv_wtxn_" + std::to_string(::getpid()));
   std::filesystem::remove_all(dir);
@@ -97,7 +96,7 @@ TEST(WatchLogTest, CommitRevisionIsRaftIndex) {
   cfg.bootstrap_regions = {0};
   cfg.raft_election_timeout_ms = 200;
   cfg.raft_heartbeat_ms = 50;
-  uint64_t put_rev = 0;
+  uint64_t watch_rev = 0;
   {
     StorageNode node(cfg);
     StoreFacade facade(node);
@@ -106,29 +105,26 @@ TEST(WatchLogTest, CommitRevisionIsRaftIndex) {
       if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    Command put;
-    put.op = CmdOp::kPut;
-    put.key = "wk";
-    put.value = "wv";
-    auto pr = facade.propose(0, put);
-    ASSERT_TRUE(pr.ok);
-    put_rev = pr.revision;
-    auto evs = WatchLog::poll(node.engines().get_or_create(0), 0, put_rev - 1, 10);
-    ASSERT_FALSE(evs.empty());
-    EXPECT_EQ(evs.back().revision, put_rev);
-    EXPECT_EQ(evs.back().key, "wk");
+    // Watch 属事务平面：ONEPC 写 WatchLog；Raw Propose 不写。
+    auto pr = facade.one_pc(0, "wk", 10, 11, "wk", /*put*/ 0, "wv");
+    ASSERT_TRUE(pr.ok) << pr.error;
+    auto evs = WatchLog::poll(node.engines().get_or_create(0), 0, 0, 20);
+    auto it = std::find_if(evs.begin(), evs.end(),
+                           [](const auto& e) { return e.key == "wk"; });
+    ASSERT_NE(it, evs.end());
+    EXPECT_EQ(it->value, "wv");
+    watch_rev = it->revision;
+    EXPECT_GT(watch_rev, 0u);
     node.stop();
   }
   // 进程级重启：引擎锁释放后再打开
   {
     StorageNode node2(cfg);
     node2.start();
-    auto evs2 = WatchLog::poll(node2.engines().get_or_create(0), 0, 0, 10);
-    bool found = false;
-    for (const auto& e : evs2) {
-      if (e.key == "wk" && e.revision == put_rev) found = true;
-    }
-    EXPECT_TRUE(found);
+    auto evs2 = WatchLog::poll(node2.engines().get_or_create(0), 0, 0, 20);
+    EXPECT_TRUE(std::any_of(evs2.begin(), evs2.end(), [&](const auto& e) {
+      return e.key == "wk" && e.revision == watch_rev;
+    }));
     node2.stop();
   }
   std::filesystem::remove_all(dir);

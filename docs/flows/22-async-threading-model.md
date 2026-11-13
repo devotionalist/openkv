@@ -64,7 +64,7 @@ flowchart TB
 ### Storage
 
 - 入站：`Store`/`Admin` **CallbackService**；`Raft` 短路径
-- `Propose`：`propose_async` → `wait_async` → `Finish`
+- `Propose`：`propose_async`（Raw 非 CAS 无 latch；其余 `lock_key_async`）→ `wait_async` → `Finish`；**禁止**在 CQ 上 `Latches::lock`/`cv.wait`
 - Admin 类型化 RPC（Ensure/Place/Split/…/`Stats`/`Ping`）；无 `ExecLineHandler`
 - `SKV_STORAGE_GRPC_WORKERS`
 

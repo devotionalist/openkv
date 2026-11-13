@@ -14,9 +14,12 @@
 
 // @file gateway_watch.cpp
 // Watch：ServerWriteReactor + store_watch_*_async；间隔 sleep 走 WorkPool。
+// Reactor 经 enable_shared_from_this / weak_ptr 护住：客户端取消后 OnDone 删除
+// 对象时，在途 poll 回调不得再碰已释放的 reactor（曾致 gateway exit 139）。
 
 #include "openkv/compute/gateway_server.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -36,27 +39,69 @@ bool has_prefix(std::string_view s, std::string_view p) {
   return s.size() >= p.size() && s.substr(0, p.size()) == p;
 }
 
+/// 写队列与取消标志；生命周期长于 gRPC reactor（回调只握 weak_ptr）。
+struct WatchBridge {
+  std::mutex mu;
+  std::condition_variable cv;
+  std::deque<kv::v1::WatchEvent> q;
+  kv::v1::WatchEvent pending;
+  bool writing{false};
+  bool done{false};
+  bool cancelled{false};
+  bool finished{false};
+  /// gRPC 侧已 OnDone；此后禁止再 StartWrite / Finish。
+  bool dead{false};
+  class WatchReactor* reactor{nullptr};
+
+  void stop_from_reactor() {
+    std::lock_guard<std::mutex> lock(mu);
+    cancelled = true;
+    done = true;
+    dead = true;
+    reactor = nullptr;
+    cv.notify_all();
+  }
+};
+
 class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
  public:
+  static WatchReactor* New() {
+    auto* r = new WatchReactor();
+    r->bridge_ = std::make_shared<WatchBridge>();
+    {
+      std::lock_guard<std::mutex> lock(r->bridge_->mu);
+      r->bridge_->reactor = r;
+    }
+    // 控制块供 weak_ptr；真实释放仍在 OnDone → delete this。
+    r->self_hold_ = std::shared_ptr<WatchReactor>(r, [](WatchReactor*) {});
+    return r;
+  }
+
+  std::shared_ptr<WatchBridge> bridge() const { return bridge_; }
+  std::weak_ptr<WatchReactor> weak_self() const { return self_hold_; }
+
   void enqueue_or_finish(kv::v1::WatchEvent ev) {
     {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (cancelled_ || finished_) return;
-      q_.push_back(std::move(ev));
+      std::lock_guard<std::mutex> lock(bridge_->mu);
+      if (bridge_->cancelled || bridge_->finished || bridge_->dead) return;
+      bridge_->q.push_back(std::move(ev));
     }
     try_write();
   }
 
   bool wait_drain() {
-    std::unique_lock<std::mutex> lock(mu_);
-    cv_.wait(lock, [&] { return cancelled_ || q_.empty(); });
-    return !cancelled_;
+    std::unique_lock<std::mutex> lock(bridge_->mu);
+    bridge_->cv.wait(lock, [&] {
+      return bridge_->cancelled || bridge_->dead || bridge_->q.empty();
+    });
+    return !bridge_->cancelled && !bridge_->dead;
   }
 
   void mark_done() {
     {
-      std::lock_guard<std::mutex> lock(mu_);
-      done_ = true;
+      std::lock_guard<std::mutex> lock(bridge_->mu);
+      if (bridge_->dead) return;
+      bridge_->done = true;
     }
     try_write();
   }
@@ -65,19 +110,20 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
     bool need_finish = false;
     grpc::Status finish_st = grpc::Status::OK;
     {
-      std::lock_guard<std::mutex> lock(mu_);
-      writing_ = false;
-      if (!ok) cancelled_ = true;
-      if (!ok || cancelled_) {
-        if (!finished_) {
-          finished_ = true;
+      std::lock_guard<std::mutex> lock(bridge_->mu);
+      if (bridge_->dead) return;
+      bridge_->writing = false;
+      if (!ok) bridge_->cancelled = true;
+      if (!ok || bridge_->cancelled) {
+        if (!bridge_->finished) {
+          bridge_->finished = true;
           need_finish = true;
           finish_st = grpc::Status(grpc::StatusCode::CANCELLED,
                                    ok ? "cancelled" : "watch write failed");
         }
       }
     }
-    cv_.notify_all();
+    bridge_->cv.notify_all();
     if (need_finish) {
       Finish(finish_st);
       return;
@@ -88,58 +134,58 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
   void OnCancel() override {
     bool need_finish = false;
     {
-      std::lock_guard<std::mutex> lock(mu_);
-      cancelled_ = true;
-      done_ = true;
-      // 写进行中交给 OnWriteDone Finish；否则此处 Finish，避免泄漏。
-      if (!writing_ && !finished_) {
-        finished_ = true;
+      std::lock_guard<std::mutex> lock(bridge_->mu);
+      if (bridge_->dead) return;
+      bridge_->cancelled = true;
+      bridge_->done = true;
+      if (!bridge_->writing && !bridge_->finished) {
+        bridge_->finished = true;
         need_finish = true;
       }
     }
-    cv_.notify_all();
+    bridge_->cv.notify_all();
     if (need_finish) {
       Finish(grpc::Status(grpc::StatusCode::CANCELLED, "cancelled"));
     }
   }
 
-  void OnDone() override { delete this; }
+  void OnDone() override {
+    bridge_->stop_from_reactor();
+    self_hold_.reset();
+    delete this;
+  }
 
  private:
+  WatchReactor() = default;
+
   void try_write() {
     bool need_finish = false;
     grpc::Status finish_st = grpc::Status::OK;
     {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (writing_ || finished_) return;
-      if (cancelled_) {
-        finished_ = true;
+      std::lock_guard<std::mutex> lock(bridge_->mu);
+      if (bridge_->dead || bridge_->writing || bridge_->finished) return;
+      if (bridge_->cancelled) {
+        bridge_->finished = true;
         need_finish = true;
         finish_st = grpc::Status(grpc::StatusCode::CANCELLED, "cancelled");
-      } else if (q_.empty()) {
-        if (!done_) return;
-        finished_ = true;
+      } else if (bridge_->q.empty()) {
+        if (!bridge_->done) return;
+        bridge_->finished = true;
         need_finish = true;
         finish_st = grpc::Status::OK;
       } else {
-        pending_ = std::move(q_.front());
-        q_.pop_front();
-        writing_ = true;
-        StartWrite(&pending_);
+        bridge_->pending = std::move(bridge_->q.front());
+        bridge_->q.pop_front();
+        bridge_->writing = true;
+        StartWrite(&bridge_->pending);
         return;
       }
     }
     if (need_finish) Finish(finish_st);
   }
 
-  std::mutex mu_;
-  std::condition_variable cv_;
-  std::deque<kv::v1::WatchEvent> q_;
-  kv::v1::WatchEvent pending_;
-  bool writing_{false};
-  bool done_{false};
-  bool cancelled_{false};
-  bool finished_{false};
+  std::shared_ptr<WatchBridge> bridge_;
+  std::shared_ptr<WatchReactor> self_hold_;
 };
 
 }  // namespace
@@ -160,36 +206,51 @@ std::vector<uint32_t> GatewayServer::regions_for_watch(const kv::v1::WatchReques
   return ids;
 }
 
-void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchRequest req,
+void GatewayServer::watch_async(kv::v1::WatchRequest req,
                                 const std::function<bool(const kv::v1::WatchEvent&)>& write_ev,
-                                std::function<void()> on_done) {
+                                std::function<void()> on_done, std::function<bool()> still_open) {
   struct State {
     GatewayServer* self;
-    grpc::CallbackServerContext* ctx;
     kv::v1::WatchRequest req;
     std::function<bool(const kv::v1::WatchEvent&)> write_ev;
     std::function<void()> on_done;
+    std::function<bool()> still_open;
+    std::atomic<bool> stopped{false};
     uint64_t since{0};
     std::vector<uint32_t> regions;
     size_t head_idx{0};
     size_t poll_idx{0};
     std::shared_ptr<std::function<void()>> after_heads;
     std::shared_ptr<std::function<void()>> poll_round;
+
+    bool live() const {
+      if (stopped.load(std::memory_order_acquire)) return false;
+      return !still_open || still_open();
+    }
+
+    void stop() {
+      stopped.store(true, std::memory_order_release);
+      if (on_done) {
+        auto cb = std::move(on_done);
+        on_done = nullptr;
+        cb();
+      }
+    }
   };
   auto st = std::make_shared<State>();
   st->self = this;
-  st->ctx = ctx;
   st->req = std::move(req);
   st->write_ev = write_ev;
   st->on_done = std::move(on_done);
+  st->still_open = std::move(still_open);
   st->since = st->req.start_revision();
   st->regions = regions_for_watch(st->req);
   st->after_heads = std::make_shared<std::function<void()>>();
   st->poll_round = std::make_shared<std::function<void()>>();
 
   *st->poll_round = [st]() {
-    if (!st->ctx || st->ctx->IsCancelled()) {
-      st->on_done();
+    if (!st->live()) {
+      st->stop();
       return;
     }
     if (st->poll_idx >= st->regions.size()) {
@@ -197,12 +258,14 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
       if (st->self->pool_) {
         st->self->pool_->post([st]() {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          (*st->poll_round)();
+          if (st->live()) (*st->poll_round)();
+          else st->stop();
         });
       } else {
         std::thread([st]() {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          (*st->poll_round)();
+          if (st->live()) (*st->poll_round)();
+          else st->stop();
         }).detach();
       }
       return;
@@ -218,6 +281,10 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
         *addr_opt, rid, st->since, 64, 15000,
         [st, rid](grpc::Status sst, StoreWatchPollResult out) {
           auto handle = [st, rid, sst, out = std::move(out)]() mutable {
+            if (!st->live()) {
+              st->stop();
+              return;
+            }
             if (!sst.ok()) {
               (*st->poll_round)();
               return;
@@ -232,6 +299,10 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
               return;
             }
             for (const auto& ev : out.events) {
+              if (!st->live()) {
+                st->stop();
+                return;
+              }
               if (!st->self->match_watch(st->req, ev.key)) continue;
               if (st->req.start_revision() > 0 && ev.revision <= st->req.start_revision()) continue;
               kv::v1::WatchEvent o;
@@ -240,7 +311,7 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
               o.set_value(ev.value);
               o.set_revision(ev.revision);
               if (!st->write_ev(o)) {
-                st->on_done();
+                st->stop();
                 return;
               }
             }
@@ -257,12 +328,20 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
   };
 
   auto start_poll = [st]() {
+    if (!st->live()) {
+      st->stop();
+      return;
+    }
     if (!st->req.key().empty()) {
       auto tg_req = std::make_shared<kv::v1::TxnGetRequest>();
       tg_req->set_key(st->req.key());
       tg_req->set_start_ts(std::numeric_limits<uint64_t>::max());
       auto tg = std::make_shared<kv::v1::TxnGetResponse>();
       st->self->txn_get_async(tg_req.get(), tg.get(), 0, [st, tg_req, tg](grpc::Status) {
+        if (!st->live()) {
+          st->stop();
+          return;
+        }
         if (tg->found() && !tg->locked()) {
           uint64_t rev = st->since;
           if (rev == 0) rev = 1;
@@ -272,7 +351,7 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
           ev.set_value(tg->value());
           ev.set_revision(rev);
           if (!st->write_ev(ev)) {
-            st->on_done();
+            st->stop();
             return;
           }
         }
@@ -288,7 +367,6 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
       start_poll();
       return;
     }
-    // start_revision==0 path already handled heads below
     start_poll();
   };
 
@@ -307,6 +385,10 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
   hs->st = st;
   hs->step = std::make_shared<std::function<void()>>();
   *hs->step = [hs, start_poll]() {
+    if (!hs->st->live()) {
+      hs->st->stop();
+      return;
+    }
     if (hs->idx >= hs->st->regions.size()) {
       start_poll();
       return;
@@ -320,6 +402,10 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
     hs->st->self->note_to_store(*addr_opt);
     store_watch_head_async(*addr_opt, rid, 5000,
                            [hs](grpc::Status sst, StoreWatchHeadResult out) {
+                             if (!hs->st->live()) {
+                               hs->st->stop();
+                               return;
+                             }
                              if (sst.ok() && out.error.empty() && out.redirect_to.empty()) {
                                if (out.revision > hs->st->since) hs->st->since = out.revision;
                              } else if (!out.redirect_to.empty()) {
@@ -334,15 +420,31 @@ void GatewayServer::watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchR
 
 grpc::ServerWriteReactor<kv::v1::WatchEvent>* GatewayServer::Watch(
     grpc::CallbackServerContext* ctx, const kv::v1::WatchRequest* req) {
-  auto* reactor = new WatchReactor();
+  (void)ctx;
+  auto* reactor = WatchReactor::New();
   note_client_rpc();
   kv::v1::WatchRequest req_copy = *req;
-  watch_async(ctx, std::move(req_copy),
-              [reactor](const kv::v1::WatchEvent& ev) {
-                reactor->enqueue_or_finish(ev);
-                return reactor->wait_drain();
-              },
-              [reactor]() { reactor->mark_done(); });
+  std::weak_ptr<WatchReactor> weak = reactor->weak_self();
+  auto bridge = reactor->bridge();
+  watch_async(
+      std::move(req_copy),
+      [weak, bridge](const kv::v1::WatchEvent& ev) {
+        auto r = weak.lock();
+        if (!r) return false;
+        {
+          std::lock_guard<std::mutex> lock(bridge->mu);
+          if (bridge->cancelled || bridge->dead) return false;
+        }
+        r->enqueue_or_finish(ev);
+        return r->wait_drain();
+      },
+      [weak]() {
+        if (auto r = weak.lock()) r->mark_done();
+      },
+      [bridge]() {
+        std::lock_guard<std::mutex> lock(bridge->mu);
+        return !bridge->cancelled && !bridge->dead;
+      });
   return reactor;
 }
 

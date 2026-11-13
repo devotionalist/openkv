@@ -17,6 +17,7 @@
 
 #include "openkv/compute/gateway_server.hpp"
 #include "openkv/compute/store_rpc.hpp"
+#include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/net/tcp_line_client.hpp"
 
@@ -190,10 +191,11 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
 
+  // 优雅关机：HTTP 先停；gRPC 拒新请求并排空在途；再停路由后台。
   http.stop();
   if (http_thr.joinable()) http_thr.join();
-  server->Shutdown();
-  server->Wait();
+  openkv::graceful_grpc_shutdown(server.get());
+  server.reset();
   gateway.stop_background();
   return 0;
 }

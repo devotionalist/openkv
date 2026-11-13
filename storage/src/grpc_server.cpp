@@ -19,6 +19,7 @@
 
 #include "openkv/admin_acl.hpp"
 #include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/storage/storage_node.hpp"
@@ -151,7 +152,8 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
       case pb::ProposeRequest::PUT:
       case pb::ProposeRequest::DELETE:
       default:
-        facade_.propose_async(req->shard_id(), command_from_propose_req(*req), std::move(finish));
+        facade_.propose_async(req->shard_id(), command_from_propose_req(*req), std::move(finish),
+                              req->epoch());
         break;
     }
     return reactor;
@@ -626,8 +628,9 @@ void StorageGrpcServer::start() {
 
 void StorageGrpcServer::stop() {
   if (!running_.exchange(false)) return;
+  // 先拒新 RPC 并排空在途（WorkPool 仍存活，供 Callback Finish）；再拆服务与线程池。
   if (impl_ && impl_->server) {
-    impl_->server->Shutdown();
+    openkv::graceful_grpc_shutdown(impl_->server);
     impl_->server.reset();
   }
   impl_->admin.reset();

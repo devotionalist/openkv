@@ -104,6 +104,7 @@ struct ProposePlainArgs {
   std::string key;
   std::string value;
   int64_t ttl_ms{0};  // 相对寿命；Storage 侧 stamp 成绝对 expire
+  uint64_t epoch{0};
   bool cas{false};
   uint64_t expected_revision{0};
 };

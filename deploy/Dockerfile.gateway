@@ -1,16 +1,19 @@
+# syntax=docker/dockerfile:1
 # OpenKV C++ compute gateway（gateway_node）
-# 构建：docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
+# 依赖基础镜像 openkv-builder:dev（见 Dockerfile.builder）。
+#
+#   docker build -f deploy/Dockerfile.builder -t openkv-builder:dev .
+#   DOCKER_BUILDKIT=1 docker build -f deploy/Dockerfile.gateway -t openkv-gateway:dev .
 
-FROM ubuntu:24.04 AS build
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    build-essential cmake git pkg-config ccache \
-    protobuf-compiler-grpc libgrpc++-dev libprotobuf-dev \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
+ARG BUILDER_IMAGE=openkv-builder:dev
+FROM ${BUILDER_IMAGE} AS build
 COPY . .
-RUN cmake -B build \
-      -DOPENKV_BUILD_TESTS=OFF \
- && cmake --build build -j"$(nproc)" --target gateway_node
+RUN --mount=type=cache,target=/root/.ccache \
+    --mount=type=cache,id=openkv-cmake-build,target=/src/build \
+    cmake -B build -DOPENKV_BUILD_TESTS=OFF \
+ && cmake --build build -j"$(nproc)" --target gateway_node \
+ && ccache -s \
+ && cp -a build/compute/gateway_node /tmp/
 
 FROM ubuntu:24.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -19,7 +22,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates bash libgrpc++1 libprotobuf23) \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/build/compute/gateway_node /opt/openkv/gateway_node
+COPY --from=build /tmp/gateway_node /opt/openkv/gateway_node
 USER nobody
 EXPOSE 19000
 ENTRYPOINT ["/opt/openkv/gateway_node"]

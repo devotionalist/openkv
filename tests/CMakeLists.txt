@@ -30,6 +30,7 @@ set(OPENKV_TEST_SOURCES
   common/config_test.cpp
   common/admin_acl_test.cpp
   common/meta_rpc_test.cpp
+  common/grpc_shutdown_test.cpp
   # raft：日志、单节点、MultiRaft、持久化恢复
   raft/raft_log_test.cpp
   raft/raft_node_test.cpp
@@ -64,6 +65,7 @@ set(OPENKV_TEST_SOURCES
   compute/router_test.cpp
   compute/ds_encode_test.cpp
   compute/meta_client_test.cpp
+  compute/ts_range_queue_test.cpp
 )
 
 add_executable(openkv_unit_tests ${OPENKV_TEST_SOURCES})

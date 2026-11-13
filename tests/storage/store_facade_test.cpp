@@ -18,9 +18,11 @@
 #include "openkv/storage/mvcc.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/store_service.hpp"
+#include "openkv/storage/watch_log.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <future>
@@ -33,6 +35,7 @@ using openkv::storage::CmdOp;
 using openkv::storage::Command;
 using openkv::storage::StorageNode;
 using openkv::storage::StoreFacade;
+using openkv::storage::WatchLog;
 
 class StoreFacadeTest : public ::testing::Test {
  protected:
@@ -111,6 +114,21 @@ TEST_F(StoreFacadeTest, RawPlanePutGetDeleteAndCas) {
   auto one = facade_->one_pc(0, "txn/k1", 10, 11, "txn/k1", /*put*/ 0, "tv");
   ASSERT_TRUE(one.ok) << one.error;
   EXPECT_EQ(one.revision, 11u);
+}
+
+// Raw 写不落 WatchLog；ONEPC 才写（Watch 属事务平面）。
+TEST_F(StoreFacadeTest, RawPlaneSkipsWatchLog) {
+  auto put = facade_->propose(0, {CmdOp::kPut, "raw-nowatch", "v", 0});
+  ASSERT_TRUE(put.ok) << put.error;
+  auto& eng = node_->engines().get_or_create(0);
+  for (const auto& e : WatchLog::poll(eng, 0, 0, 100)) {
+    EXPECT_NE(e.key, "raw-nowatch");
+  }
+  auto one = facade_->one_pc(0, "txn-watch", 20, 21, "txn-watch", /*put*/ 0, "tv");
+  ASSERT_TRUE(one.ok) << one.error;
+  const auto after_one = WatchLog::poll(eng, 0, 0, 100);
+  EXPECT_TRUE(std::any_of(after_one.begin(), after_one.end(),
+                          [](const auto& e) { return e.key == "txn-watch"; }));
 }
 
 TEST_F(StoreFacadeTest, Delete) {

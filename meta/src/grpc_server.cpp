@@ -20,6 +20,7 @@
 #include "openkv/admin_acl.hpp"
 #include "openkv/codec.hpp"
 #include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/peer_counter.hpp"
 #include "openkv/protocol.hpp"
@@ -670,8 +671,9 @@ void MetaGrpcServer::start() {
 
 void MetaGrpcServer::stop() {
   if (!running_.exchange(false)) return;
+  // 先拒新 RPC 并排空在途；WorkPool 须在 Wait 完成前仍可用。
   if (impl_ && impl_->server) {
-    impl_->server->Shutdown();
+    openkv::graceful_grpc_shutdown(impl_->server);
     impl_->server.reset();
   }
   if (impl_) {

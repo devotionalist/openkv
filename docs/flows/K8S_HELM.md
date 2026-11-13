@@ -23,9 +23,11 @@ Chart：[`deploy/helm/openkv`](../../deploy/helm/openkv)
 
 镜像：
 
-- `deploy/Dockerfile` → `openkv:<tag>`（`meta_server` / `storage_node`）
+- `deploy/Dockerfile.builder` → `openkv-builder:<tag>`（工具链基础镜像；少重建）
+- `deploy/Dockerfile` → `openkv:<tag>`（`meta_server` / `storage_node`；FROM builder + build cache）
 - `deploy/Dockerfile.gateway` → `openkv-gateway:<tag>`（C++ `gateway_node`）
 - `deploy/Dockerfile.web` → `openkv-web:<tag>`（管控台；需 `--build-context sdk=../openkv-client-go`）
+- 本地一键：`./scripts/docker-build-dev.sh`（见 [32-docker-builder-cache](32-docker-builder-cache.md)）
 
 ## 边界
 

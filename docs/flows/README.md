@@ -87,6 +87,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 | Raft 选举 / 心跳 / 提交 | [06-raft-election-commit.md](06-raft-election-commit.md) | `maybe_commit`、选票、AE/SNAP |
 | Storage 启动 | [07-storage-startup.md](07-storage-startup.md) | MultiRaft 工厂、WAL、tick、gRPC listen |
 | 故障恢复 | [04-fault-recovery.md](04-fault-recovery.md) | load WAL → AE 追赶 / InstallSnapshot |
+| 进程优雅关机 | [31-graceful-shutdown.md](31-graceful-shutdown.md) | SIGTERM：拒新 RPC + 排空在途 |
 | Meta HA | [05-meta-ha.md](05-meta-ha.md) | Meta×3、管控命令、TSO |
 
 ---
@@ -114,8 +115,10 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 |------|------|------|
 | C++ Gateway | [18-cpp-gateway.md](18-cpp-gateway.md) | `gateway_node` 组件、端口、启动参数 |
 | Compute 代码地图 | [29-compute-code-map.md](29-compute-code-map.md) | 路径矩阵、双栈、粗糙点与注释基线 |
+| Gateway Watch UAF | [33-gateway-watch-uaf.md](33-gateway-watch-uaf.md) | cancel 后 reactor UAF → exit 139；weak_ptr 修复 |
+| Storage compact 风暴 | [34-storage-compact-storm.md](34-storage-compact-storm.md) | apply 前缀 compact + 批 report；metrics 坏 map 不 dtor |
 | 统一异步 Store | [30-unified-async-store.md](30-unified-async-store.md) | 去 WorkPool sync；StoreService 扩 Txn/Scan/Watch |
-| TSO 热路径 | [16-gateway-tso-perf.md](16-gateway-tso-perf.md) | 批缓存；`alloc_ts(2)`；短 Put 一次 Meta 跳 |
+| TSO 热路径 | [16-gateway-tso-perf.md](16-gateway-tso-perf.md) | 无锁区间环；批 5000；剩余&lt;2000 预取 |
 | 异步网络 | [21-async-network.md](21-async-network.md) | CallbackService；`propose_async` / `wait_async` |
 | 异步线程模型 | [22-async-threading-model.md](22-async-threading-model.md) | 接收线程 vs WorkPool vs apply 回调 |
 | 架构硬化 | [19-architecture-hardening.md](19-architecture-hardening.md) | CV 等 apply、latch 持到 apply、approx split、Meta CV |
@@ -124,7 +127,7 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | 写路径三刀 | [25-write-path-knives.md](25-write-path-knives.md) | Ready 攒批、二进制 ONEPC、workers 8/8 |
 | Raftstore schedule | [26-raftstore-schedule-pipeline.md](26-raftstore-schedule-pipeline.md) | schedule 唤醒 + drain-until-empty |
 | 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、ONEPC WriteBatch、BatchSystem CV |
-| 全接口压测 | [17-gateway-api-bench.md](17-gateway-api-bench.md) | `examples/bench`；基线记 TEST_CASES |
+| 全接口压测 | [17-gateway-api-bench.md](17-gateway-api-bench.md) | `api-bench-all.sh` / skill `openkv-api-bench`；改完必跑；基线记 TEST_CASES |
 
 生产写路径总图：[COMPONENT_MAP §3](../architecture/COMPONENT_MAP.md) · [MULTI_RAFT_PRODUCTION](../production/MULTI_RAFT_PRODUCTION.md)
 
@@ -138,6 +141,7 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | 数据面硬化（Cop / Snap / 转主） | [DATA_PLANE_HARDENING.md](DATA_PLANE_HARDENING.md) |
 | 集成覆盖扩展 | [IT_COVERAGE_EXPANSION.md](IT_COVERAGE_EXPANSION.md) |
 | Helm HA | [K8S_HELM.md](K8S_HELM.md) |
+| Docker builder 缓存 | [32-docker-builder-cache.md](32-docker-builder-cache.md) | `openkv-builder` + BuildKit build/ccache |
 | K8s 加节点 vs 运维页加入 | [K8S_SCALE.md](K8S_SCALE.md) |
 
 公开步骤：[USER_GUIDE.md](../USER_GUIDE.md) §3–§4。

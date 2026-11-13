@@ -165,8 +165,9 @@ class StoreFacade {
 
   ProposeResult propose(uint32_t shard_id, const Command& cmd);
   /// 异步 propose：gRPC Callback 路径；完成回调可能在 apply / 超时线程。
+  /// expected_epoch==0 跳过校验（与 one_pc_async 一致）。
   void propose_async(uint32_t shard_id, const Command& cmd,
-                     std::function<void(ProposeResult)> cb);
+                     std::function<void(ProposeResult)> cb, uint64_t expected_epoch = 0);
   GetResult get(uint32_t shard_id, std::string_view key, bool linearizable);
 
   /// expected_epoch==0 跳过校验。cas=true 时 apply 校验最新 commit_ts == expected_revision（0=create-only）。

@@ -297,30 +297,16 @@ void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::Lo
       continue;
     }
 
-    if (cmd.op == CmdOp::kPut && !cmd.cas) {
-      puts.emplace_back(cmd.key, cmd.value, e.index, cmd.ttl_ms);
+    // Raw 平面：只写用户 KvRecord；Watch 属事务平面，不写 WatchLog（比 ONEPC 少 1 次落盘）。
+    if ((cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete) && !cmd.cas) {
+      if (cmd.op == CmdOp::kPut) {
+        puts.emplace_back(cmd.key, cmd.value, e.index, cmd.ttl_ms);
+      } else {
+        dels.emplace_back(cmd.key);
+      }
       Pending p;
       p.index = e.index;
       p.req_id = cmd.request_id;
-      p.has_watch = true;
-      p.watch = WatchRecord{shard_id, e.index, false, cmd.key, cmd.value};
-      puts.emplace_back(WatchLog::make_key(e.index),
-                        WatchLog::encode_payload(false, cmd.key, cmd.value), e.index, 0);
-      need_watch_trim = true;
-      pending.push_back(std::move(p));
-      continue;
-    }
-
-    if (cmd.op == CmdOp::kDelete && !cmd.cas) {
-      dels.emplace_back(cmd.key);
-      Pending p;
-      p.index = e.index;
-      p.req_id = cmd.request_id;
-      p.has_watch = true;
-      p.watch = WatchRecord{shard_id, e.index, true, cmd.key, {}};
-      puts.emplace_back(WatchLog::make_key(e.index),
-                        WatchLog::encode_payload(true, cmd.key, {}), e.index, 0);
-      need_watch_trim = true;
       pending.push_back(std::move(p));
       continue;
     }
@@ -373,11 +359,6 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
         }
       }
       eng.put(cmd.key, cmd.value, index, cmd.ttl_ms);
-      {
-        WatchRecord wr{shard_id, index, false, cmd.key, cmd.value};
-        WatchLog::append(eng, wr);
-        watch_hub_.push(std::move(wr));
-      }
       finish();
       break;
     }
@@ -393,11 +374,6 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
         }
       }
       eng.del(cmd.key, index);
-      {
-        WatchRecord wr{shard_id, index, true, cmd.key, {}};
-        WatchLog::append(eng, wr);
-        watch_hub_.push(std::move(wr));
-      }
       finish();
       break;
     }

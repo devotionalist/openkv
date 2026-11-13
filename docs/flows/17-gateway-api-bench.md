@@ -9,18 +9,33 @@
 
 ## 方案
 
-- 工具：`client/go/examples/bench`（`-mode all` 顺序跑各 API；`-list` 列模式）
+- 工具：`client/go/examples/bench`（`-mode all` 顺序跑各 API；`-list` 列模式 + **plane**）
 - 集群内跑（避免本机 `kubectl port-forward` 断连）：交叉编译 `GOOS=linux GOARCH=amd64` → `kubectl cp` 到临时 Pod → `-addr gateway:19000`
 - 短 Put = 本地 TSO + **ONEPC**（1 Propose）；seed **禁止**同 key 超时重试（否则 `ERR locked`）
 
+### API 平面（SUMMARY 按 plane 分组）
+
+| plane | 含义 | 模式 |
+|-------|------|------|
+| **txn** | MVCC 事务平面（TSO / lock / ONEPC） | `get` `put` `delete` `batch_*` `scan` `txn` `watch` … |
+| **raw** | 无事务 Raw 平面（无 TSO/MVCC） | **仅** `rawput` `rawget` `rawdelete` |
+| **ds** | 数据结构 RPC；底层仍走 MVCC Put/Get | `hset` `sadd` `lpush` `zadd` … |
+
+无事务接口一律带 `raw` 前缀。`batch_put` / `batch_get` **不是** Raw，也不是「N key 一次 Raft Propose」：Gateway **扇出** ≤16 路单 key Put/Get，bench 的 ops/s 计**批次数**（batch=4 时 keys/s ≈ ops×4）。
+
 ## 怎么跑
 
+Agent / 改完收尾：规则 `.cursor/rules/post-change-api-bench.mdc` + skill `.cursor/skills/openkv-api-bench/SKILL.md`。
+
 ```bash
+# 一键（推荐）
+./scripts/api-bench-all.sh
+
 # 本机（需稳定 port-forward 到 gateway:19000）
 (cd client/go && go build -o ../../.run/kv-bench ./examples/bench)
 ./.run/kv-bench -addr 127.0.0.1:19000 -mode all -workers 8 -duration 5s
 
-# 集群内（推荐）
+# 集群内手工
 (cd client/go && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../../.run/kv-bench-linux ./examples/bench)
 kubectl -n openkv run okv-bench --restart=Never --image=alpine:3.20 -- sleep 3600
 kubectl -n openkv wait --for=condition=Ready pod/okv-bench
@@ -29,7 +44,6 @@ kubectl -n openkv exec okv-bench -- chmod +x /kv-bench
 kubectl -n openkv exec okv-bench -- /kv-bench \
   -addr gateway.openkv.svc.cluster.local:19000 \
   -mode all -workers 8 -duration 5s -warmup 500ms -keys 50
-kubectl -n openkv delete pod okv-bench
 ```
 
 ## 验收
@@ -40,25 +54,22 @@ kubectl -n openkv delete pod okv-bench
 | B2 | `-mode all` 跑完打印 `SUMMARY` 表；进程 exit 0 |
 | B3 | 读路径（get / get_stale）fail=0；写路径允许 fail（`apply_timeout` / `locked`）但 ok>0 |
 
-## 基线结果（2026-11-10）
+## 基线结果（2026-11-12）
 
-环境：Colima k3s · meta=1 / storage=1 / RF=1 · workers=8 · duration=5s · keys≈26（seed 中途 `apply_timeout`）· vsize=64
+环境：Colima k3s · meta=1 / storage=1 / RF=1 · workers=8 · duration=5s · keys=50 · vsize=64  
+镜像含 ONEPC / TSO 无锁环 / 优雅关机。完整表见 [TEST_CASES](../test/TEST_CASES.md)。
 
-| API | ops/s | p50 | p99 | ok | fail |
-|-----|------:|----:|----:|---:|-----:|
-| get | 429 | 14ms | 149ms | 2147 | 0 |
-| get_stale | 514 | 14ms | 49ms | 2568 | 0 |
-| put | 6.4 | 353ms | 574ms | 32 | 138 |
-| put_ttl | 19 | 323ms | 1.1s | 97 | 73 |
-| batch_put | 0.4 | 937ms | 937ms | 2 | 87 |
-| batch_get | 99 | 50ms | 413ms | 496 | 0 |
-| scan | 31 | 439ms | 519ms | 156 | 0 |
-| txn | 8.8 | 412ms | 858ms | 44 | 30 |
-| watch | 18 | 447ms | 463ms | 88 | 0 |
-| lpush / zadd | 22 / 25 | ~300ms | ~600ms | 109 / 126 | 0 |
-| hset / sadd | 2.2 / 0.2 | — | — | 低 | 高 |
+| API | ops/s | p50 | ok | fail |
+|-----|------:|----:|---:|-----:|
+| get / get_stale | 2693 / 3714 | ~2ms | 高 | 0 |
+| put / rawput（隔离） | **227 / 344** | **7.8ms / 4.0ms** | 1817 / 2750 | 0 |
+| rawget / batch_get / ttl | 2848 / 2084 / 2453 | ~2ms | 高 | 0 |
+| scan / list_prefix | ~22 | ~350ms | ~110 | 0 |
+| txn / txn_rollback | 30 / 618 | 216ms / 5ms | 149 / 3088 | 31 / 0 |
+| sadd / lpush / zadd | 116 / 66 / 94 | — | ok>0 | 0 |
+| watch / hset | — | — | 低 | 高（既有路径） |
 
-结论：线性读尚可（~400–500 ops/s）；写路径受单 Region Raft apply + 事务写路径限制，高并发下大量 `apply_timeout`/`locked`。与 [16-gateway-tso-perf.md](16-gateway-tso-perf.md)「下一刀：apply 回调等待」一致。
+结论：写路径 Raw 非 CAS 跳过 latch 后 **rawput ≥ put**（见 [27](27-raw-vs-txn.md)）。Watch/HSet 仍弱。
 
 多 Region 压测：先 `bash scripts/bench-multi-region.sh bench-mr 4 200`，再 `examples/bench -prefix bench-mr …`；设计见 [23-write-path-batching](23-write-path-batching.md)。
 

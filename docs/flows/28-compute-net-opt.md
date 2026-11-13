@@ -22,7 +22,7 @@
 | `StoreGetRequest.start_ts` | `0` = plain Get（Raw）；`>0` = MVCC `txn_get` |
 | Gateway `get_async` | `alloc_async` → `store_get_async(..., start_ts)` |
 | Stub 缓存 | `grpc_channel`：按 addr 缓存 Store/Admin/Meta stub；`drop_cached_channel` 同清 |
-| `TSOracle::alloc_async` | 命中同步回调；miss 异步 `MetaService.GetTs` 补货 |
+| `TSOracle::alloc_async` | 无锁环 CAS take；剩余&lt;2000 异步 push GetTs(5000)；硬 miss 锁 waiters |
 | BatchPut/Get | CQ fan-in，窗口 ≤16，复用 `put_async_cb` / `get_async_cb` |
 
 ```mermaid

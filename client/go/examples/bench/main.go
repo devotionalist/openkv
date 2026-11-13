@@ -22,8 +22,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// plane: txn=MVCC 事务平面；raw=无事务 Raw 平面；ds=数据结构（底层仍走 MVCC Put/Get）。
 type result struct {
 	Name  string
+	Plane string
 	OK    uint64
 	Fail  uint64
 	Ops   float64
@@ -49,7 +51,9 @@ func main() {
 
 	modes := allModes()
 	if *list {
-		fmt.Println(strings.Join(modes, "\n"))
+		for _, m := range modes {
+			fmt.Printf("%-14s  %s\n", m, modePlane(m))
+		}
 		return
 	}
 	runModes := modes
@@ -96,7 +100,7 @@ func main() {
 		if m == "" || m == "all" {
 			continue
 		}
-		fmt.Printf("\n>>> %s workers=%d duration=%s\n", m, *workers, *duration)
+		fmt.Printf("\n>>> %s [%s] workers=%d duration=%s\n", m, modePlane(m), *workers, *duration)
 		r := runOne(ctx, cli, rawKV, rawDS, m, *prefix, *keys, val, *workers, *duration, *warmup, *opTimeout)
 		results = append(results, r)
 		fmt.Printf("    %.1f ops/s  p50=%s p95=%s p99=%s  ok=%d fail=%d %s\n",
@@ -105,25 +109,36 @@ func main() {
 	}
 
 	fmt.Println("\n================ SUMMARY ================")
-	fmt.Printf("%-14s %10s %8s %8s %8s %8s %6s\n", "API", "ops/s", "p50", "p95", "p99", "ok", "fail")
-	for _, r := range results {
-		fmt.Printf("%-14s %10.1f %8s %8s %8s %8d %6d\n",
-			r.Name, r.Ops,
-			fmtDur(r.P50), fmtDur(r.P95), fmtDur(r.P99),
-			r.OK, r.Fail)
+	fmt.Println("plane: txn=MVCC/TSO；raw=无事务；ds=数据结构(底层 MVCC)")
+	fmt.Printf("%-6s %-14s %10s %8s %8s %8s %8s %6s  %s\n",
+		"plane", "API", "ops/s", "p50", "p95", "p99", "ok", "fail", "notes")
+	printPlane := func(plane string) {
+		for _, r := range results {
+			if r.Plane != plane {
+				continue
+			}
+			fmt.Printf("%-6s %-14s %10.1f %8s %8s %8s %8d %6d  %s\n",
+				r.Plane, r.Name, r.Ops,
+				fmtDur(r.P50), fmtDur(r.P95), fmtDur(r.P99),
+				r.OK, r.Fail, r.Notes)
+		}
 	}
+	printPlane("txn")
+	printPlane("raw")
+	printPlane("ds")
 }
 
 func allModes() []string {
+	// 顺序：txn → raw → ds。无事务接口一律 raw*；batch_* 仍是事务面扇出（非多 key 单 Propose）。
 	return []string{
 		"get", "get_stale", "put", "put_ttl", "put_cas",
-		"rawget", "rawput", "rawdelete",
 		"delete", "delete_cas",
 		"batch_put", "batch_get",
 		"scan", "list_prefix",
 		"ttl", "expire", "persist",
 		"txn", "txn_rollback",
 		"watch",
+		"rawput", "rawget", "rawdelete",
 		"hset", "hget",
 		"sadd", "sismember",
 		"lpush", "llen",
@@ -131,9 +146,21 @@ func allModes() []string {
 	}
 }
 
+func modePlane(mode string) string {
+	switch mode {
+	case "rawput", "rawget", "rawdelete":
+		return "raw"
+	case "hset", "hget", "sadd", "sismember", "lpush", "llen", "zadd", "zscore":
+		return "ds"
+	default:
+		return "txn"
+	}
+}
+
 func seed(ctx context.Context, cli *kv.Client, prefix string, n int, val []byte, to time.Duration) int {
-	// Sequential seed: Put = TSO+Prewrite+Commit. Do not retry the same key after a
+	// Sequential seed: Put = TSO+ONEPC. Do not retry the same key after a
 	// client/server timeout — a live prewrite lock yields ERR locked.
+	// Raw 平面用独立前缀；合跑 all 时勿与事务 key 混用。
 	ok := 0
 	for i := 0; i < n; i++ {
 		opCtx, cancel := context.WithTimeout(ctx, to)
@@ -146,6 +173,15 @@ func seed(ctx context.Context, cli *kv.Client, prefix string, n int, val []byte,
 		ok++
 		if (i+1)%25 == 0 {
 			fmt.Printf("  seed %d/%d\n", i+1, n)
+		}
+	}
+	for i := 0; i < ok; i++ {
+		opCtx, cancel := context.WithTimeout(ctx, to)
+		_, err := cli.RawPut(opCtx, keyOf(prefix+"-raw", i), val)
+		cancel()
+		if err != nil {
+			fmt.Printf("  raw seeded %d/%d: %v (rawget may miss)\n", i, ok, err)
+			break
 		}
 	}
 	return ok
@@ -235,9 +271,14 @@ func runOne(
 	latMu.Unlock()
 
 	nOK := ok.Load()
+	ops := float64(nOK) / elapsed.Seconds()
+	// batch_* 的 ops/s 计「批次数」；附带 keys/s 便于和单 key put/get 对比。
+	if mode == "batch_put" || mode == "batch_get" {
+		notes = fmt.Sprintf("%s · ~%.0f keys/s（扇出 4×单 key，非单 Propose）", notes, ops*4)
+	}
 	return result{
-		Name: mode, OK: nOK, Fail: fail.Load(),
-		Ops: float64(nOK) / elapsed.Seconds(),
+		Name: mode, Plane: modePlane(mode), OK: nOK, Fail: fail.Load(),
+		Ops: ops,
 		P50: p50, P95: p95, P99: p99, NLat: n, Notes: notes,
 	}
 }
@@ -323,22 +364,22 @@ func makeOp(
 	case "batch_put":
 		return func(ctx context.Context, i int) error {
 			m := map[string][]byte{
-				string(keyOf(prefix+"-bp", i%keys)):         val,
-				string(keyOf(prefix+"-bp", (i+1)%keys)):     val,
-				string(keyOf(prefix+"-bp", (i+2)%keys)):     val,
-				string(keyOf(prefix+"-bp", (i+3)%keys)):     val,
+				string(keyOf(prefix+"-bp", i%keys)):     val,
+				string(keyOf(prefix+"-bp", (i+1)%keys)): val,
+				string(keyOf(prefix+"-bp", (i+2)%keys)): val,
+				string(keyOf(prefix+"-bp", (i+3)%keys)): val,
 			}
 			return cli.BatchPut(ctx, m)
-		}, "batch=4"
+		}, "txn · batch=4 · Gateway 扇出 ONEPC"
 	case "batch_get":
 		return func(ctx context.Context, i int) error {
-			req := &kvv1.BatchGetRequest{Linearizable: true}
+			batch := make([][]byte, 4)
 			for j := 0; j < 4; j++ {
-				req.Keys = append(req.Keys, keyOf(prefix, (i+j)%keys))
+				batch[j] = keyOf(prefix, (i+j)%keys)
 			}
-			_, err := rawKV.BatchGet(ctx, req)
+			_, err := cli.BatchGet(ctx, batch)
 			return err
-		}, "batch=4"
+		}, "txn · batch=4 · Gateway 扇出 Get"
 	case "scan":
 		return func(ctx context.Context, i int) error {
 			_, err := cli.Scan(ctx, &kvv1.ScanRequest{

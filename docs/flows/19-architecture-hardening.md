@@ -16,7 +16,7 @@
 | 主题 | 行为 |
 |------|------|
 | 写等待 | `RaftKV::async_write` → propose + `drive_ready`；`ProposalQueue` **CV / wait_async** 等 `invoke`（无 5ms tick 空转） |
-| Latch | `Scheduler::lock` 在 propose 前；**持到 apply 结束**再 unlock |
+| Latch | 事务/CAS：`lock_key_async` 在 propose 前，**持到 apply**；非 CAS Raw Put/Delete **跳过**（见 [27](27-raw-vs-txn.md)） |
 | 廉价 size | RocksDB `GetApproximateSizes` + `estimate-num-keys`；`pick_split_key` 近似对半 |
 | Split worker | tick 只做廉价阈值判定入队；独立线程跑 Meta SPLIT + PREPARE/SPLIT |
 | Meta CV | `apply_cv_` 唤醒 GET_TS / replicate；`route_cv_` + version 唤醒 WATCH_ROUTE |
@@ -26,8 +26,10 @@ Ready 批合并与 apply WriteBatch 见 [23](23-write-path-batching.md)。异步
 
 ```mermaid
 flowchart LR
-  P[propose] --> L[latch hold]
-  P --> R[drive_ready]
+  P[propose] --> L{需要 latch?}
+  L -->|Raw 非 CAS| R[drive_ready]
+  L -->|CAS/ONEPC| LA[lock_async]
+  LA --> R
   R --> A[apply invoke]
   A --> U[latch unlock]
   A --> W[ProposalQueue wake]

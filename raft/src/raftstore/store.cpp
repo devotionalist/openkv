@@ -602,8 +602,7 @@ void Store::on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs) {
   }
   if (slices.empty()) return;
 
-  auto finish_entry = [&](uint32_t rid, const raft::LogEntry& e) {
-    if (auto* n = get(rid)) n->report_applied(e.index);
+  auto finish_conf = [&](uint32_t rid, const raft::LogEntry& e) {
     const bool is_conf = !e.data.empty() && static_cast<unsigned char>(e.data[0]) == 0xFF;
     if (is_conf) router_->send_raft(rid, ApplyRes{rid, e.index, true});
   };
@@ -612,15 +611,33 @@ void Store::on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs) {
     for (auto& sl : slices) {
       if (sl.entries.empty()) continue;
       apply_batch_fn_(sl.region_id, sl.entries);
-      for (const auto& e : sl.entries) finish_entry(sl.region_id, e);
+      for (const auto& e : sl.entries) finish_conf(sl.region_id, e);
+      // 整批只 report 一次：maybe_compact / persist 按批触发，避免每条空转 compact。
+      if (auto* n = get(sl.region_id)) n->report_applied(sl.entries.back().index);
     }
     return;
   }
   if (!apply_fn_) return;
   const auto flat = flatten_apply_slices(slices);
+  uint32_t cur_rid = 0;
+  uint64_t cur_last = 0;
+  bool have = false;
   for (const auto& [rid, e] : flat) {
     apply_fn_(rid, e.index, e.data);
-    finish_entry(rid, e);
+    finish_conf(rid, e);
+    if (!have || rid != cur_rid) {
+      if (have) {
+        if (auto* n = get(cur_rid)) n->report_applied(cur_last);
+      }
+      cur_rid = rid;
+      cur_last = e.index;
+      have = true;
+    } else {
+      cur_last = e.index;
+    }
+  }
+  if (have) {
+    if (auto* n = get(cur_rid)) n->report_applied(cur_last);
   }
 }
 

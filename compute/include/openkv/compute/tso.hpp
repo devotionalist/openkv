@@ -13,13 +13,15 @@
 // limitations under the License.
 
 // @file tso.hpp
-// Gateway 本地 TSO 批缓存（从 Meta GetTs 补货）。
+// Gateway 本地 TSO：无锁区间环发放 + 低水位异步补货。
 //
-// 不变量：对外发放的是半开区间 [next, end)；alloc / alloc_async 原子推进 next。
-// CQ 热路径必须用 alloc_async；alloc 会在 miss 时同步打 Meta（仅 WorkPool/测试）。
+// 热路径 try_take（CAS，无 mutex）；硬 miss 才锁 waiters_ 排队。
 
 #pragma once
 
+#include "openkv/compute/ts_range_queue.hpp"
+
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -30,42 +32,48 @@
 
 namespace openkv::compute {
 
-inline constexpr uint32_t kDefaultTsoBatch = 512;
+inline constexpr uint32_t kDefaultTsoBatch = 5000;
+inline constexpr uint32_t kDefaultTsoLowWatermark = 2000;
 
-/// 本地批缓存：Alloc 先吃内存，耗尽再 GetTs 补货。
+/// 无锁区间队列 TSO；miss 路径用 mutex 护 waiter 列表。
 class TSOracle {
  public:
-  /// 构造；batch_size==0 读 OPENKV_TSO_BATCH（默认 512）；<=1 关闭缓存每次打 Meta。
-  explicit TSOracle(std::vector<std::string> meta_addrs, uint32_t batch_size = 0);
+  explicit TSOracle(std::vector<std::string> meta_addrs, uint32_t batch_size = 0,
+                    uint32_t low_watermark = 0);
 
-  /// 同步分配 n 个连续 ts，返回起始值；miss 时阻塞打 Meta（仅 WorkPool/单测）。
   uint64_t alloc(uint32_t n = 1);
-
-  /// 异步分配：缓存命中立即 cb(OK, start)；miss 则排队等补货后 cb（不堵 CQ）。
   void alloc_async(uint32_t n, std::function<void(grpc::Status, uint64_t start)> cb);
 
-  /// 单测注入已缓存半开区间 [next, end)。
   void inject_cache_for_test(uint64_t next, uint64_t end);
+  void inject_range_for_test(uint64_t next, uint64_t end);
 
-  /// 当前配置的批大小（补货请求 count）。
   uint32_t batch_size() const { return batch_size_; }
+  uint32_t low_watermark() const { return low_watermark_; }
+  uint64_t remaining_for_test() const { return q_.remaining(); }
 
  private:
-  /// 等待补货完成的异步请求。
   struct Waiter {
     uint32_t n{1};
     std::function<void(grpc::Status, uint64_t)> cb;
   };
 
-  /// 持锁：向 Meta 同步/异步补货，满足 need；唤醒 waiters_。
-  void refill_locked(uint32_t need);
+  /// 低于水位则 CAS 武装预取。
+  bool arm_prefetch(uint32_t* out_req);
+
+  void push_batch(uint64_t start, uint32_t got);
+  void start_refill_async(uint32_t req);
+
+  /// 硬 miss：入 waiters；若尚未 in-flight 则武装补货。已现场命中则直接 cb 并返回 false。
+  bool enqueue_waiter_and_arm(uint32_t n, std::function<void(grpc::Status, uint64_t)> cb,
+                              uint32_t* out_req);
 
   std::vector<std::string> meta_addrs_;
   uint32_t batch_size_;
-  mutable std::mutex mu_;
-  uint64_t next_{0};
-  uint64_t end_{0};
-  bool refill_inflight_{false};
+  uint32_t low_watermark_;
+  TsRangeQueue<64> q_;
+  std::atomic<bool> refill_inflight_{false};
+
+  std::mutex wait_mu_;
   std::vector<Waiter> waiters_;
 };
 

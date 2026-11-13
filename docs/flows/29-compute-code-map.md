@@ -76,7 +76,7 @@ flowchart TB
 3. **detach**：`sync_epochs_async`、部分 secondary resolve 无 shutdown 汇合。  
 4. **字符串错误**：`contains(msg, "locked"|"not_leader"|…)`。  
 5. **命名**：`region_of` / Propose `shard_id` 混用（语义均为 RegionId）。  
-6. **Watch `wait_drain`**：事件写出仍可能阻塞 WorkPool 线程。  
+6. **Watch `wait_drain`**：事件写出仍可能阻塞 WorkPool 线程（已修 cancel UAF：`weak_ptr` + bridge，避免 OnDone 后 SEGV / exit 139）。  
 7. ~~**Meta GetTs 无 batch**~~：已支持 `GetTsRequest.count` 一次分配。
 
 ---

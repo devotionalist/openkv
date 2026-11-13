@@ -343,7 +343,7 @@ ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
 }
 
 void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
-                                std::function<void(ProposeResult)> cb) {
+                                std::function<void(ProposeResult)> cb, uint64_t expected_epoch) {
   if (!cb) return;
   // 原地构造，避免临时对象析构导致 observe 双打。
   auto timer = std::make_shared<ScopedRegionTimer>(&metrics_, shard_id, true);
@@ -364,6 +364,13 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     if (redir.empty()) redir = node_.peer_address(group->soft_state().leader_id);
     fail("not_leader", std::move(redir));
     return;
+  }
+  if (expected_epoch != 0) {
+    const uint64_t cur = node_.region_epoch(shard_id);
+    if (cur != expected_epoch) {
+      fail("epoch_not_match expected=" + std::to_string(cur));
+      return;
+    }
   }
   // E4：同 request_id 重试直接返回缓存，不再二次 propose
   if (cmd.request_id != 0) {
@@ -387,36 +394,53 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     return;
   }
 
-  // 用户 key latch 持到 apply；propose + 一次 flush_ready；纯 CV 等 invoke。
+  // Raw 平面 LWW（非 CAS Put/Delete）：Raft apply 已串行，跳过 latch，避免 Propose CQ 上 cv.wait。
+  // 事务 / CAS：lock_async 占锁持到 apply；冲突时回调续跑，不阻塞接收线程。
   auto* sched = node_.scheduler();
-  const std::string latch_key =
-      cmd_has_user_key(cmd) ? cmd.key : (std::string("op:") + std::to_string(static_cast<int>(cmd.op)));
-  const uint64_t latch_tok = sched ? sched->lock_key(latch_key) : 0;
+  const bool skip_latch =
+      (cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete) && !cmd.cas;
 
-  uint64_t idx = 0;
-  std::string perr;
-  bool proposed = false;
-  if (auto* kv = node_.raftkv()) {
-    proposed = kv->async_write(shard_id, encode_command(cmd), &idx, &perr);
-  } else if (group->propose(encode_command(cmd), &idx)) {
-    proposed = true;
-  } else {
-    perr = "propose_failed";
-  }
-  if (!proposed) {
-    if (sched) sched->unlock(latch_tok);
-    fail(perr.empty() ? "propose_failed" : std::move(perr));
+  auto after_latch = [this, shard_id, cmd, timer = std::move(timer), cb = std::move(cb),
+                      sched](uint64_t latch_tok) mutable {
+    uint64_t idx = 0;
+    std::string perr;
+    bool proposed = false;
+    if (auto* kv = node_.raftkv()) {
+      proposed = kv->async_write(shard_id, encode_command(cmd), &idx, &perr);
+    } else if (auto* g = node_.multi_raft().get(shard_id)) {
+      if (g->propose(encode_command(cmd), &idx)) {
+        proposed = true;
+      } else {
+        perr = "propose_failed";
+      }
+    } else {
+      perr = "no_region";
+    }
+    if (!proposed) {
+      if (sched) sched->unlock(latch_tok);
+      ProposeResult r;
+      r.error = perr.empty() ? "propose_failed" : std::move(perr);
+      cb(std::move(r));
+      return;
+    }
+
+    // 无 waiter tick：BatchSystem 经 flush_ready + tick_loop 推进；apply → invoke → Finish。
+    node_.wait_apply_async(
+        idx, std::chrono::milliseconds(5000),
+        [this, shard_id, cmd, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
+            ProposalQueue::WaitOutcome outcome) mutable {
+          cb(finish_propose(node_, shard_id, cmd, idx, outcome, latch_tok));
+          timer.reset();
+        });
+  };
+
+  if (skip_latch || !sched) {
+    after_latch(0);
     return;
   }
-
-  // 无 waiter tick：BatchSystem 经 flush_ready + tick_loop 推进；apply → invoke → Finish。
-  node_.wait_apply_async(
-      idx, std::chrono::milliseconds(5000),
-      [this, shard_id, cmd, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
-          ProposalQueue::WaitOutcome outcome) mutable {
-        cb(finish_propose(node_, shard_id, cmd, idx, outcome, latch_tok));
-        timer.reset();
-      });
+  const std::string latch_key =
+      cmd_has_user_key(cmd) ? cmd.key : (std::string("op:") + std::to_string(static_cast<int>(cmd.op)));
+  sched->lock_key_async(latch_key, std::move(after_latch));
 }
 
 GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool linearizable) {

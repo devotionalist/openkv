@@ -1,6 +1,6 @@
 # Gateway TSO / Meta RPC 性能优化
 
-日期：2026-11-10
+日期：2026-11-10（2026-11-12：区间队列 + 低水位预取）
 
 ## 问题
 
@@ -14,19 +14,27 @@
 
 | 项 | 位置 | 效果 |
 |---|---|---|
-| Meta 连接池 | `client/go/internal/route/meta_pool.go` | Meta RPC 复用 `ClientConn` |
-| TSO 批缓存 | `client/go/internal/route/tso.go` | 默认一次 `GET_TS 512`，本地发放；`OPENKV_TSO_BATCH` 可调（≤1 关闭缓存） |
-| Put/Delete 双 TS | `cmd/compute-gateway/main.go` | `allocTs(2)` 一次取 start+commit，`commitWithTs` |
-| 统一 alloc | Get / Scan / TTL / Txn* | 走 `s.allocTs` → 命中批缓存 |
-
-热路径形态：
+| TSO 无锁区间环 | `ts_range_queue.hpp` + `tso.*` | 固定环 MPMC：热路径 **CAS try_take**（无 mutex）；补货 **push**；默认 GetTs **5000**；剩余 **&lt;2000** 异步预取；miss 才锁 waiters |
+| 环境变量 | `OPENKV_TSO_BATCH` / `OPENKV_TSO_LOW_WATERMARK` | 批 ≤1 关闭缓存 |
+| Put/Delete 双 TS | Gateway | `alloc_async(2)` 一次取 start+commit |
 
 ```text
-Put/PutCAS:  [本地TS×2] → Prewrite → Commit     （Meta 热路径 0 跳；Storage 2 跳）
-Get lin:     [本地TS] → TxnGet                    （Meta 0；Storage 1）
+          ┌─ Meta GetTs(5000) ─┐
+          │                    ▼
+热路径 ──►│ 无锁环 TsRangeQueue │──► start_ts / commit_ts
+ CAS take │  atomic remaining   │     push（预取 / miss）
+          └─ 剩余 < 2000 触发 ─┘
 ```
+
+热路径无锁；仅硬 miss 的 waiter 列表用 `mutex`。
+
+## 验收
+
+| ID | 命令 / 期望 |
+|----|-------------|
+| T1 | `ctest --test-dir build -R TsoTest --output-on-failure` → PASS |
+| T2 | 默认 batch=5000、watermark=2000；`QueueDrainOrder` 按队序发放 |
 
 ## 未做（下一刀）
 
 - Storage propose 后 5ms 轮询 / `apply_timeout` → 回调等待  
-- 单 key 非 Percolator 快速 PutCAS（1 次 Raft Propose）

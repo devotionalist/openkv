@@ -93,11 +93,16 @@ RegionMetrics::RegionMetrics() {
 
 void RegionMetrics::ensure_map_usable() const {
   if (by_region_.bucket_count() != 0) return;
-  SKV_ERROR << "RegionMetrics by_region_ bucket_count=0; rebuilding map "
-               "(moved-from or memory corruption — prevents SIGFPE on hash%)";
+  // 生产里 bucket_count==0 多半是堆损坏的表象，不是合法 moved-from。
+  // 旧实现 swap 后析构损坏 map → 二次 SIGSEGV（storage exit 139）。
+  // 这里把坏 map 挪到堆上故意泄漏，再原地换干净表，避免 dtor 踩垃圾。
+  SKV_ERROR << "RegionMetrics by_region_ bucket_count=0; replacing map "
+               "(leaking corrupted instance — prevents SIGFPE/SIGSEGV on hash%/dtor)";
   std::unordered_map<uint32_t, RegionLatency> fresh;
   fresh.rehash(16);
   by_region_.swap(fresh);
+  // intentional leak of corrupted map
+  (void)new std::unordered_map<uint32_t, RegionLatency>(std::move(fresh));
 }
 
 RegionLatency& RegionMetrics::ensure(uint32_t region_id) {

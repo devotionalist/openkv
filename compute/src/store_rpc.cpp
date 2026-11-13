@@ -206,6 +206,7 @@ void store_propose_plain_async(const std::string& addr, ProposePlainArgs args, i
   req->set_key(std::move(args.key));
   if (!args.is_delete) req->set_value(std::move(args.value));
   req->set_ttl_ms(args.ttl_ms);
+  req->set_epoch(args.epoch);
   req->set_cas(args.cas);
   req->set_expected_revision(args.expected_revision);
   auto resp = std::make_shared<::storage::v1::ProposeResponse>();

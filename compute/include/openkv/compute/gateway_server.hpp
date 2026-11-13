@@ -371,9 +371,10 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
                               kv::v1::TxnCheckStatusResponse* resp,
                               std::function<void(grpc::Status)> done);
 
-  void watch_async(grpc::CallbackServerContext* ctx, kv::v1::WatchRequest req,
+  /// still_open：reactor 未取消/未 OnDone 时返回 true（勿再读 CallbackServerContext*）。
+  void watch_async(kv::v1::WatchRequest req,
                    const std::function<bool(const kv::v1::WatchEvent&)>& write_ev,
-                   std::function<void()> on_done);
+                   std::function<void()> on_done, std::function<bool()> still_open);
 
   void ds_load_async(const std::string& mk,
                      std::function<void(grpc::Status, std::string blob, bool found)> done);

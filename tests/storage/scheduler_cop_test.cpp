@@ -85,6 +85,36 @@ TEST(SchedulerTest, LatchHoldUntilUnlock) {
   EXPECT_EQ(hold_writes.load(), 2);
 }
 
+TEST(SchedulerTest, LatchAsyncDoesNotBlockCaller) {
+  openkv::storage::Scheduler sched;
+  std::atomic<int> granted{0};
+  std::atomic<uint64_t> first_tok{0};
+  std::atomic<uint64_t> second_tok{0};
+
+  sched.lock_key_async("k", [&](uint64_t tok) {
+    first_tok.store(tok);
+    ++granted;
+  });
+  ASSERT_NE(first_tok.load(), 0u);
+  EXPECT_EQ(granted.load(), 1);
+
+  std::atomic<bool> second_scheduled{false};
+  sched.lock_key_async("k", [&](uint64_t tok) {
+    second_tok.store(tok);
+    ++granted;
+  });
+  second_scheduled.store(true);
+  // 冲突时立即返回，不 cv.wait；回调等 unlock 后触发。
+  EXPECT_TRUE(second_scheduled.load());
+  EXPECT_EQ(granted.load(), 1);
+  EXPECT_EQ(second_tok.load(), 0u);
+
+  sched.unlock(first_tok.load());
+  EXPECT_EQ(granted.load(), 2);
+  EXPECT_NE(second_tok.load(), 0u);
+  sched.unlock(second_tok.load());
+}
+
 TEST(CoprocessorTest, PrefixScanInRange) {
   auto dir = fs::temp_directory_path() / ("skv_cop_" + std::to_string(::getpid()));
   fs::remove_all(dir);
