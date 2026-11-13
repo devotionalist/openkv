@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file grpc_server.cpp
-// Storage gRPC Server：Store/Admin 用 CallbackService（热路径不占线程等 apply）。
+// Storage gRPC Server：Store/Admin/Raft 一律 CallbackService（热路径不占线程等 apply）。
 
 #include "openkv/storage/grpc_server.hpp"
 
@@ -50,6 +50,7 @@ std::string extract_redirect(std::string_view s) {
 using openkv::WorkPool;
 using grpc::CallbackServerContext;
 using grpc::ServerContext;
+using grpc::ServerReadReactor;
 using grpc::ServerUnaryReactor;
 using grpc::Status;
 namespace pb = ::storage::v1;
@@ -312,12 +313,76 @@ void parse_ae_line(std::string_view line, pb::AppendEntriesResponse* resp) {
   }
 }
 
-class RaftServiceImpl final : public pb::RaftService::Service {
+void fill_install_snapshot_resp(std::string_view line, uint64_t term, uint64_t last_idx,
+                                pb::InstallSnapshotResponse* resp) {
+  std::istringstream iss{std::string(line)};
+  std::string ok, tag;
+  uint64_t out_term = term;
+  int success = 0;
+  uint64_t match = last_idx;
+  if ((iss >> ok >> tag >> out_term >> success >> match) && ok == "OK") {
+    resp->set_ok(success != 0);
+    resp->set_term(out_term);
+    resp->set_match_index(match);
+  } else {
+    resp->set_ok(proto::starts_with_ok(line));
+    resp->set_term(term);
+    if (resp->ok()) resp->set_match_index(last_idx);
+  }
+}
+
+class InstallSnapshotReactor final : public ServerReadReactor<pb::SnapshotChunk> {
+ public:
+  InstallSnapshotReactor(StorageNode& node, pb::InstallSnapshotResponse* resp)
+      : node_(node), resp_(resp) {
+    StartRead(&chunk_);
+  }
+
+  void OnReadDone(bool ok) override {
+    if (ok) {
+      shard_ = chunk_.shard_id();
+      term_ = chunk_.term();
+      from_ = chunk_.leader_id();
+      last_idx_ = chunk_.last_included_index();
+      last_term_ = chunk_.last_included_term();
+      buf_.append(chunk_.data());
+      if (chunk_.done()) {
+        apply_and_finish();
+        return;
+      }
+      StartRead(&chunk_);
+      return;
+    }
+    apply_and_finish();
+  }
+
+  void OnDone() override { delete this; }
+
+ private:
+  void apply_and_finish() {
+    auto line = node_.handle_raft_snapshot(shard_, from_, term_, last_idx_, last_term_, buf_);
+    fill_install_snapshot_resp(line, term_, last_idx_, resp_);
+    Finish(Status::OK);
+  }
+
+  StorageNode& node_;
+  pb::InstallSnapshotResponse* resp_;
+  pb::SnapshotChunk chunk_;
+  std::string buf_;
+  std::string from_;
+  uint32_t shard_{0};
+  uint64_t term_{0};
+  uint64_t last_idx_{0};
+  uint64_t last_term_{0};
+};
+
+class RaftServiceImpl final : public pb::RaftService::CallbackService {
  public:
   explicit RaftServiceImpl(StorageNode& n) : node_(n) {}
 
-  Status AppendEntries(ServerContext*, const pb::AppendEntriesRequest* req,
-                       pb::AppendEntriesResponse* resp) override {
+  ServerUnaryReactor* AppendEntries(CallbackServerContext* ctx, const pb::AppendEntriesRequest* req,
+                                    pb::AppendEntriesResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     std::vector<raft::LogEntry> ents;
     ents.reserve(req->entries_size());
     for (const auto& e : req->entries()) {
@@ -327,57 +392,33 @@ class RaftServiceImpl final : public pb::RaftService::Service {
                                          req->prev_log_index(), req->prev_log_term(),
                                          req->leader_commit(), ents);
     parse_ae_line(line, resp);
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status RequestVote(ServerContext*, const pb::RequestVoteRequest* req,
-                     pb::RequestVoteResponse* resp) override {
+  ServerUnaryReactor* RequestVote(CallbackServerContext* ctx, const pb::RequestVoteRequest* req,
+                                  pb::RequestVoteResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     auto line = node_.handle_raft_vote(req->shard_id(), req->candidate_id(), req->term(),
                                        req->last_log_index(), req->last_log_term());
     parse_vote_line(line, resp);
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status RequestPreVote(ServerContext*, const pb::RequestVoteRequest* req,
-                        pb::RequestVoteResponse* resp) override {
+  ServerUnaryReactor* RequestPreVote(CallbackServerContext* ctx, const pb::RequestVoteRequest* req,
+                                     pb::RequestVoteResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     auto line = node_.handle_raft_pre_vote(req->shard_id(), req->candidate_id(), req->term(),
                                            req->last_log_index(), req->last_log_term());
     parse_vote_line(line, resp);
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status InstallSnapshot(ServerContext*, grpc::ServerReader<pb::SnapshotChunk>* reader,
-                         pb::InstallSnapshotResponse* resp) override {
-    pb::SnapshotChunk chunk;
-    std::string buf;
-    uint32_t shard = 0;
-    uint64_t term = 0, last_idx = 0, last_term = 0;
-    std::string from;
-    while (reader->Read(&chunk)) {
-      shard = chunk.shard_id();
-      term = chunk.term();
-      from = chunk.leader_id();
-      last_idx = chunk.last_included_index();
-      last_term = chunk.last_included_term();
-      buf.append(chunk.data());
-      if (chunk.done()) break;
-    }
-    auto line = node_.handle_raft_snapshot(shard, from, term, last_idx, last_term, buf);
-    std::istringstream iss(line);
-    std::string ok, tag;
-    uint64_t out_term = term;
-    int success = 0;
-    uint64_t match = last_idx;
-    if ((iss >> ok >> tag >> out_term >> success >> match) && ok == "OK") {
-      resp->set_ok(success != 0);
-      resp->set_term(out_term);
-      resp->set_match_index(match);
-    } else {
-      resp->set_ok(proto::starts_with_ok(line));
-      resp->set_term(term);
-      if (resp->ok()) resp->set_match_index(last_idx);
-    }
-    return Status::OK;
+  ServerReadReactor<pb::SnapshotChunk>* InstallSnapshot(CallbackServerContext*,
+                                                        pb::InstallSnapshotResponse* resp) override {
+    return new InstallSnapshotReactor(node_, resp);
   }
 
  private:

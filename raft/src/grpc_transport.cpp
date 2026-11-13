@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file grpc_transport.cpp
-// Raft 出站 gRPC（peer 表在 Impl，出站计数在 GrpcRaftTransport）。
+// Raft 出站 gRPC：Unary / InstallSnapshot 一律 Callback API（async / ClientWriteReactor）。
 
 #include "openkv/raft/grpc_transport.hpp"
 
@@ -24,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -33,6 +34,7 @@
 #include <vector>
 
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/support/client_callback.h>
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
@@ -117,7 +119,7 @@ struct GrpcRaftTransport::Impl {
   std::vector<std::thread> workers_;
   size_t snap_chunk_bytes_{kDefaultSnapChunk};
 
-  ::storage::v1::RaftService::Stub* stub_for(const std::string& addr) {
+  std::shared_ptr<::storage::v1::RaftService::Stub> stub_for(const std::string& addr) {
     std::lock_guard<std::mutex> lock(mu_);
     auto& s = stubs_[addr];
     if (!s) {
@@ -127,7 +129,7 @@ struct GrpcRaftTransport::Impl {
       auto ch = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args);
       s = ::storage::v1::RaftService::NewStub(ch);
     }
-    return s.get();
+    return s;
   }
 
   size_t queue_depth() const {
@@ -164,6 +166,89 @@ struct GrpcRaftTransport::Impl {
     }
   }
 
+  class InstallSnapshotReactor final : public grpc::ClientWriteReactor<::storage::v1::SnapshotChunk> {
+   public:
+    InstallSnapshotReactor(std::shared_ptr<::storage::v1::RaftService::Stub> stub, Job job,
+                           std::string addr, uint64_t send_term, uint64_t last_idx,
+                           uint64_t last_term, std::string bin, size_t chunk_sz)
+        : stub_(std::move(stub)),
+          job_(std::move(job)),
+          addr_(std::move(addr)),
+          send_term_(send_term),
+          last_idx_(last_idx),
+          last_term_(last_term),
+          bin_(std::move(bin)),
+          chunk_sz_(chunk_sz == 0 ? kDefaultSnapChunk : chunk_sz),
+          total_(bin_.size()),
+          done_(std::make_shared<std::promise<grpc::Status>>()) {
+      ctx_.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(60));
+      stub_->async()->InstallSnapshot(&ctx_, &resp_, this);
+      write_next();
+      StartCall();
+    }
+
+    std::future<grpc::Status> get_future() { return done_->get_future(); }
+    const ::storage::v1::InstallSnapshotResponse& resp() const { return resp_; }
+
+    void OnWriteDone(bool ok) override {
+      if (!ok) {
+        SKV_WARN << "InstallSnapshot write fail to=" << job_.peer_id << " addr=" << addr_
+                 << " offset=" << offset_;
+        if (!last_was_done_) StartWritesDone();
+        return;
+      }
+      offset_ += last_n_;
+      if (last_was_done_) return;  // StartWriteLast 已隐含 WritesDone
+      write_next();
+    }
+
+    void OnDone(const grpc::Status& st) override {
+      try {
+        done_->set_value(st);
+      } catch (...) {
+      }
+    }
+
+   private:
+    void write_next() {
+      const size_t n = total_ == 0 ? 0 : std::min(chunk_sz_, static_cast<size_t>(total_ - offset_));
+      const bool done = (offset_ + n >= total_);
+      chunk_.Clear();
+      chunk_.set_shard_id(job_.shard);
+      chunk_.set_leader_id(job_.self_id);
+      chunk_.set_term(send_term_);
+      chunk_.set_last_included_index(last_idx_);
+      chunk_.set_last_included_term(last_term_);
+      chunk_.set_offset(offset_);
+      if (n > 0) chunk_.set_data(bin_.data() + offset_, n);
+      chunk_.set_done(done);
+      last_n_ = n;
+      last_was_done_ = done;
+      if (done) {
+        StartWriteLast(&chunk_, grpc::WriteOptions());
+      } else {
+        StartWrite(&chunk_);
+      }
+    }
+
+    std::shared_ptr<::storage::v1::RaftService::Stub> stub_;
+    Job job_;
+    std::string addr_;
+    uint64_t send_term_{0};
+    uint64_t last_idx_{0};
+    uint64_t last_term_{0};
+    std::string bin_;
+    size_t chunk_sz_{kDefaultSnapChunk};
+    uint64_t total_{0};
+    uint64_t offset_{0};
+    size_t last_n_{0};
+    bool last_was_done_{false};
+    grpc::ClientContext ctx_;
+    ::storage::v1::InstallSnapshotResponse resp_;
+    ::storage::v1::SnapshotChunk chunk_;
+    std::shared_ptr<std::promise<grpc::Status>> done_;
+  };
+
   void dispatch(const Job& job) {
     std::shared_ptr<RaftNode> node;
     std::string addr;
@@ -179,7 +264,7 @@ struct GrpcRaftTransport::Impl {
       }
       addr = pit->second;
     }
-    auto* stub = stub_for(addr);
+    auto stub = stub_for(addr);
     if (!stub) {
       if (needs_fail_callback(job.type)) node->on_rpc_transport_fail(job.peer_id);
       return;
@@ -189,23 +274,35 @@ struct GrpcRaftTransport::Impl {
       if (job.type == "RequestVote" || job.type == "RequestPreVote") {
         auto parts = split_pipe(job.payload);
         if (parts.size() < 3) return;
-        ::storage::v1::RequestVoteRequest req;
-        req.set_shard_id(job.shard);
-        req.set_candidate_id(job.self_id);
-        req.set_term(std::stoull(parts[0]));
-        req.set_last_log_index(std::stoull(parts[1]));
-        req.set_last_log_term(std::stoull(parts[2]));
-        ::storage::v1::RequestVoteResponse resp;
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-        grpc::Status st = (job.type == "RequestPreVote")
-                              ? stub->RequestPreVote(&ctx, req, &resp)
-                              : stub->RequestVote(&ctx, req, &resp);
-        if (!st.ok()) return;
-        if (job.type == "RequestPreVote") {
-          node->on_request_pre_vote_reply(job.peer_id, resp.term(), resp.vote_granted());
+        auto ctx = std::make_shared<grpc::ClientContext>();
+        ctx->set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto req = std::make_shared<::storage::v1::RequestVoteRequest>();
+        req->set_shard_id(job.shard);
+        req->set_candidate_id(job.self_id);
+        req->set_term(std::stoull(parts[0]));
+        req->set_last_log_index(std::stoull(parts[1]));
+        req->set_last_log_term(std::stoull(parts[2]));
+        auto resp = std::make_shared<::storage::v1::RequestVoteResponse>();
+        const bool pre = (job.type == "RequestPreVote");
+        auto done = std::make_shared<std::promise<grpc::Status>>();
+        auto fut = done->get_future();
+        auto cb = [done, stub, ctx, req, resp](grpc::Status st) {
+          try {
+            done->set_value(std::move(st));
+          } catch (...) {
+          }
+        };
+        if (pre) {
+          stub->async()->RequestPreVote(ctx.get(), req.get(), resp.get(), std::move(cb));
         } else {
-          node->on_request_vote_reply(job.peer_id, resp.term(), resp.vote_granted());
+          stub->async()->RequestVote(ctx.get(), req.get(), resp.get(), std::move(cb));
+        }
+        auto st = fut.get();
+        if (!st.ok()) return;
+        if (pre) {
+          node->on_request_pre_vote_reply(job.peer_id, resp->term(), resp->vote_granted());
+        } else {
+          node->on_request_vote_reply(job.peer_id, resp->term(), resp->vote_granted());
         }
         return;
       }
@@ -216,17 +313,19 @@ struct GrpcRaftTransport::Impl {
           node->on_rpc_transport_fail(job.peer_id);
           return;
         }
-        ::storage::v1::AppendEntriesRequest req;
-        req.set_shard_id(job.shard);
-        req.set_leader_id(job.self_id);
-        req.set_term(std::stoull(parts[0]));
-        req.set_prev_log_index(std::stoull(parts[1]));
-        req.set_prev_log_term(std::stoull(parts[2]));
-        req.set_leader_commit(std::stoull(parts[3]));
+        auto ctx = std::make_shared<grpc::ClientContext>();
+        ctx->set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+        auto req = std::make_shared<::storage::v1::AppendEntriesRequest>();
+        req->set_shard_id(job.shard);
+        req->set_leader_id(job.self_id);
+        req->set_term(std::stoull(parts[0]));
+        req->set_prev_log_index(std::stoull(parts[1]));
+        req->set_prev_log_term(std::stoull(parts[2]));
+        req->set_leader_commit(std::stoull(parts[3]));
         const size_t n = static_cast<size_t>(std::stoull(parts[4]));
         size_t idx = 5;
         for (size_t i = 0; i < n && idx + 2 < parts.size(); ++i) {
-          auto* e = req.add_entries();
+          auto* e = req->add_entries();
           e->set_term(std::stoull(parts[idx]));
           e->set_index(std::stoull(parts[idx + 1]));
           std::string bin;
@@ -237,15 +336,23 @@ struct GrpcRaftTransport::Impl {
           }
           idx += 3;
         }
-        ::storage::v1::AppendEntriesResponse resp;
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
-        auto st = stub->AppendEntries(&ctx, req, &resp);
+        auto resp = std::make_shared<::storage::v1::AppendEntriesResponse>();
+        auto done = std::make_shared<std::promise<grpc::Status>>();
+        auto fut = done->get_future();
+        stub->async()->AppendEntries(ctx.get(), req.get(), resp.get(),
+                                     [done, stub, ctx, req, resp](grpc::Status st) {
+                                       try {
+                                         done->set_value(std::move(st));
+                                       } catch (...) {
+                                       }
+                                     });
+        auto st = fut.get();
         if (!st.ok()) {
           node->on_rpc_transport_fail(job.peer_id);
           return;
         }
-        node->on_append_entries_reply(job.peer_id, resp.term(), resp.success(), resp.match_index());
+        node->on_append_entries_reply(job.peer_id, resp->term(), resp->success(),
+                                      resp->match_index());
         return;
       }
 
@@ -260,50 +367,18 @@ struct GrpcRaftTransport::Impl {
         const uint64_t last_term = std::stoull(parts[2]);
         std::string bin;
         if (!openkv::from_hex(parts[3], &bin)) bin = parts[3];
-
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(60));
-        ::storage::v1::InstallSnapshotResponse resp;
-        std::unique_ptr<grpc::ClientWriter<::storage::v1::SnapshotChunk>> writer(
-            stub->InstallSnapshot(&ctx, &resp));
-
-        const size_t chunk_sz = snap_chunk_bytes_ == 0 ? kDefaultSnapChunk : snap_chunk_bytes_;
-        uint64_t offset = 0;
-        const uint64_t total = bin.size();
-        do {
-          const size_t n = total == 0 ? 0 : std::min(chunk_sz, static_cast<size_t>(total - offset));
-          const bool done = (offset + n >= total);
-          ::storage::v1::SnapshotChunk chunk;
-          chunk.set_shard_id(job.shard);
-          chunk.set_leader_id(job.self_id);
-          chunk.set_term(send_term);
-          chunk.set_last_included_index(last_idx);
-          chunk.set_last_included_term(last_term);
-          chunk.set_offset(offset);
-          if (n > 0) chunk.set_data(bin.data() + offset, n);
-          chunk.set_done(done);
-          if (!writer->Write(chunk)) {
-            SKV_WARN << "InstallSnapshot write fail to=" << job.peer_id << " addr=" << addr
-                     << " offset=" << offset;
-            node->on_rpc_transport_fail(job.peer_id);
-            return;
-          }
-          offset += n;
-          if (done) break;
-        } while (offset < total);
-
-        if (!writer->WritesDone()) {
-          SKV_WARN << "InstallSnapshot WritesDone fail to=" << job.peer_id;
-          node->on_rpc_transport_fail(job.peer_id);
-          return;
-        }
-        auto st = writer->Finish();
+        // reactor 须活到 OnDone；用 unique_ptr 在 wait 后销毁。
+        auto reactor = std::make_unique<InstallSnapshotReactor>(
+            stub, job, addr, send_term, last_idx, last_term, std::move(bin), snap_chunk_bytes_);
+        auto fut = reactor->get_future();
+        auto st = fut.get();
         if (!st.ok()) {
           SKV_WARN << "InstallSnapshot Finish fail to=" << job.peer_id
                    << " code=" << st.error_code() << " " << st.error_message();
           node->on_rpc_transport_fail(job.peer_id);
           return;
         }
+        const auto& resp = reactor->resp();
         const uint64_t reply_term = resp.term() != 0 ? resp.term() : send_term;
         const uint64_t match =
             resp.match_index() != 0 ? resp.match_index() : (resp.ok() ? last_idx : 0);

@@ -44,6 +44,7 @@ namespace {
 
 using grpc::CallbackServerContext;
 using grpc::ServerContext;
+using grpc::ServerReadReactor;
 using grpc::ServerUnaryReactor;
 using grpc::ServerWriteReactor;
 using grpc::Status;
@@ -558,13 +559,76 @@ void parse_ae_line(std::string_view line, ::storage::v1::AppendEntriesResponse* 
   }
 }
 
+void fill_install_snapshot_resp(std::string_view line, uint64_t term, uint64_t last_idx,
+                                ::storage::v1::InstallSnapshotResponse* resp) {
+  std::istringstream iss{std::string(line)};
+  std::string ok, tag;
+  uint64_t out_term = term;
+  int success = 0;
+  uint64_t match = last_idx;
+  if ((iss >> ok >> tag >> out_term >> success >> match) && ok == "OK") {
+    resp->set_ok(success != 0);
+    resp->set_term(out_term);
+    resp->set_match_index(match);
+  } else {
+    resp->set_ok(proto::starts_with_ok(line));
+    resp->set_term(term);
+    if (resp->ok()) resp->set_match_index(last_idx);
+  }
+}
+
+class MetaInstallSnapshotReactor final : public ServerReadReactor<::storage::v1::SnapshotChunk> {
+ public:
+  MetaInstallSnapshotReactor(MetaNode& meta, ::storage::v1::InstallSnapshotResponse* resp)
+      : meta_(meta), resp_(resp) {
+    StartRead(&chunk_);
+  }
+
+  void OnReadDone(bool ok) override {
+    if (ok) {
+      term_ = chunk_.term();
+      from_ = chunk_.leader_id();
+      last_idx_ = chunk_.last_included_index();
+      last_term_ = chunk_.last_included_term();
+      buf_.append(chunk_.data());
+      if (chunk_.done()) {
+        apply_and_finish();
+        return;
+      }
+      StartRead(&chunk_);
+      return;
+    }
+    apply_and_finish();
+  }
+
+  void OnDone() override { delete this; }
+
+ private:
+  void apply_and_finish() {
+    auto line = meta_.handle_raft_snapshot(from_, term_, last_idx_, last_term_, buf_);
+    fill_install_snapshot_resp(line, term_, last_idx_, resp_);
+    Finish(Status::OK);
+  }
+
+  MetaNode& meta_;
+  ::storage::v1::InstallSnapshotResponse* resp_;
+  ::storage::v1::SnapshotChunk chunk_;
+  std::string buf_;
+  std::string from_;
+  uint64_t term_{0};
+  uint64_t last_idx_{0};
+  uint64_t last_term_{0};
+};
+
 /// Meta 组内 Raft 与 Storage 共用 storage.v1.RaftService（shard 固定 0）。
-class MetaRaftServiceImpl final : public ::storage::v1::RaftService::Service {
+class MetaRaftServiceImpl final : public ::storage::v1::RaftService::CallbackService {
  public:
   explicit MetaRaftServiceImpl(MetaNode& m) : meta_(m) {}
 
-  Status AppendEntries(ServerContext*, const ::storage::v1::AppendEntriesRequest* req,
-                       ::storage::v1::AppendEntriesResponse* resp) override {
+  ServerUnaryReactor* AppendEntries(CallbackServerContext* ctx,
+                                    const ::storage::v1::AppendEntriesRequest* req,
+                                    ::storage::v1::AppendEntriesResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     std::vector<raft::LogEntry> ents;
     ents.reserve(req->entries_size());
     for (const auto& e : req->entries()) {
@@ -573,55 +637,35 @@ class MetaRaftServiceImpl final : public ::storage::v1::RaftService::Service {
     auto line = meta_.handle_raft_append(req->leader_id(), req->term(), req->prev_log_index(),
                                          req->prev_log_term(), req->leader_commit(), ents);
     parse_ae_line(line, resp);
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status RequestVote(ServerContext*, const ::storage::v1::RequestVoteRequest* req,
-                     ::storage::v1::RequestVoteResponse* resp) override {
+  ServerUnaryReactor* RequestVote(CallbackServerContext* ctx,
+                                  const ::storage::v1::RequestVoteRequest* req,
+                                  ::storage::v1::RequestVoteResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     auto line = meta_.handle_raft_vote(req->candidate_id(), req->term(), req->last_log_index(),
                                        req->last_log_term());
     parse_vote_line(line, resp);
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status RequestPreVote(ServerContext*, const ::storage::v1::RequestVoteRequest* req,
-                        ::storage::v1::RequestVoteResponse* resp) override {
+  ServerUnaryReactor* RequestPreVote(CallbackServerContext* ctx,
+                                     const ::storage::v1::RequestVoteRequest* req,
+                                     ::storage::v1::RequestVoteResponse* resp) override {
+    auto* reactor = ctx->DefaultReactor();
     auto line = meta_.handle_raft_pre_vote(req->candidate_id(), req->term(), req->last_log_index(),
                                            req->last_log_term());
     parse_vote_line(line, resp);
-    return Status::OK;
+    reactor->Finish(Status::OK);
+    return reactor;
   }
 
-  Status InstallSnapshot(ServerContext*, grpc::ServerReader<::storage::v1::SnapshotChunk>* reader,
-                         ::storage::v1::InstallSnapshotResponse* resp) override {
-    ::storage::v1::SnapshotChunk chunk;
-    std::string buf;
-    uint64_t term = 0, last_idx = 0, last_term = 0;
-    std::string from;
-    while (reader->Read(&chunk)) {
-      term = chunk.term();
-      from = chunk.leader_id();
-      last_idx = chunk.last_included_index();
-      last_term = chunk.last_included_term();
-      buf.append(chunk.data());
-      if (chunk.done()) break;
-    }
-    auto line = meta_.handle_raft_snapshot(from, term, last_idx, last_term, buf);
-    std::istringstream iss(line);
-    std::string ok, tag;
-    uint64_t out_term = term;
-    int success = 0;
-    uint64_t match = last_idx;
-    if ((iss >> ok >> tag >> out_term >> success >> match) && ok == "OK") {
-      resp->set_ok(success != 0);
-      resp->set_term(out_term);
-      resp->set_match_index(match);
-    } else {
-      resp->set_ok(proto::starts_with_ok(line));
-      resp->set_term(term);
-      if (resp->ok()) resp->set_match_index(last_idx);
-    }
-    return Status::OK;
+  ServerReadReactor<::storage::v1::SnapshotChunk>* InstallSnapshot(
+      CallbackServerContext*, ::storage::v1::InstallSnapshotResponse* resp) override {
+    return new MetaInstallSnapshotReactor(meta_, resp);
   }
 
  private:
