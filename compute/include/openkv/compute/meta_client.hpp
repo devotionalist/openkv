@@ -30,9 +30,6 @@
 
 namespace openkv::compute {
 
-/// 解析历史行协议 `OK ROUTE …` 正文为 RoutingTable（单测对照）。
-RoutingTable parse_route(std::string_view resp);
-
 /// 向 Meta 申请 [start, start+got) 时间戳区间（GetTs.count 一次分配）。
 std::pair<uint64_t, uint32_t> alloc_ts_range(const std::vector<std::string>& meta_addrs,
                                              uint32_t count);

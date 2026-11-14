@@ -108,7 +108,7 @@
 |-------|-------|------|
 | RaftLogTest | AppendAndQuery, AppendEntriesConflictTruncate, AppendEntriesRejectBadPrev, CompactTo, EntriesFromLimit | `raft_log_test.cpp` |
 | RaftNodeTest | SingleNodeElectionAndPropose, ProposeRejectedWhenFollower, ConfChangeAddLearner, PreVoteDoesNotBumpTerm, CheckQuorumStepsDownIsolatedLeader, VoteAndAppendBetweenPeers | `raft_node_test.cpp` |
-| RaftJointTest / RaftAsyncApplyTest | PromoteUsesEnterThenLeaveJoint, RejectConfWhileJointPending, ProposeAppliesViaWorker | `raft_joint_test.cpp` |
+| RaftJointTest | PromoteUsesEnterThenLeaveJoint, RejectConfWhileJointPending, ProposeAppliesSync | `raft_joint_test.cpp` |
 | RaftPersistTest | SaveAndRecoverApplied, InstallSnapshotCompactsAndApplies | `raft_persist_test.cpp` |
 | RaftEngineTest | FileLogBatchRoundTrip, EntryCrcRoundTrip, FilePureAppend, FileConflictRewrite, CutAndGc | `raft_engine_test.cpp` |
 | SnapStreamTest | HexRoundTrip, AssembleChunks, EmptySnapshot, RejectOutOfOrder | `snap_stream_test.cpp` |
@@ -154,7 +154,7 @@
 |-------|-------|----------|
 | RouterTest | BootstrapSingle, UpdateIgnoresStaleVersion, RangeLocateAfterSplit, ReplicaAddrsAndFallback（含 epoch/leader 优先）, MissingShard | **PASS** 2026-11-12 |
 | DsEncodeTest | MetaKeyPrefix, HashRoundTrip, WrongType, SetListZSet | **PASS** 2026-11-12 |
-| MetaClientTest / GrpcUtilTest / TsoTest / TsRangeQueueTest / ActiveTsTest | ParseRedirect, ParseRoute*, Alloc*, QueueDrainOrder, TsRangeQueue*, ConcurrentUnique, MinAndExpire | **PASS** 2026-11-12 |
+| GrpcUtilTest / TsoTest / ActiveTsTest / TsRangeQueueTest | ParseRedirect, DefaultBatchAndWatermark, MinAndExpire；队列见 `ts_range_queue_test.cpp` | `meta_client_test.cpp` |
 | ~~KvProxyTest~~ | 已随遗留 `KvProxy`/`ComputeNode` 删除 | — |
 
 ```bash

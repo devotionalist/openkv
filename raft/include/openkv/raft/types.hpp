@@ -44,20 +44,19 @@ struct LogEntry {
   std::string data; // 日志条目的数据
 };
 
-/// 可观测的 Raft 软状态快照（不含持久化 hard state 细节）；读时需持锁或接受短暂不一致。
+/// 可观测软状态快照（给 metrics / redirect / 调试）。
+/// 可含 term、commit_index 的**只读拷贝**，但持久化以 HardState 为准；重启不依赖 SoftState。
 struct SoftState {
-  Role role{Role::kFollower}; // 节点当前角色
-  std::string leader_id; // 当前领导者 ID
-  uint64_t term{0}; // 当前任期号
-  uint64_t commit_index{0}; // 已提交的日志索引
-  uint64_t last_applied{0}; // 最后应用的日志索引
-  /// O1：选主次数 / 发送快照次数 / 复制延迟（leader last_index - min peer match）。
-  uint64_t election_count{0}; // 选主次数
-  uint64_t snapshot_send_count{0}; // 发送快照次数
-  uint64_t replication_lag{0}; // 复制延迟（leader last_index - min peer match）
-  bool in_joint{false}; // 是否处于联合角色
-  /// in_joint 或 LeaveJoint 尚未 apply（auto_leave_pending）。
-  bool conf_change_busy{false}; // 是否处于配置变更繁忙状态
+  Role role{Role::kFollower};       ///< Follower / Candidate / Leader / Learner
+  std::string leader_id;            ///< 已知 Leader（redirect）
+  uint64_t term{0};                 ///< 当前任期（观测用，落盘见 HardState.term）
+  uint64_t commit_index{0};         ///< 已提交水位（观测用，落盘见 HardState.commit）
+  uint64_t last_applied{0};         ///< 状态机已 apply 水位（一般不进 HardState）
+  uint64_t election_count{0};       ///< 选主次数
+  uint64_t snapshot_send_count{0};  ///< 发快照次数
+  uint64_t replication_lag{0};      ///< Leader：last_index - min(peer match)
+  bool in_joint{false};             ///< 是否联合配置（新旧双多数过渡期；不是选举角色）
+  bool conf_change_busy{false};     ///< Joint 中或 LeaveJoint 未完成，勿再 Promote/Remove
 };
 
 // 状态机回调：多数派提交后由 Raft Apply
@@ -68,21 +67,22 @@ using ApplyCallback = std::function<void(uint64_t index, const std::string& data
 using TransportSend = std::function<void(const std::string& peer_id, const std::string& msg_type,
                                          const std::string& payload)>;
 
-/// 在线成员变更提案内容；经日志提交后在 apply 阶段生效。
+/// 成员变更提案：走 Raft 日志，commit 后再 apply 才改配置。
+/// 注意：这些不是 Leader/Follower「角色」，而是「对成员名单做什么」。
 struct ConfChange {
   enum Type {
-    kAddNode = 0,
-    kRemoveNode = 1,
-    kAddLearner = 2,
-    kPromoteLearner = 3,
-    /// Joint：进入 (C_old, C_new)；payload 内嵌原变更类型于 peer 之外由编码层处理。
+    kAddNode = 0,         ///< 直接加一个有投票权的节点（voter）
+    kRemoveNode = 1,      ///< 从配置里去掉一个节点（常走 Joint，见 propose_conf_change）
+    kAddLearner = 2,      ///< 加学习者：只收日志、不投票、不算多数派
+    kPromoteLearner = 3,  ///< 学习者转正成 voter（必走 Joint，防一步切配置双主）
+    /// 进入联合配置：新旧两套投票人同时说了算（双多数派才能 commit）
     kEnterJoint = 4,
-    /// Joint：离开，配置变为纯 C_new。
+    /// 退出联合：只留新配置 C_new，恢复「一套人说了算」
     kLeaveJoint = 5,
   };
-  Type type{kAddNode};
-  Peer peer;
-  /// EnterJoint 时携带的实际变更（Promote / Remove）；LeaveJoint 可忽略。
+  Type type{kAddNode};  ///< 本条提案的变更种类
+  Peer peer;            ///< 针对哪个节点（id/地址/是否 learner）
+  /// 进 Joint 时真正要做的事（通常是 Promote 或 Remove）；LeaveJoint 不用管
   Type joint_change{kAddNode};
 };
 

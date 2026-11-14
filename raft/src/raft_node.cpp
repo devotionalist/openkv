@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file raft_node.cpp
-// 实现：复制/选举/Joint/快照/异步 Apply；persist_locked、build_engine_batch、persist_ready。
+// 实现：复制/选举/Joint/快照；persist_locked、build_engine_batch、persist_ready。
 // Ready 路径 fsync 在 persist_io_mu_ 下、不持协议 mu_，便于 group commit。
 
 #include "openkv/raft/raft_node.hpp"
@@ -28,7 +28,6 @@
 #include <fstream>
 #include <random>
 #include <sstream>
-#include <thread>
 
 namespace openkv::raft {
 namespace {
@@ -108,12 +107,7 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
   if (opts_.max_inflight_msgs == 0) opts_.max_inflight_msgs = 1;
   if (opts_.max_ae_entries == 0) opts_.max_ae_entries = 64;
   if (opts_.max_ae_bytes == 0) opts_.max_ae_bytes = 256 * 1024;
-  if (opts_.apply_queue_capacity == 0) opts_.apply_queue_capacity = 1024;
-  if (opts_.external_io) {
-    // RawNode：协议不发网/不回调 apply；落盘经 Store persist_fn→persist_ready。
-    // 保留 persist_dir 以便启动 load + Ready 外提刷盘。
-    opts_.enable_async_apply = false;
-  }
+  // external_io：协议不发网/不回调 apply；落盘经 Store persist_fn→persist_ready。
   std::mt19937 rng{std::random_device{}()};
   std::uniform_int_distribution<int> dist(opts_.election_timeout_ms / 100,
                                           opts_.election_timeout_ms / 50);
@@ -137,87 +131,6 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
   if (engine_) load_from_disk();
   // compact 后日志窗口不含历史：必须先恢复本地 FSM 快照再 recover_apply。
   restore_local_fsm_snapshot();
-  start_apply_worker();
-}
-
-RaftNode::~RaftNode() { stop_apply_worker(); }
-
-void RaftNode::start_apply_worker() {
-  if (!opts_.enable_async_apply) return;
-  apply_running_ = true;
-  apply_thread_ = std::thread([this] { apply_worker_loop(); });
-}
-
-void RaftNode::stop_apply_worker() {
-  if (!apply_running_.exchange(false)) return;
-  apply_cv_.notify_all();
-  if (apply_thread_.joinable()) apply_thread_.join();
-}
-
-void RaftNode::apply_worker_loop() {
-  while (apply_running_) {
-    ApplyItem item;
-    {
-      std::unique_lock<std::mutex> lk(apply_mu_);
-      apply_cv_.wait(lk, [&] { return !apply_q_.empty() || !apply_running_; });
-      if (!apply_running_ && apply_q_.empty()) break;
-      if (apply_q_.empty()) continue;
-      item = std::move(apply_q_.front());
-      apply_q_.pop_front();
-    }
-    if (on_apply_) {
-      in_on_apply_.store(true, std::memory_order_relaxed);
-      try {
-        on_apply_(item.index, item.data);
-      } catch (...) {
-        in_on_apply_.store(false, std::memory_order_relaxed);
-        throw;
-      }
-      in_on_apply_.store(false, std::memory_order_relaxed);
-    }
-    {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (item.index > last_applied_) last_applied_ = item.index;
-      // 定期落 FSM（不依赖 compact），避免重启后 last_applied 已推进但状态机仍是 bootstrap。
-      if (snap_provider_ && (item.index % 32 == 0)) save_local_fsm_snapshot_locked();
-      maybe_compact();
-      persist_locked();
-    }
-    apply_cv_.notify_all();
-  }
-}
-
-bool RaftNode::enqueue_apply(uint64_t index, std::string data) {
-  std::lock_guard<std::mutex> lk(apply_mu_);
-  if (apply_q_.size() >= opts_.apply_queue_capacity) return false;
-  apply_q_.push_back(ApplyItem{index, std::move(data)});
-  apply_cv_.notify_one();
-  return true;
-}
-
-void RaftNode::wait_apply_caught_up_to(uint64_t index) {
-  // 调用方已持 mu_；需释放后等 apply，再重新获取 — 简化：轮询 apply 队列空且 last_applied
-  for (;;) {
-    bool done = false;
-    {
-      std::lock_guard<std::mutex> lk(apply_mu_);
-      done = apply_q_.empty() && last_applied_ >= index;
-    }
-    if (done) return;
-    // 短暂释放 mu_ 让 worker 推进
-    mu_.unlock();
-    {
-      std::unique_lock<std::mutex> lk(apply_mu_);
-      apply_cv_.wait_for(lk, std::chrono::milliseconds(1), [&] {
-        return apply_q_.empty() || !apply_running_;
-      });
-    }
-    mu_.lock();
-    if (last_applied_ >= index) {
-      std::lock_guard<std::mutex> lk(apply_mu_);
-      if (apply_q_.empty()) return;
-    }
-  }
 }
 
 void RaftNode::load_from_disk() {
@@ -240,6 +153,8 @@ void RaftNode::load_from_disk() {
            << " last_index=" << log_.last_index();
 }
 
+// external_io：只标记 HardState 脏并写入 ready_hs_（真正落盘在 PersistWorker）。
+// 嵌入模式：置 persist_dirty_，按 batch 刷 RaftEngine。
 void RaftNode::persist_locked() {
   if (opts_.external_io) {
     ready_hs_dirty_ = true;
@@ -253,11 +168,14 @@ void RaftNode::persist_locked() {
   persist_maybe_flush(false);
 }
 
+// 嵌入模式才在这里真正写 RaftEngine。生产 external_io 路径由 Store PersistWorker
+// 根据 Ready 落盘，协议核不能在这里抢着刷，否则和 Ready 管线重复/乱序。
+// force=false 时攒满 persist_batch_n 次脏标记再刷，减 fsync 次数。
 void RaftNode::persist_maybe_flush(bool force) {
-  if (opts_.external_io) return;
-  if (!engine_) return;
-  if (!persist_dirty_) return;
-  if (!force && persist_pending_ < opts_.persist_batch_n) return;
+  if (opts_.external_io) return;  // 落盘归 PersistWorker，这里不碰盘
+  if (!engine_) return;           // 没引擎可写
+  if (!persist_dirty_) return;    // 没脏，没事做
+  if (!force && persist_pending_ < opts_.persist_batch_n) return;  // 未到批阈值
   const bool sync = raft_log_sync(opts_.persist_sync);
   engine_flush_locked(sync);
   persist_dirty_ = false;
@@ -325,7 +243,7 @@ void RaftNode::commit_stable_locked(uint64_t first, uint64_t last) {
 }
 
 void RaftNode::engine_flush_locked(bool sync) {
-  // 非 external_io：在持 mu_ 时直接刷盘（单测/嵌入）。生产路径走 persist_ready。
+  // 非 external_io：在持 mu_ 时直接刷盘（Meta 嵌入）。Store 路径走 persist_ready。
   if (!engine_) return;
   uint64_t first = 0;
   uint64_t last = 0;
@@ -336,7 +254,7 @@ void RaftNode::engine_flush_locked(bool sync) {
 }
 
 void RaftNode::recover_apply() {
-  // apply worker 内 on_apply→ensure_region→recover_apply 会 wait 自己推进 last_applied → 死锁
+  // on_apply 里再进 recover_apply 会重入 mu_ / 自等 last_applied → 直接跳过。
   if (in_on_apply_.load(std::memory_order_relaxed)) return;
   std::lock_guard<std::mutex> lock(mu_);
   apply_committed();
@@ -812,47 +730,40 @@ bool RaftNode::decode_conf(std::string_view data, ConfChange* cc) {
   return true;
 }
 
-// 提议
+/**
+ * @brief 提议一条业务/配置日志。
+ *
+ * 返回 true 只表示已 append 并拿到 index；**不等于**已落盘 / 多数派提交 / apply。
+ * 生产（external_io）：持久化与复制由 Store Ready（request_ready → persist → AE）推进；
+ * 调用方用 ProposalQueue / wait_apply* 等 apply 后再 ACK。
+ *
+ * @param data 日志 payload（Command 编码或 ConfChange）
+ * @param assigned_index 输出本条 log index（供 wait_apply / wait_applied）
+ */
 bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
-  // Leader：只把条目追加进内存 RaftLog（并标记 unstable）。
-  // external_io（生产 Store 路径）：真正 fsync 在 Store 调 persist_ready → Engine::consume。
-  // 非 external_io：本函数内 persist_locked 直接刷 Engine（单测 / 嵌入模式）。
-  uint64_t idx = 0;
+  // Leader 本地 append；Follower 直接失败（上层应 redirect）。
+  // 返回 true 只表示已拿到 index；落盘/复制/apply 视 external_io 由 Ready 管线或嵌入同步路径完成。
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (role_ != Role::kLeader) return false;
-    // 异步 Apply 队列满：backpressure，避免卡死（非生产 Store 不启用）。
-    if (opts_.enable_async_apply) {
-      std::lock_guard<std::mutex> lk(apply_mu_);
-      if (apply_q_.size() >= opts_.apply_queue_capacity) {
-        SKV_WARN << "shard=" << opts_.shard_id << " propose backpressure apply_q="
-                 << apply_q_.size();
-        return false;
-      }
-    }
-    idx = log_.append(term_, std::move(data)); // 追加日志条目
-    if (opts_.external_io) {  // 外部IO模式下，将日志条目标记为未稳定
+
+    const uint64_t idx = log_.append(term_, std::move(data));
+    if (opts_.external_io) {
       if (auto e = log_.entry(idx)) ready_unstable_.push_back(*e);
     }
-    match_index_[opts_.self_id] = idx; // 更新匹配索引
-    if (assigned_index) *assigned_index = idx; // 返回分配的索引
-    persist_locked();  
-    need_bcast_ = true; // 需要广播
-    if (!opts_.coalesce_replication || majority() <= 1) { // 如果不需要合并复制或大多数节点数小于等于1，则广播心跳
+    match_index_[opts_.self_id] = idx;
+    if (assigned_index) *assigned_index = idx;
+
+    persist_locked();
+    need_bcast_ = true;
+    if (!opts_.coalesce_replication || majority() <= 1) {
       maybe_broadcast();
     }
-    maybe_commit(); // 提交日志
-    apply_committed(); // 应用已提交的日志
-    persist_locked(); 
+    maybe_commit();
+    apply_committed();
+    persist_locked();
   }
   flush_transport();
-  // 嵌入模式：等待异步 apply 追上。external_io 下可见性由 Store Apply 路径负责。
-  if (opts_.enable_async_apply && !opts_.external_io) {
-    for (int i = 0; i < 200; ++i) {
-      if (soft_state().last_applied >= idx) break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-  }
   return true;
 }
 
@@ -1147,6 +1058,15 @@ void RaftNode::broadcast_heartbeat() {
   }
 }
 
+
+/**
+ * @brief 如果当前角色是leader，则可能提交日志
+ * 
+ * @param role_ 当前角色
+ * @param commit_index_ 当前提交索引
+ * @param log_ 日志
+ * @return void
+ */
 void RaftNode::maybe_commit() {
   if (role_ != Role::kLeader) return;
   uint64_t lo = commit_index_ + 1; // 下一个要提交的日志索引
@@ -1168,10 +1088,18 @@ void RaftNode::maybe_commit() {
   if (best > commit_index_) commit_index_ = best;
 }
 
+
+/**
+ * @brief 应用配置变更
+ * 
+ * @param e 日志条目
+ * @return void
+ */
 void RaftNode::apply_conf_entry(const LogEntry& e) {
   ConfChange cc;
+  // 解码配置变更
   if (!decode_conf(e.data, &cc)) return;
-
+  // 如果是离开联合角色
   if (cc.type == ConfChange::kLeaveJoint) {
     if (in_joint_) {
       // 丢掉不在 C_new 中的 voter
@@ -1201,7 +1129,7 @@ void RaftNode::apply_conf_entry(const LogEntry& e) {
     return;
   }
 
-  if (cc.type == ConfChange::kEnterJoint) {
+  if (cc.type == ConfChange::kEnterJoint) {  // 进入联合配置（新旧双多数）
     joint_old_voters_ = voter_ids();
     ConfChange inner;
     inner.type = cc.joint_change;
@@ -1261,53 +1189,68 @@ void RaftNode::apply_conf_entry(const LogEntry& e) {
   }
 }
 
-// 应用已提交的日志
+// 把「已提交但还没交给状态机」的日志往前推一截。
+//
+// 三个水位别混：
+//   commit_index_     多数派已确认，可以安全执行
+//   apply_scheduled_  本函数已经「安排出去」的最大 index（塞进 Ready 或同步调了 on_apply）
+//   last_applied_     状态机真正做完的最大 index（external_io 下由 Store report_applied 再抬）
+//
+// external_io：普通条目只进 ready_committed_；ConfChange 仍在核内立刻改成员表。
+// 嵌入（Meta）：同步 on_apply，scheduled 与 applied 一起走。
 void RaftNode::apply_committed() {
-  while (apply_scheduled_ < commit_index_) { // 如果应用的日志索引小于已提交的日志索引
-    const uint64_t idx = apply_scheduled_ + 1; // 下一个要应用的日志索引
-    if (idx < log_.first_index()) { // 如果下一个要应用的日志索引小于第一个日志索引
-      apply_scheduled_ = idx; // 更新应用的日志索引
-      if (idx > last_applied_) last_applied_ = idx; // 更新最后应用的日志索引
+  while (apply_scheduled_ < commit_index_) {
+    const uint64_t idx = apply_scheduled_ + 1;
+
+    // 日志已被 compact/快照裁掉：内容已在快照里，抬水位跳过空洞即可。
+    if (idx < log_.first_index()) {
+      apply_scheduled_ = idx;
+      if (idx > last_applied_) last_applied_ = idx;
       continue;
     }
-    auto e = log_.entry(idx); // 获取日志条目
+
+    auto e = log_.entry(idx);
     if (!e) {
+      // 内存缺口：先记 scheduled，避免死循环卡在同一 idx。
       apply_scheduled_ = idx;
       continue;
     }
+
+    // 约定：payload 首字节 0xFF = ConfChange，其余 = 普通业务日志。
     const bool is_conf =
         !e->data.empty() && static_cast<unsigned char>(e->data[0]) == 0xFF;
+
     if (opts_.external_io) {
-      // ConfChange 仍改协议配置；普通条目经 Ready 外提，last_applied 在 advance 时推进。
       if (is_conf) apply_conf_entry(*e);
       ready_committed_.push_back(*e);
       apply_scheduled_ = idx;
       if (is_conf) last_applied_ = idx;
       continue;
     }
+
+    // Meta 这条路：锁还没放，当场把这条日志「做掉」。
+    // 改成员（加/删节点）→ 在 Raft 里改配置；普通业务 → 交给 Meta 的 on_apply。
+    // in_on_apply_：贴个「正在回调」牌子，免得回调里又调 recover_apply 把同一把锁再锁一次卡死。
     if (is_conf) {
-      if (opts_.enable_async_apply && idx > 0) {
-        wait_apply_caught_up_to(idx - 1);
-      }
       apply_conf_entry(*e);
-      apply_scheduled_ = idx;
-      last_applied_ = idx;
-      continue;
-    }
-    if (opts_.enable_async_apply) {
-      if (!enqueue_apply(idx, e->data)) {
-        // 背压：停止调度，commit 仍前进
-        break;
+    } else if (on_apply_) {
+      in_on_apply_.store(true, std::memory_order_relaxed);
+      try {
+        on_apply_(idx, e->data);
+      } catch (...) {
+        in_on_apply_.store(false, std::memory_order_relaxed);
+        throw;
       }
-      apply_scheduled_ = idx;
-      // last_applied_ 由 worker 推进
-    } else {
-      if (on_apply_) on_apply_(idx, e->data);
-      apply_scheduled_ = idx;
-      last_applied_ = idx;
+      in_on_apply_.store(false, std::memory_order_relaxed);
     }
+    apply_scheduled_ = idx;// 更新应用索引
+    last_applied_ = idx;// 更新已应用索引
+    // 每 apply 满 32 条，把 Meta 状态机拍一张本地快照落到盘上。
+    // 不靠它也能在 compact 时拍；但 compact 门槛很高时，中间宕机会没有近期快照。
+    if (snap_provider_ && (idx % 32 == 0)) save_local_fsm_snapshot_locked();
   }
-  if (!opts_.enable_async_apply && !opts_.external_io) maybe_compact();
+
+  if (!opts_.external_io) maybe_compact();
 }
 
 std::string RaftNode::local_fsm_snap_path() const {
@@ -1610,8 +1553,6 @@ void RaftNode::on_install_snapshot(const std::string& from, uint64_t term, uint6
              << opts_.peers.size();
   }
   // external_io：外层已安装状态机；此处只对齐日志窗口。
-  // 排空异步 apply，避免与快照冲突
-  if (opts_.enable_async_apply) wait_apply_caught_up_to(last_applied_);
   log_.compact_to(last_index, last_term);
   if (commit_index_ < last_index) commit_index_ = last_index;
   last_applied_ = last_index;

@@ -133,20 +133,6 @@ constexpr const char* kCfWrite = "write";
 
 }  // namespace
 
-const char* KvEngine::cf_name_for_key(std::string_view key) {
-  switch (classify_key(key)) {
-    case CfId::kLock:
-      return kCfLock;
-    case CfId::kData:
-      return kCfData;
-    case CfId::kWrite:
-      return kCfWrite;
-    case CfId::kDefault:
-    default:
-      return "default";
-  }
-}
-
 // =============================================================================
 // 实现分支 A：RocksDB 后端（存储节点启动默认路径）
 // =============================================================================
@@ -204,7 +190,6 @@ void KvEngine::set_sync_mode(raft::SyncMode m) {
   refresh_write_options();
 }
 
-bool KvEngine::rocks_write_sync() const { return rocks_ && rocks_->wo.sync; }
 
 void KvEngine::migrate_legacy_default_cf() {
   rocksdb::WriteBatch put_batch;
@@ -829,8 +814,6 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
 KvEngine::~KvEngine() = default;
 
 void KvEngine::set_sync_mode(raft::SyncMode m) { sync_ = m; }
-
-bool KvEngine::rocks_write_sync() const { return false; }
 
 // ---------------------------------------------------------------------------
 // put：覆盖写；持锁，保证与 get/del/snapshot 互斥

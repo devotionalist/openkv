@@ -51,23 +51,6 @@ TSOracle::TSOracle(std::vector<std::string> meta_addrs, uint32_t batch_size, uin
   }
 }
 
-void TSOracle::inject_cache_for_test(uint64_t next, uint64_t end) {
-  q_.reset_for_test();
-  refill_inflight_.store(false, std::memory_order_relaxed);
-  if (next < end) {
-    if (!q_.push(next, static_cast<uint32_t>(end - next))) {
-      throw std::runtime_error("tso inject: queue full");
-    }
-  }
-}
-
-void TSOracle::inject_range_for_test(uint64_t next, uint64_t end) {
-  if (next >= end) return;
-  if (!q_.push(next, static_cast<uint32_t>(end - next))) {
-    throw std::runtime_error("tso inject_range: queue full");
-  }
-}
-
 void TSOracle::push_batch(uint64_t start, uint32_t got) {
   if (got == 0) return;
   (void)q_.push(start, got);

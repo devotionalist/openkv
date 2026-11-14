@@ -100,11 +100,6 @@ class RawNode {
   void add_peer(const Peer& p);
   void remove_peer(const std::string& id);
 
-  /// 加载已持久化状态（外层读盘后注入）。
-  void bootstrap_from_disk(uint64_t term, std::string voted_for, uint64_t commit,
-                           uint64_t last_applied, const std::vector<LogEntry>& entries,
-                           uint64_t first_index, uint64_t snap_term);
-
   bool has_ready() const;
   /// 取出一批 Ready；调用方处理后必须 advance。
   Ready ready();

@@ -101,17 +101,6 @@ class TsRangeQueue {
 
   uint64_t remaining() const { return cached_.load(std::memory_order_relaxed); }
 
-  /// 单测重置；不得与并发 take/push 重叠。
-  void reset_for_test() {
-    head_.store(0, std::memory_order_relaxed);
-    tail_.store(0, std::memory_order_relaxed);
-    cached_.store(0, std::memory_order_relaxed);
-    for (std::size_t i = 0; i < Cap; ++i) {
-      slots_[i].next.store(0, std::memory_order_relaxed);
-      slots_[i].end.store(0, std::memory_order_relaxed);
-    }
-  }
-
  private:
   struct alignas(64) Slot {
     std::atomic<uint64_t> next{0};

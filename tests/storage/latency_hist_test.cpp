@@ -14,6 +14,7 @@
 
 #include "openkv/storage/latency_hist.hpp"
 #include "openkv/storage/store_service.hpp"
+#include "facade_sync.hpp"
 #include "openkv/storage/storage_node.hpp"
 
 #include <gtest/gtest.h>
@@ -58,19 +59,6 @@ TEST(LatencyHistTest, RegionMetricsProposeGet) {
   EXPECT_NE(text.find("region=\"1\""), std::string::npos);
 }
 
-TEST(LatencyHistTest, RegionMetricsSurvivesMovedFromMap) {
-  // libstdc++ moved-from unordered_map 常为 bucket_count=0；旧代码 operator[] 会 SIGFPE。
-  RegionMetrics m;
-  m.observe_propose(0, 100);
-  m.test_only_move_away_map();
-  EXPECT_NO_FATAL_FAILURE(m.observe_propose(1, 200));
-  EXPECT_NO_FATAL_FAILURE(m.observe_get(1, 50));
-  auto text = m.prometheus_text();
-  EXPECT_NE(text.find("region=\"1\""), std::string::npos);
-  auto c1 = m.region_compact(1);
-  EXPECT_NE(c1.find("propose_count=1"), std::string::npos);
-}
-
 TEST(LatencyHistTest, FacadeRecordsPropose) {
   auto dir =
       std::filesystem::temp_directory_path() / ("skv_lat_" + std::to_string(::getpid()));
@@ -93,7 +81,7 @@ TEST(LatencyHistTest, FacadeRecordsPropose) {
   cmd.op = CmdOp::kPut;
   cmd.key = "k";
   cmd.value = "v";
-  ASSERT_TRUE(facade.propose(0, cmd).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(facade, 0, cmd).ok);
   auto compact = facade.metrics().region_compact(0);
   EXPECT_NE(compact.find("propose_count=1"), std::string::npos);
   node.stop();

@@ -14,6 +14,7 @@
 
 #include "openkv/storage/kv_engine.hpp"
 #include "openkv/storage/store_service.hpp"
+#include "facade_sync.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/watch_log.hpp"
 
@@ -106,7 +107,7 @@ TEST(WatchLogTest, OnePcWatchPersistsAcrossRestart) {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     // Watch 属事务平面：ONEPC 写 WatchLog；Raw Propose 不写。
-    auto pr = facade.one_pc(0, "wk", 10, 11, "wk", /*put*/ 0, "wv");
+    auto pr = openkv::storage::test::sync_one_pc(facade, 0, "wk", 10, 11, "wk", /*put*/ 0, "wv");
     ASSERT_TRUE(pr.ok) << pr.error;
     auto evs = WatchLog::poll(node.engines().get_or_create(0), 0, 0, 20);
     auto it = std::find_if(evs.begin(), evs.end(),

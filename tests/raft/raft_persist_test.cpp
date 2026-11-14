@@ -41,6 +41,7 @@ TEST(RaftPersistTest, SaveAndRecoverApplied) {
 
   {
     RaftNode::Options opts;
+    opts.external_io = false;  // 嵌入：propose 内落盘，重启可 recover
     opts.shard_id = 0;
     opts.self_id = "n0";
     opts.peers = {{"n0", "127.0.0.1:1", false}};
@@ -67,6 +68,7 @@ TEST(RaftPersistTest, SaveAndRecoverApplied) {
   applied.clear();
   {
     RaftNode::Options opts;
+    opts.external_io = false;
     opts.shard_id = 0;
     opts.self_id = "n0";
     opts.peers = {{"n0", "127.0.0.1:1", false}};
@@ -94,6 +96,7 @@ TEST(RaftPersistTest, InstallSnapshotCompactsAndApplies) {
   TransportSend noop = [](const std::string&, const std::string&, const std::string&) {};
 
   RaftNode::Options opts;
+  opts.external_io = false;
   opts.shard_id = 0;
   opts.self_id = "n1";
   opts.peers = {{"n0", "127.0.0.1:1", false}, {"n1", "127.0.0.1:2", false}};

@@ -18,6 +18,7 @@
 #include "openkv/storage/mvcc.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/store_service.hpp"
+#include "facade_sync.hpp"
 #include "openkv/storage/watch_log.hpp"
 
 #include <gtest/gtest.h>
@@ -80,7 +81,7 @@ class StoreFacadeTest : public ::testing::Test {
 
 TEST_F(StoreFacadeTest, PutGet) {
   Command cmd{CmdOp::kPut, "foo", "bar", 0};
-  auto pr = facade_->propose(0, cmd);
+  auto pr = openkv::storage::test::sync_propose(*facade_, 0, cmd);
   ASSERT_TRUE(pr.ok) << pr.error;
   EXPECT_GT(pr.revision, 0u);
 
@@ -92,7 +93,7 @@ TEST_F(StoreFacadeTest, PutGet) {
 
 // Raw 平面（无 TSO/MVCC）：plain Propose PUT/DEL + Store Get；与 Gateway Raw* 同路径。
 TEST_F(StoreFacadeTest, RawPlanePutGetDeleteAndCas) {
-  auto put = facade_->propose(0, {CmdOp::kPut, "raw/k1", "v1", 0});
+  auto put = openkv::storage::test::sync_propose(*facade_, 0, {CmdOp::kPut, "raw/k1", "v1", 0});
   ASSERT_TRUE(put.ok) << put.error;
   auto gr = facade_->get(0, "raw/k1", true);
   ASSERT_TRUE(gr.found);
@@ -102,29 +103,29 @@ TEST_F(StoreFacadeTest, RawPlanePutGetDeleteAndCas) {
   Command cas_create{CmdOp::kPut, "raw/only", "x", 0};
   cas_create.cas = true;
   cas_create.expected_revision = 0;
-  ASSERT_TRUE(facade_->propose(0, cas_create).ok);
-  auto again = facade_->propose(0, cas_create);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(*facade_, 0, cas_create).ok);
+  auto again = openkv::storage::test::sync_propose(*facade_, 0, cas_create);
   EXPECT_FALSE(again.ok);
   EXPECT_TRUE(again.cas_failed);
 
-  ASSERT_TRUE(facade_->propose(0, {CmdOp::kDelete, "raw/k1", "", 0}).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(*facade_, 0, {CmdOp::kDelete, "raw/k1", "", 0}).ok);
   EXPECT_FALSE(facade_->get(0, "raw/k1", true).found);
 
   // 同 Region 上 ONEPC（事务平面）用不同 key，互不干扰。
-  auto one = facade_->one_pc(0, "txn/k1", 10, 11, "txn/k1", /*put*/ 0, "tv");
+  auto one = openkv::storage::test::sync_one_pc(*facade_, 0, "txn/k1", 10, 11, "txn/k1", /*put*/ 0, "tv");
   ASSERT_TRUE(one.ok) << one.error;
   EXPECT_EQ(one.revision, 11u);
 }
 
 // Raw 写不落 WatchLog；ONEPC 才写（Watch 属事务平面）。
 TEST_F(StoreFacadeTest, RawPlaneSkipsWatchLog) {
-  auto put = facade_->propose(0, {CmdOp::kPut, "raw-nowatch", "v", 0});
+  auto put = openkv::storage::test::sync_propose(*facade_, 0, {CmdOp::kPut, "raw-nowatch", "v", 0});
   ASSERT_TRUE(put.ok) << put.error;
   auto& eng = node_->engines().get_or_create(0);
   for (const auto& e : WatchLog::poll(eng, 0, 0, 100)) {
     EXPECT_NE(e.key, "raw-nowatch");
   }
-  auto one = facade_->one_pc(0, "txn-watch", 20, 21, "txn-watch", /*put*/ 0, "tv");
+  auto one = openkv::storage::test::sync_one_pc(*facade_, 0, "txn-watch", 20, 21, "txn-watch", /*put*/ 0, "tv");
   ASSERT_TRUE(one.ok) << one.error;
   const auto after_one = WatchLog::poll(eng, 0, 0, 100);
   EXPECT_TRUE(std::any_of(after_one.begin(), after_one.end(),
@@ -132,8 +133,8 @@ TEST_F(StoreFacadeTest, RawPlaneSkipsWatchLog) {
 }
 
 TEST_F(StoreFacadeTest, Delete) {
-  facade_->propose(0, {CmdOp::kPut, "d", "1", 0});
-  auto pr = facade_->propose(0, {CmdOp::kDelete, "d", "", 0});
+  openkv::storage::test::sync_propose(*facade_, 0, {CmdOp::kPut, "d", "1", 0});
+  auto pr = openkv::storage::test::sync_propose(*facade_, 0, {CmdOp::kDelete, "d", "", 0});
   ASSERT_TRUE(pr.ok) << pr.error;
   auto gr = facade_->get(0, "d", true);
   EXPECT_FALSE(gr.found);
@@ -142,8 +143,8 @@ TEST_F(StoreFacadeTest, Delete) {
 TEST_F(StoreFacadeTest, IndependentShards) {
   wait_leader(1);
   // 单 Store 共享引擎：同 key 跨 Region 会覆盖；用不同 key 验证两 Region 均可写读。
-  ASSERT_TRUE(facade_->propose(0, {CmdOp::kPut, "k0", "s0", 0}).ok);
-  ASSERT_TRUE(facade_->propose(1, {CmdOp::kPut, "k1", "s1", 0}).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(*facade_, 0, {CmdOp::kPut, "k0", "s0", 0}).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(*facade_, 1, {CmdOp::kPut, "k1", "s1", 0}).ok);
   EXPECT_EQ(facade_->get(0, "k0", true).value, "s0");
   EXPECT_EQ(facade_->get(1, "k1", true).value, "s1");
   EXPECT_TRUE(node_->engines().shares_engine(0, 1));
@@ -207,10 +208,10 @@ TEST_F(StoreFacadeTest, PlainCasCreateOnlyAndMatch) {
   create.value = "v1";
   create.cas = true;
   create.expected_revision = 0;
-  auto c1 = facade_->propose(0, create);
+  auto c1 = openkv::storage::test::sync_propose(*facade_, 0, create);
   ASSERT_TRUE(c1.ok) << c1.error;
 
-  auto again = facade_->propose(0, create);
+  auto again = openkv::storage::test::sync_propose(*facade_, 0, create);
   ASSERT_FALSE(again.ok);
   EXPECT_TRUE(again.cas_failed) << again.error;
   EXPECT_EQ(again.current_revision, c1.revision);
@@ -223,19 +224,19 @@ TEST_F(StoreFacadeTest, PlainCasCreateOnlyAndMatch) {
   upd.value = "v2";
   upd.cas = true;
   upd.expected_revision = gr.revision;
-  auto c2 = facade_->propose(0, upd);
+  auto c2 = openkv::storage::test::sync_propose(*facade_, 0, upd);
   ASSERT_TRUE(c2.ok) << c2.error;
   EXPECT_GT(c2.revision, gr.revision);
 
   upd.expected_revision = gr.revision;  // stale
-  auto stale = facade_->propose(0, upd);
+  auto stale = openkv::storage::test::sync_propose(*facade_, 0, upd);
   ASSERT_FALSE(stale.ok);
   EXPECT_TRUE(stale.cas_failed);
   EXPECT_EQ(stale.current_revision, c2.revision);
 }
 
 TEST_F(StoreFacadeTest, OnePcPutGetAndCas) {
-  auto r = facade_->one_pc(0, "1pc-k", 10, 11, "1pc-k", 0, "v1", 0, false, 0);
+  auto r = openkv::storage::test::sync_one_pc(*facade_, 0, "1pc-k", 10, 11, "1pc-k", 0, "v1", 0, false, 0);
   ASSERT_TRUE(r.ok) << r.error;
   EXPECT_EQ(r.revision, 11u);
   // StoreService.Get(start_ts>0) 走同一 txn_get 路径（二进制读）。
@@ -250,18 +251,18 @@ TEST_F(StoreFacadeTest, OnePcPutGetAndCas) {
   auto lk = facade_->get_lock(0, "1pc-k");
   EXPECT_FALSE(lk.found);
 
-  auto create = facade_->one_pc(0, "1pc-new", 20, 21, "1pc-new", 0, "x", 0, true, 0);
+  auto create = openkv::storage::test::sync_one_pc(*facade_, 0, "1pc-new", 20, 21, "1pc-new", 0, "x", 0, true, 0);
   ASSERT_TRUE(create.ok) << create.error;
-  auto stale = facade_->one_pc(0, "1pc-k", 30, 31, "1pc-k", 0, "v2", 0, true, 10);
+  auto stale = openkv::storage::test::sync_one_pc(*facade_, 0, "1pc-k", 30, 31, "1pc-k", 0, "v2", 0, true, 10);
   ASSERT_FALSE(stale.ok);
   EXPECT_TRUE(stale.cas_failed);
-  auto ok = facade_->one_pc(0, "1pc-k", 30, 31, "1pc-k", 0, "v2", 0, true, 11);
+  auto ok = openkv::storage::test::sync_one_pc(*facade_, 0, "1pc-k", 30, 31, "1pc-k", 0, "v2", 0, true, 11);
   ASSERT_TRUE(ok.ok) << ok.error;
   auto tg2 = facade_->txn_get(0, "1pc-k", ~uint64_t{0}, true);
   ASSERT_TRUE(tg2.found);
   EXPECT_EQ(tg2.value, "v2");
 
-  auto del = facade_->one_pc(0, "1pc-k", 40, 41, "1pc-k", 1, {}, 0, false, 0);
+  auto del = openkv::storage::test::sync_one_pc(*facade_, 0, "1pc-k", 40, 41, "1pc-k", 1, {}, 0, false, 0);
   ASSERT_TRUE(del.ok) << del.error;
   auto gone = facade_->txn_get(0, "1pc-k", ~uint64_t{0}, true);
   EXPECT_FALSE(gone.found);
@@ -269,24 +270,24 @@ TEST_F(StoreFacadeTest, OnePcPutGetAndCas) {
 
 TEST_F(StoreFacadeTest, MvccCasViaPrewrite) {
   // seed via prewrite+commit
-  auto pw = facade_->prewrite(0, "m-cas", 100, "m-cas", 0, "a", 0, false, 0);
+  auto pw = openkv::storage::test::sync_prewrite(*facade_, 0, "m-cas", 100, "m-cas", 0, "a", 0, false, 0);
   ASSERT_TRUE(pw.ok) << pw.error;
-  auto cm = facade_->commit(0, "m-cas", 100, 200, 0);
+  auto cm = openkv::storage::test::sync_commit(*facade_, 0, "m-cas", 100, 200, 0);
   ASSERT_TRUE(cm.ok) << cm.error;
 
   auto tg = facade_->txn_get(0, "m-cas", ~uint64_t{0}, true);
   ASSERT_TRUE(tg.found);
   EXPECT_EQ(tg.revision, 200u);
 
-  auto bad = facade_->prewrite(0, "m-cas", 300, "m-cas", 0, "b", 0, true, 199);
+  auto bad = openkv::storage::test::sync_prewrite(*facade_, 0, "m-cas", 300, "m-cas", 0, "b", 0, true, 199);
   ASSERT_FALSE(bad.ok);
   EXPECT_TRUE(bad.cas_failed);
 
-  auto good = facade_->prewrite(0, "m-cas", 300, "m-cas", 0, "b", 0, true, 200);
+  auto good = openkv::storage::test::sync_prewrite(*facade_, 0, "m-cas", 300, "m-cas", 0, "b", 0, true, 200);
   ASSERT_TRUE(good.ok) << good.error;
-  ASSERT_TRUE(facade_->commit(0, "m-cas", 300, 400, 0).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_commit(*facade_, 0, "m-cas", 300, 400, 0).ok);
 
-  auto create = facade_->prewrite(0, "m-new", 500, "m-new", 0, "x", 0, true, 0);
+  auto create = openkv::storage::test::sync_prewrite(*facade_, 0, "m-new", 500, "m-new", 0, "x", 0, true, 0);
   ASSERT_TRUE(create.ok) << create.error;
 }
 
@@ -297,7 +298,7 @@ TEST_F(StoreFacadeTest, PlainTtlLazyExpireAndCompact) {
   cmd.key = "ttl-plain";
   cmd.value = "soon";
   cmd.ttl_ms = stamp_expire_at_ms(500);
-  auto pr = facade_->propose(0, cmd);
+  auto pr = openkv::storage::test::sync_propose(*facade_, 0, cmd);
   ASSERT_TRUE(pr.ok) << pr.error;
 
   auto hit = facade_->get(0, "ttl-plain", true);
@@ -321,9 +322,9 @@ TEST_F(StoreFacadeTest, MvccTtlViaPrewrite) {
   using openkv::storage::stamp_expire_at_ms;
   // 寿命须覆盖 fixture 选主耗时；过短会导致 commit 后立刻不可见（假失败）
   const int64_t exp = stamp_expire_at_ms(5000);
-  auto pw = facade_->prewrite(0, "ttl-m", 1000, "ttl-m", 0, "v", 0, false, 0, exp);
+  auto pw = openkv::storage::test::sync_prewrite(*facade_, 0, "ttl-m", 1000, "ttl-m", 0, "v", 0, false, 0, exp);
   ASSERT_TRUE(pw.ok) << pw.error;
-  ASSERT_TRUE(facade_->commit(0, "ttl-m", 1000, 1100, 0).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_commit(*facade_, 0, "ttl-m", 1000, 1100, 0).ok);
 
   auto tg = facade_->txn_get(0, "ttl-m", ~uint64_t{0}, true);
   ASSERT_TRUE(tg.found) << tg.error;

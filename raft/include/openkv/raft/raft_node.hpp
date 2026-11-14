@@ -14,8 +14,8 @@
 
 // @file raft_node.hpp
 // 职责：单分片完整 Raft 节点——选举(PreVote)、复制、提交、CheckQuorum、InstallSnapshot、
-//       Joint Consensus、异步 Apply、AE inflight、以及相对 stable_* 的增量落盘。
-// 架构：协议核心；可 embedded（自管盘/网/apply）或 external_io（只出 Ready，由 Store 驱动）。
+//       Joint Consensus、AE inflight、以及相对 stable_* 的增量落盘。
+// 架构：协议核心；可 embedded（自管盘/网/同步 apply，Meta 用）或 external_io（只出 Ready，Store 驱动）。
 // 协作：日志=RaftLog；落盘=RaftEngine；出站=TransportSend / GrpcRaftTransport；FSM=ApplyCallback。
 // 注意：persist_ready 在 mu_ 外 fsync，便于与 propose 重叠；compact 门槛看「已 apply 前缀」而非 log.size()。
 
@@ -30,12 +30,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -81,9 +79,6 @@ class RaftNode {
     size_t max_ae_bytes{256 * 1024};
     /// propose 不立即 broadcast，由 tick 合并发送（M4）；单节点不受影响。
     bool coalesce_replication{true};
-    /// 异步 apply 队列（M5）；ConfChange 仍同步。
-    bool enable_async_apply{true};
-    size_t apply_queue_capacity{4096};
     /// C3/P3：Leader lease 时长（ms）；0=禁用 lease，线性读走完整 ReadIndex。
     uint32_t leader_lease_ms{500};
     bool enable_lease_read{true};
@@ -92,13 +87,14 @@ class RaftNode {
     uint32_t persist_batch_n{1};  // 1=每次立刻落盘
     /// ConfChange / add_peer 时登记对端地址（供 GrpcRaftTransport）。
     std::function<void(const std::string& id, const std::string& addr)> on_peer_addr;
-    /// RawNode 模式：不落盘/不发网/不回调 apply，改由 has_ready/take_ready/advance 外提。
-    bool external_io{false};
+    /// Ready 外提（默认）：不落盘/不发网/不回调 apply，由 Store has_ready/take_ready/advance 驱动。
+    /// Meta 等嵌入路径自管盘/网、同步 on_apply 时设 false。
+    bool external_io{true};
   };
 
   RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
            SnapshotProvider snap_provider = nullptr, SnapshotApplier snap_applier = nullptr);
-  ~RaftNode();
+  ~RaftNode() = default;
 
   SoftState soft_state() const;
   bool is_leader() const;
@@ -175,10 +171,6 @@ class RaftNode {
     std::string type;
     std::string payload;
   };
-  struct ApplyItem {
-    uint64_t index{0};
-    std::string data;
-  };
 
   void become_follower(uint64_t term, const std::string& leader = {});
   void become_candidate();
@@ -191,6 +183,7 @@ class RaftNode {
   void maybe_check_quorum();
   void note_peer_progress(const std::string& peer_id);
   void maybe_commit();
+  /// 推进 commit→apply：external_io 时普通条目进 Ready，ConfChange 核内生效；详见 .cpp 注释。
   void apply_committed();
   void maybe_compact();
   void maybe_auto_leave_joint();
@@ -220,11 +213,6 @@ class RaftNode {
   void save_local_fsm_snapshot_locked();
   void restore_local_fsm_snapshot();
   void mark_activity();
-  void start_apply_worker();
-  void stop_apply_worker();
-  void apply_worker_loop();
-  bool enqueue_apply(uint64_t index, std::string data);
-  void wait_apply_caught_up_to(uint64_t index);
   bool lease_valid_locked() const;
   void note_read_index_ack(const std::string& peer_id);
 
@@ -246,8 +234,8 @@ class RaftNode {
   RaftLog log_;  // 日志  
   uint64_t commit_index_{0}; // 已提交的日志索引
   /// 状态机已 apply（含 conf）；Facade 可见。
-  uint64_t last_applied_{0}; // 最后应用的日志索引
-  /// 已调度进 apply 队列或同步 apply 的最高 index。
+  uint64_t last_applied_{0};
+  /// 已安排出去的最高 index（Ready 外提或同步 on_apply）。
   uint64_t apply_scheduled_{0};
 
   std::unordered_map<std::string, uint64_t> next_index_;
@@ -304,21 +292,16 @@ class RaftNode {
   /// 串行化 engine_->consume（fsync）；不持 mu_，允许 propose 与 sync 重叠。
   std::mutex persist_io_mu_;
 
-  // Ready 缓冲（external_io）
-  bool ready_hs_dirty_{false};
-  HardState ready_hs_{};
-  std::vector<LogEntry> ready_unstable_;  // 未稳定落盘的日志条目
-  std::vector<LogEntry> ready_committed_;  // 已稳定落盘的日志条目
-  std::vector<SnapshotMeta> ready_snaps_;  // 快照元数据
-  uint64_t ready_applied_watermark_{0};  // 已应用的日志条目索引
+  // Ready 缓冲（external_io）：协议核攒批，等 Store take_ready 外提。
+  bool ready_hs_dirty_{false};            ///< HardState 有变更、尚未放进 Ready
+  HardState ready_hs_{};                  ///< 待外提的最新 HardState 快照
+  std::vector<LogEntry> ready_unstable_;  ///< 新 append、待 WAL 的条目
+  std::vector<LogEntry> ready_committed_;  ///< 已 commit、待 apply 的条目
+  std::vector<SnapshotMeta> ready_snaps_;  ///< 待发/待装快照元数据
+  uint64_t ready_applied_watermark_{0};   ///< Ready 侧已报告的 apply 水位
 
-  std::mutex apply_mu_;
-  std::condition_variable apply_cv_;  // 应用条件变量
-  std::deque<ApplyItem> apply_q_;  // 应用队列
-  std::atomic<bool> apply_running_{false};
   /// 当前线程正在执行 on_apply；recover_apply 遇此须直接返回，否则自死锁。
   std::atomic<bool> in_on_apply_{false};
-  std::thread apply_thread_;
 };
 
 }  // namespace openkv::raft

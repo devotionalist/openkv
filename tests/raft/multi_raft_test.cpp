@@ -33,6 +33,7 @@ TEST(MultiRaftTest, GetOrCreateAndLeaders) {
   MultiRaft mr(
       [](uint32_t shard) {
         RaftNode::Options opts;
+        // 默认 external_io=true，经 MultiRaft→Store Ready 驱动。
         opts.shard_id = shard;
         opts.self_id = "n0";
         opts.peers = {{"n0", "127.0.0.1:1", false}};

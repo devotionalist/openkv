@@ -67,9 +67,6 @@ class RegionMetrics {
   std::string region_compact(uint32_t region_id) const;
   std::string prometheus_text() const;
 
-  /// 测试辅助：把 by_region_ 置为 moved-from（libstdc++ 下 bucket_count 可为 0）。
-  void test_only_move_away_map();
-
  private:
   /// libstdc++ moved-from / 堆损坏后 bucket_count==0 时 operator[]/find 会 SIGFPE。
   void ensure_map_usable() const;

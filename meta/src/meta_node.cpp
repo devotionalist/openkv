@@ -1445,6 +1445,8 @@ void MetaNode::start() {
   opts.heartbeat_ms = bootstrap_.raft_heartbeat_ms;
   opts.compact_threshold = bootstrap_.raft_compact_threshold;
   opts.snapshot_min_interval_ms = 1000;
+  // Meta 单组嵌入：自管 persist + transport.bind + 同步 on_apply，不用 Store Ready。
+  opts.external_io = false;
   // Meta 与 Storage 共用端口做业务+Raft；注册洪峰时 AE 排队会误触发 check_quorum 让位风暴。
   // Storage Multi-Raft 仍默认开启；Meta 单组管控面关闭该检查更稳。
   opts.check_quorum = false;

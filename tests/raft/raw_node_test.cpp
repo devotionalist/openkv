@@ -28,6 +28,7 @@ namespace {
 
 using openkv::raft::LogEntry;
 using openkv::raft::Peer;
+using openkv::raft::PersistedHardState;
 using openkv::raft::RawNode;
 using openkv::raft::Ready;
 
@@ -86,8 +87,15 @@ TEST(RawNodeTest, BootstrapThenPropose) {
   auto n = make_single();
   std::vector<LogEntry> ents;
   ents.push_back(LogEntry{1, 1, "seed"});
-  n.bootstrap_from_disk(/*term=*/1, /*vote=*/"n1", /*commit=*/1, /*applied=*/1, ents,
-                        /*first=*/1, /*snap_term=*/0);
+  PersistedHardState hs;
+  hs.term = 1;
+  hs.voted_for = "n1";
+  hs.commit_index = 1;
+  hs.last_applied = 1;
+  hs.first_index = 1;
+  hs.snapshot_term = 0;
+  ASSERT_NE(n.raft_node(), nullptr);
+  n.raft_node()->load_hard_state(hs, ents);
   for (int i = 0; i < 40 && !n.is_leader(); ++i) {
     n.tick();
     drain_ready(n);

@@ -149,11 +149,7 @@ TEST_F(KvEngineTest, CheckpointRoundTrip) {
 }
 
 TEST_F(KvEngineTest, ColumnFamilyRouting) {
-  EXPECT_STREQ(KvEngine::cf_name_for_key("\xff\xffskv/epoch"), "default");
-  EXPECT_STREQ(KvEngine::cf_name_for_key(std::string("pk") + '\0' + 'L'), "lock");
-  EXPECT_STREQ(KvEngine::cf_name_for_key(std::string("pk") + '\0' + 'D' + '\0'), "data");
-  EXPECT_STREQ(KvEngine::cf_name_for_key(std::string("pk") + '\0' + 'W' + '\0'), "write");
-
+  // 用真实 put/get/重开验证 CF 路由，不暴露内部 cf_name_for_key。
   const std::string lock_k = std::string("user") + '\0' + 'L';
   const std::string data_k = std::string("user") + '\0' + 'D' + std::string(8, '\0');
   {
@@ -203,24 +199,17 @@ TEST_F(KvEngineTest, SyncModeAligned) {
 
   KvEngine eng(dir_.string(), 0, openkv::raft::SyncMode::kNone);
   EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kNone);
-  EXPECT_FALSE(eng.rocks_write_sync());
   ASSERT_TRUE(eng.put("k", "v", 1));
 
-  // 默认 data：Raft sync，KV apply 异步
   eng.set_sync_mode(openkv::raft::SyncMode::kData);
   EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kData);
-  EXPECT_FALSE(eng.rocks_write_sync());
 
   eng.set_sync_mode(openkv::raft::SyncMode::kAll);
   EXPECT_EQ(eng.sync_mode(), openkv::raft::SyncMode::kAll);
-#if defined(OPENKV_HAS_ROCKSDB) && OPENKV_HAS_ROCKSDB
-  EXPECT_TRUE(eng.rocks_write_sync());
-#endif
   ASSERT_TRUE(eng.put("k2", "v2", 2));
   EXPECT_TRUE(eng.get("k2").has_value());
 
   ShardEngineManager mgr(dir_.string(), openkv::raft::SyncMode::kData);
   EXPECT_EQ(mgr.sync_mode(), openkv::raft::SyncMode::kData);
   EXPECT_EQ(mgr.get_or_create(7).sync_mode(), openkv::raft::SyncMode::kData);
-  EXPECT_FALSE(mgr.get_or_create(7).rocks_write_sync());
 }

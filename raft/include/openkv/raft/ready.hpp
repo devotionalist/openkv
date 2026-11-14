@@ -28,11 +28,12 @@
 
 namespace openkv::raft {
 
-/// 持久化 hard state（对齐 raft-rs HardState）。
+/// 必须落盘的协议元状态（重启靠它恢复选举/提交水位）。
+/// 与 SoftState 不同：SoftState 可丢、仅观测；HardState 丢了会乱投票或丢 commit。
 struct HardState {
-  uint64_t term{0};
-  std::string vote;
-  uint64_t commit{0};
+  uint64_t term{0};     ///< 当前任期
+  std::string vote;     ///< 本任期投票对象（voted_for）
+  uint64_t commit{0};   ///< 已提交最大 index（commit_index）
 };
 
 /// 待发送的 Raft RPC（由外层 Transport 发出）。
@@ -52,18 +53,18 @@ struct SnapshotMeta {
   std::string conf_state;
 };
 
-/// raft-rs Ready：一轮协议推进后外层须处理的批次。
+/// 一轮协议输出：外层（Store）须按序 persist → 发网 → apply → advance。
 struct Ready {
-  std::optional<HardState> hard_state;
-  /// 需追加到 WAL 的新日志（含未提交）。
+  std::optional<HardState> hard_state;  ///< 若有：本批需落盘的 HardState
+  /// 需追加到 WAL 的新日志（unstable，可尚未 commit）。
   std::vector<LogEntry> entries;
   /// 已提交、待 apply 的条目（ConfChange + 普通）。
   std::vector<LogEntry> committed_entries;
-  std::vector<Message> messages;
+  std::vector<Message> messages;  ///< 落盘后再发（耐久顺序）
   /// 需对该 peer 发起 InstallSnapshot（数据由外层拉取）。
   std::optional<SnapshotMeta> snapshot;
-  bool must_sync{false};
-  SoftState soft_state{};
+  bool must_sync{false};  ///< 本批是否要求 sync 落盘后再 advance
+  SoftState soft_state{}; ///< 附带观测快照（非持久化载荷）
 };
 
 }  // namespace openkv::raft

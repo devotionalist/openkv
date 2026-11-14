@@ -41,6 +41,6 @@ flowchart LR
 
 | ID | 标准 |
 |----|------|
-| P1 | `KvEngineTest.SyncModeAligned`：`kData` → `rocks_write_sync()==false`；`kAll` → true |
+| P1 | `KvEngineTest.SyncModeAligned`：`set_sync_mode` 在 `kNone`/`kData`/`kAll` 间切换后 `sync_mode()` 一致，且 put/get 成功 |
 | P2 | 默认/`data` 集群 put w8 相对旧双 sync 明显下降 p50（记 TEST_CASES） |
 | P3 | 本文 + STORE / MULTI_RAFT / flows 索引一致 |

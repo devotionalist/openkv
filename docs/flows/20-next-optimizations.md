@@ -12,12 +12,31 @@
 | ID | 内容 | 状态 |
 |----|------|------|
 | N1 | Meta compact 前写 `fsm_<gid>.snap`；`load_from_disk` 后 `snap_applier` 恢复 ClusterState | 已做 / 回归 `MetaFsm`·`FsmSnap` |
+| N1b | **本地 FSM 快照多份 + 坏文件回退（待重新设计）** | 见下方「N1b」；现状单文件覆盖 |
 | N3 | ONEPC apply 经 `KvEngine::write_batch` 一次写 data+write（含 expire） | 与 23 apply 批一并推进 |
 | N4 | BatchSystem：mailbox `recv_batch`+CV；`SKV_RAFT_WORKERS` / `SKV_APPLY_WORKERS` | 已做：默认 8/8 + Helm；见 [25](25-write-path-knives.md) |
 | N4b | BatchSystem schedule 通道 + drain-until-empty（禁扫全表） | 已做；见 [26](26-raftstore-schedule-pipeline.md) |
 | N5 | Gateway BatchPut 并行度；Storage 级 batch propose | Gateway 并行 + Batch CQ fan-in 见 [28](28-compute-net-opt.md)；跨请求 batch propose **待做** |
 | N8 | 二进制 Get / TSO async / stub 缓存 | 已做；见 [28](28-compute-net-opt.md) |
 | N7 | `propose` 对 `kOnePc` 检查 `region_splitting` | 已做 |
+
+---
+
+## N1b：本地 FSM 快照多份保留（待重新设计）
+
+**现状：** `save_local_fsm_snapshot_locked` 只写一份 `fsm_<gid>.snap`（`.tmp` → rename 覆盖）。每 32 条 apply / compact 前更新。重启只认这一份。
+
+**问题：** 最新快照文件损坏（写一半、磁盘坏块、逻辑写出坏 blob）时：
+- 无上一份可试；
+- 若日志已被 compact 砍掉，重放也做不了 → 状态机可能停在 bootstrap（路由/TS 像刚装机）。
+
+**期望方向（后边重做，本轮不实现）：**
+1. 保留最近 **N=3** 份（按 index 或世代轮转）；
+2. 启动按**新→旧**试装，带校验（magic / 长度 / `snap_applier` 成败）；
+3. 某一份装成功且落后于 `last_applied` 时，用**仍在的日志**追平；
+4. 三份都坏且日志不够 → 明确失败/告警，勿默默 bootstrap。
+
+**代码锚点：** `raft/src/raft_node.cpp`：`save_local_fsm_snapshot_locked` / `restore_local_fsm_snapshot`。
 
 ---
 

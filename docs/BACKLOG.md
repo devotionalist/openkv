@@ -74,7 +74,11 @@ MVCC 事务 **P1–P3 已落地**（TSO、乐观/悲观、CheckTxnStatus/Resolve
 
 ## 6. 曾提起未做
 
-（暂无登记项。历史讨论过的改名 / 联邦等已取消或并入上文「暂缓」。）
+| ID | 内容 | 说明 |
+|----|------|------|
+| F1 | Meta 本地 FSM 快照多份 + 坏文件回退 | 现状单文件覆盖；最新坏且日志已 compact → 可能 bootstrap。方案见 [flows/20-next-optimizations.md](flows/20-next-optimizations.md) **N1b**（待重新设计） |
+
+历史讨论过的改名 / 联邦等已取消或并入上文「暂缓」。
 
 ---
 

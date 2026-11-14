@@ -30,6 +30,7 @@ namespace {
 
 RaftNode make_single(std::vector<std::string>* applied) {
   RaftNode::Options opts;
+  opts.external_io = false;  // 嵌入：propose 内同步 persist/apply
   opts.shard_id = 1;
   opts.self_id = "n0";
   opts.peers = {{"n0", "127.0.0.1:1", false}};
@@ -94,6 +95,7 @@ TEST(RaftNodeTest, ConfChangeAddLearner) {
 
 TEST(RaftNodeTest, PreVoteDoesNotBumpTerm) {
   RaftNode::Options oa;
+  oa.external_io = false;
   oa.shard_id = 0;
   oa.self_id = "a";
   oa.peers = {{"a", "1", false}, {"b", "2", false}};
@@ -116,6 +118,7 @@ TEST(RaftNodeTest, PreVoteDoesNotBumpTerm) {
 
 TEST(RaftNodeTest, CheckQuorumStepsDownIsolatedLeader) {
   RaftNode::Options opts;
+  opts.external_io = false;
   opts.shard_id = 0;
   opts.self_id = "a";
   opts.peers = {{"a", "1", false}, {"b", "2", false}, {"c", "3", false}};
@@ -145,6 +148,7 @@ TEST(RaftNodeTest, VoteAndAppendBetweenPeers) {
   std::vector<std::string> applied_b;
 
   RaftNode::Options oa;
+  oa.external_io = false;
   oa.shard_id = 0;
   oa.self_id = "a";
   oa.peers = {{"a", "1", false}, {"b", "2", false}};

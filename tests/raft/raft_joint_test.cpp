@@ -16,10 +16,8 @@
 
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 using openkv::raft::ConfChange;
@@ -27,14 +25,14 @@ using openkv::raft::RaftNode;
 
 namespace {
 
-std::unique_ptr<RaftNode> make_leader(std::vector<std::string>* applied, bool async = true) {
+std::unique_ptr<RaftNode> make_leader(std::vector<std::string>* applied) {
   RaftNode::Options opts;
+  opts.external_io = false;  // 嵌入：同步 on_apply
   opts.shard_id = 0;
   opts.self_id = "n0";
   opts.peers = {{"n0", "127.0.0.1:1", false}};
   opts.election_timeout_ms = 200;
   opts.heartbeat_ms = 50;
-  opts.enable_async_apply = async;
   opts.coalesce_replication = false;
   opts.check_quorum = false;
   auto on_apply = [applied](uint64_t, const std::string& data) {
@@ -86,7 +84,7 @@ TEST(RaftJointTest, PromoteUsesEnterThenLeaveJoint) {
 }
 
 TEST(RaftJointTest, RejectConfWhileJointPending) {
-  auto node = make_leader(nullptr, /*async=*/false);
+  auto node = make_leader(nullptr);
   ConfChange add;
   add.type = ConfChange::kAddLearner;
   add.peer = {"n1", "a", true};
@@ -106,16 +104,11 @@ TEST(RaftJointTest, RejectConfWhileJointPending) {
   EXPECT_FALSE(node->in_joint());
 }
 
-TEST(RaftAsyncApplyTest, ProposeAppliesViaWorker) {
+TEST(RaftJointTest, ProposeAppliesSync) {
   std::vector<std::string> applied;
-  auto node = make_leader(&applied, /*async=*/true);
+  auto node = make_leader(&applied);
   ASSERT_TRUE(node->propose("a"));
   ASSERT_TRUE(node->propose("b"));
-  for (int i = 0; i < 50; ++i) {
-    node->tick();
-    if (applied.size() >= 2) break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
   ASSERT_GE(applied.size(), 2u);
   EXPECT_EQ(applied[0], "a");
   EXPECT_EQ(applied[1], "b");

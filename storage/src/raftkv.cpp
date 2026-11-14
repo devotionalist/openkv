@@ -41,25 +41,38 @@ void RaftKV::flush_ready(uint32_t region_id) {
   store_->drive_ready(region_id);
 }
 
+
+/**
+ * @brief 异步写入raftkv，写入raftkv后，需要等待apply 完成
+ * 
+ * @param region_id 区域ID
+ * @param data 数据
+ * @param assigned_index 分配的索引
+ * @param error 错误信息
+ * @return true 成功，false 失败
+ */
 bool RaftKV::async_write(uint32_t region_id, std::string data, uint64_t* assigned_index,
                          std::string* error) {
   // 写路径入口（见 docs/flows/35-raft-module-call-flows.md）：
   //   propose 只改内存 RaftLog → request_ready 攒批 → Store 批末 persist_ready → Engine::consume
   //   → Apply worker 写 KV；客户端可见性由 apply 回调 / ProposalQueue 唤醒。
   auto* n = node(region_id);
+  // 获取raft节点
   if (!n) {
     if (error) *error = "no_region";
     return false;
   }
+  // 判断是否是leader
   if (!n->is_leader()) {
     if (error) *error = "not_leader";
     return false;
   }
+  // 写入raftkv
   if (!n->propose(std::move(data), assigned_index)) {
     if (error) *error = "propose_failed";
     return false;
   }
-  // group commit：按 Store ready_coalesce_* 攒批后再 drive_ready（勿在此同步 fsync）。
+  // 攒批，等待apply
   store_->request_ready(region_id);
   return true;
 }

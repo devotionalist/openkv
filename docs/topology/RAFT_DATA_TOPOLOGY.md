@@ -70,21 +70,132 @@ classDiagram
 
 ---
 
-## 2. 核心类型字段词典
+## 2. 状态分层（先分清这四类）
 
-### `Peer` / `LogEntry` / `ConfChange`
+很多人把属性搅在一起，按**是否落盘 / 谁消费**分四层：
 
-| 结构.字段 | 含义 | 作用 |
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ SoftState          观测快照（role/leader/指标…）可不落盘      │
+├─────────────────────────────────────────────────────────────┤
+│ HardState          必须落盘：term / vote / commit             │
+├─────────────────────────────────────────────────────────────┤
+│ RaftLog + LogEntry 复制日志（propose append → WAL → apply）   │
+├─────────────────────────────────────────────────────────────┤
+│ Ready 缓冲         external_io 下外提批次：HS/日志/消息/快照   │
+│   ready_hs_dirty_  「HardState 脏了等 take_ready」的布尔标记  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+| 概念 | 是什么 | 作用 | 默认/注意 |
+|------|--------|------|-----------|
+| **HardState** | `term` + `vote` + `commit` | 重启恢复选举与提交水位 | 经 Ready → PersistWorker 写 WAL |
+| **SoftState** | role、leader、last_applied、指标等 | redirect、metrics、调试 | **不**当持久化源；可含 term/commit 只读拷贝 |
+| **LogEntry** | 一条日志 `term/index/data` | 复制与状态机输入 | `data` 由上层解成 Command/ConfChange |
+| **Ready** | 一轮协议输出批次 | Store：persist → 发网 → apply → advance | 生产路径主单位 |
+| **`external_io`** | Options：I/O 是否外提 | `true`：协议不写盘不发网；`false`：嵌入自管盘/网 + 同步 on_apply | **默认 true**；Meta 显式 false |
+| **`ready_hs_dirty_`** | 运行时脏标记 | HardState 有改且未进 Ready | 初始 **false**；与 external_io 默认无关 |
+| **`ready_hs_`** | 待外提的 HardState 内容 | dirty 时被 `take_ready` 拷进 `Ready.hard_state` | |
+| **`ready_unstable_`** | 新 append 未 durable 的条目 | → `Ready.entries` → WAL | |
+| **`ready_committed_`** | 已 commit 待 apply | → `Ready.committed_entries` → Apply worker | |
+| **`persist_dirty_`** | 嵌入模式落盘脏标记 | `external_io=false` 时 `persist_locked` 用 | 生产 Ready 路径基本不用 |
+
+**HardState vs SoftState（易混）：**
+
+| | HardState | SoftState |
+|--|-----------|-----------|
+| 落盘 | 要 | 不要 |
+| 字段 | term / vote / commit | role / leader / term* / commit* / last_applied / 指标… |
+| 谁填 | `persist_locked` → `ready_hs_` | `soft_state()` 只读组装 |
+| 丢了 | 选举/提交水位错乱 | 仅观测短暂不准 |
+
+\* SoftState 里的 term/commit 是**方便读的拷贝**，权威持久化仍是 HardState。
+
+**Apply 只有两条正路（协议核不再内嵌异步队列）：**
+
+| 模式 | 谁执行业务日志 | 说明 |
+|------|----------------|------|
+| `external_io=true`（Store） | Store Apply worker | 条目进 `ready_committed_`，核内只处理 ConfChange |
+| `external_io=false`（Meta） | 持锁同步 `on_apply` | 无队列、无背压 break；简单可预期 |
+
+**本地 FSM 快照（Meta）：** 现单文件覆盖 `fsm_<gid>.snap`。多份保留 + 坏文件回退 → 待重新设计，见 [20-next-optimizations N1b](../flows/20-next-optimizations.md#n1b本地-fsm-快照多份保留待重新设计)。
+
+### HardState 三字段（说人话）
+
+| 字段 | 白话 | 为什么要落盘 |
+|------|------|--------------|
+| **term（当前任期）** | Raft 的「第几轮选举 / 谁在当家」的逻辑时钟，单调递增的整数。**不只选举时变**：① 本节点 `become_candidate` 时 `term++`；② 收到别人更高 term 的 AE/Vote 等 → `step_down` / `become_follower` 跟到对方 term（旧 Leader 也会因此退位）。同一 term 最多一位 Leader；比自己小的消息不当真。**PreVote 不抬高**本机 term（只试探「下一任」能不能选）。 | 重启后若忘了，可能拿过期身份再选一次，破坏一致性。 |
+| **vote（voted_for）** | 「这一任我把票投给了谁」。一个 term 内最多投一票；空 = 本任期还没投。 | 防同一任期投两次，导致双主。 |
+| **commit（commit_index）** | 「多数派已经确认、可以交给状态机执行的最大日志下标」。还没 apply 的也会先记在这里。 | 重启后知道哪些日志已经安全，避免重复提交或漏 apply 边界错乱。 |
+
+**和 SoftState 里同名数字的关系：** SoftState 也会带 term / commit_index，那只是给 metrics、redirect 看的快照；盘上认的只有 HardState。
+
+**写路径（external_io）与这些字段的关系：**
+
+```text
+propose → log_.append → ready_unstable_
+       → persist_locked → ready_hs_dirty_ + ready_hs_
+Store take_ready → Ready{hard_state, entries, …}
+PersistWorker → WAL
+dispatch → AE 消息 / Apply → report_applied
+```
+
+---
+
+## 3. 核心类型字段词典
+
+### `Peer` / `LogEntry` / `ConfChange`（成员变更提案）
+
+代码里叫 `ConfChange`（行业行话 Configuration Change），白话就是**成员变更提案**——不是 Leader/Follower 那种「角色」，而是「对成员名单做什么」。经日志 commit 后 apply 才改配置。
+
+**配置里的两种人（别和选举角色混）：**
+
+```mermaid
+flowchart LR
+  V[投票人 voter<br/>能投票、算多数派]
+  L[学习者 learner<br/>只收日志、不投票]
+  L -->|Promote 转正| V
+```
+
+| 结构.字段 | 白话 | 作用 |
 |-----------|------|------|
-| `Peer.id` | 节点 ID | Raft 成员标识 |
-| `Peer.address` | 地址 | GrpcRaftTransport 拨号 |
-| `Peer.learner` | 是否 Learner | 不参与投票/quorum |
-| `LogEntry.term` | 条目任期 | AppendEntries 匹配/冲突截断 |
-| `LogEntry.index` | 条目下标 | 提交与 apply 顺序 |
-| `LogEntry.data` | 业务/配置载荷 | 状态机解释 |
-| `ConfChange.type` | 变更类型 | Add/Remove/Learner/Joint |
-| `ConfChange.peer` | 目标成员 | 成员变更对象 |
-| `ConfChange.joint_change` | Joint 内实际变更 | EnterJoint 携带 |
+| `Peer.id` / `address` | 谁、怎么连 | 成员标识与拨号 |
+| `Peer.learner` | 是不是学习者 | 不投票、不算 quorum |
+| `LogEntry.term/index/data` | 一条日志 | 复制与 apply；`data` 可为业务或 ConfChange |
+| `ConfChange.type` | 变更种类 | 见下表 |
+| `ConfChange.peer` | 对谁动手 | 目标节点 |
+| `ConfChange.joint_change` | Joint 里真正要做的事 | 通常 Promote / Remove |
+
+**`ConfChange.Type`（说人话）：**
+
+| 枚举 | 白话 | 图上干什么 |
+|------|------|------------|
+| `kAddLearner` | 加旁听生 | 进学习圈，还不投票 |
+| `kPromoteLearner` | 旁听生转正 | 改投票名单 → 安全路径包进 EnterJoint |
+| `kRemoveNode` | 踢人 | 常包进 EnterJoint |
+| `kAddNode` | 直接加投票人 | 一步加 voter（少用） |
+| `kEnterJoint` | 进入联合配置 | 新旧两套人一起说了算 |
+| `kLeaveJoint` | 退出联合 | 只留新名单 C_new |
+
+**转正 / 删节点安全路径（Joint 两阶段）：**
+
+```mermaid
+stateDiagram-v2
+  [*] --> 单配置: 平时一套人说了算<br/>例 {A,B,C}
+  单配置 --> 联合配置: EnterJoint<br/>（带着 Promote 或 Remove）
+  note right of 联合配置
+    新旧双多数都同意才能 commit
+    SoftState.in_joint = true
+  end note
+  联合配置 --> 单配置新: LeaveJoint
+  单配置新 --> [*]
+  note right of 单配置新
+    只剩 C_new
+    例转正后 {A,B,C,D}
+  end note
+```
+
+加学习者常一步 `AddLearner` 即可；`Promote`/`Remove` 由 `propose_conf_change` 自动改成 `EnterJoint` + 稍后 `LeaveJoint`。
 
 ### `RaftLog`
 
@@ -111,34 +222,37 @@ classDiagram
 | `lease_expire_` | Leader lease 截止 | 本地线性读捷径 |
 | `election_count_` 等 | O1 计数 | SoftState / 指标 |
 
-### `RaftNode::Options`
+### `RaftNode::Options`（模式与调参）
 
 | 字段 | 含义 | 作用 |
 |------|------|------|
+| `external_io` | Ready 外提（默认 **true**） | Store 路径；Meta 嵌入设 false（同步 on_apply） |
 | `shard_id` | 分片/Region | MultiRaft 键 |
 | `self_id` / `peers` | 本机与同伴 | 组网 |
 | `election_timeout_ms` / `heartbeat_ms` | 超时 | 选举与心跳 |
-| `persist_dir` | 落盘目录 | 宕机恢复 |
+| `persist_dir` / `raft_engine` | 落盘目录或共享引擎 | 宕机恢复 |
 | `compact_threshold` | 日志条数阈值 | 触发快照压缩 |
 | `enable_pre_vote` | PreVote | 防打断任期 |
 | `check_quorum` | 多数派存活检查 | Leader 让位 |
+| `coalesce_replication` | propose 后攒 AE | 降发送频率；RF=1 仍立即发 |
 | `max_ae_entries` / `max_ae_bytes` | AE 批大小 | 复制批处理 |
-| `leader_lease_ms` | lease 时长 | 线性读优化 |
-| `persist_sync` / `persist_batch_n` | 同步级别/批写 | 耐久 vs 吞吐 |
+| `leader_lease_ms` / `enable_lease_read` | Leader lease | 线性读捷径 |
+| `persist_sync` / `persist_batch_n` | 同步级别/批写 | 嵌入路径耐久 vs 吞吐 |
 
 ### `PersistedHardState` / `MultiRaft::Options`
 
 | 字段 | 含义 | 作用 |
 |------|------|------|
-| `term` / `voted_for` | hard state | 重启恢复选举态 |
+| `term` / `voted_for` | 盘上 HardState | 重启恢复选举态 |
 | `commit_index` / `last_applied` | 提交与 apply | 恢复后补 apply |
 | `first_index` / `snapshot_term` | 日志边界 | 重建 RaftLog |
-| `cold_tick_every` | 冷组 tick 间隔 | 降 CPU |
-| `hot_idle_ticks` | 变冷阈值 | 冷热调度 |
+| `hibernate_after_ms` 等 | Store 冷热 | 降 tick CPU |
+| `ready_coalesce_n/ms` | propose→Ready 攒批 | 写路径 group commit |
+| `persist_workers` | PersistWorker 数 | 跨 Region 重叠落盘 |
 
 ---
 
-## 3. 传输与帧
+## 4. 传输与帧
 
 ```mermaid
 flowchart TB
@@ -154,7 +268,7 @@ flowchart TB
 
 ---
 
-## 4. 包含关系示意
+## 5. 包含关系示意
 
 ```mermaid
 flowchart TB

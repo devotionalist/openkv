@@ -44,12 +44,8 @@ class TSOracle {
   uint64_t alloc(uint32_t n = 1);
   void alloc_async(uint32_t n, std::function<void(grpc::Status, uint64_t start)> cb);
 
-  void inject_cache_for_test(uint64_t next, uint64_t end);
-  void inject_range_for_test(uint64_t next, uint64_t end);
-
   uint32_t batch_size() const { return batch_size_; }
   uint32_t low_watermark() const { return low_watermark_; }
-  uint64_t remaining_for_test() const { return q_.remaining(); }
 
  private:
   struct Waiter {

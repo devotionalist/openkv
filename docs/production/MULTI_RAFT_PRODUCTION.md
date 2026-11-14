@@ -42,7 +42,7 @@
 | M2 | 消息优先级 | **已实现** |
 | M3 | 长连接复用 | **已实现** |
 | M4 | Propose / AE 批处理 | **已实现** |
-| M5 | 异步 Apply + 背压 | **已实现** |
+| M5 | 异步 Apply + 背压 | **已实现**（Store Apply worker / BatchSystem；协议核无内嵌 apply 队列） |
 | M6 | 每 peer 流控 | **已实现** |
 | M7 | Region 调度器 | **已实现** |
 

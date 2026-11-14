@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "openkv/storage/store_service.hpp"
+#include "facade_sync.hpp"
 #include "openkv/storage/storage_node.hpp"
 
 #include <gtest/gtest.h>
@@ -143,7 +144,7 @@ TEST(StoreAdminRaftTest, ApplyConflictVisibleToClient) {
   }
   ASSERT_TRUE(node.multi_raft().get(0)->is_leader());
 
-  auto pw = facade.prewrite(0, "k", 10, "k", /*mvcc_op=*/0, "v1");
+  auto pw = openkv::storage::test::sync_prewrite(facade, 0, "k", 10, "k", /*mvcc_op=*/0, "v1");
   ASSERT_TRUE(pw.ok) << pw.error;
 
   // 绕过门面预检：直接 propose 冲突 prewrite，apply 应回传 locked
@@ -151,7 +152,7 @@ TEST(StoreAdminRaftTest, ApplyConflictVisibleToClient) {
   cmd.op = CmdOp::kPrewrite;
   cmd.key = "k";
   cmd.value = openkv::storage::encode_prewrite_value(20, 0, "k", "v2");
-  auto r = facade.propose(0, cmd);
+  auto r = openkv::storage::test::sync_propose(facade, 0, cmd);
   EXPECT_FALSE(r.ok);
   EXPECT_EQ(r.error, "locked");
 
@@ -160,7 +161,7 @@ TEST(StoreAdminRaftTest, ApplyConflictVisibleToClient) {
   c2.op = CmdOp::kCommit;
   c2.key = "missing";
   c2.value = openkv::storage::encode_commit_value(1, 2);
-  auto r2 = facade.propose(0, c2);
+  auto r2 = openkv::storage::test::sync_propose(facade, 0, c2);
   EXPECT_FALSE(r2.ok);
   EXPECT_EQ(r2.error, "lock_not_found");
 
@@ -191,13 +192,13 @@ TEST(StoreAdminRaftTest, SplitSeedsRightWithLeftPeers) {
   put.op = CmdOp::kPut;
   put.key = "a";
   put.value = "1";
-  ASSERT_TRUE(facade.propose(0, put).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(facade, 0, put).ok);
   put.key = "m";
   put.value = "2";
-  ASSERT_TRUE(facade.propose(0, put).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(facade, 0, put).ok);
   put.key = "z";
   put.value = "3";
-  ASSERT_TRUE(facade.propose(0, put).ok);
+  ASSERT_TRUE(openkv::storage::test::sync_propose(facade, 0, put).ok);
 
   auto left_peers = node.resolve_region_peers(0);
   ASSERT_FALSE(left_peers.empty());

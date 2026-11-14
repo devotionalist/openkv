@@ -120,12 +120,6 @@ void RegionMetrics::observe_get(uint32_t region_id, uint64_t us) {
   ensure(region_id).get.observe(us);
 }
 
-void RegionMetrics::test_only_move_away_map() {
-  std::lock_guard<std::mutex> lock(mu_);
-  auto stolen = std::move(by_region_);
-  (void)stolen;
-}
-
 std::string RegionMetrics::region_compact(uint32_t region_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   ensure_map_usable();

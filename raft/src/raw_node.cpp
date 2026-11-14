@@ -45,7 +45,6 @@ RawNode::RawNode(Options opts) {
   o.leader_lease_ms = opts.leader_lease_ms;
   o.enable_lease_read = opts.enable_lease_read;
   o.external_io = true;
-  o.enable_async_apply = false;
   impl_ = std::make_unique<Impl>(std::move(o));
 }
 
@@ -128,19 +127,6 @@ void RawNode::step_transport_fail(const std::string& peer_id) {
 
 void RawNode::add_peer(const Peer& p) { impl_->node.add_peer(p); }
 void RawNode::remove_peer(const std::string& id) { impl_->node.remove_peer(id); }
-
-void RawNode::bootstrap_from_disk(uint64_t term, std::string voted_for, uint64_t commit,
-                                  uint64_t last_applied, const std::vector<LogEntry>& entries,
-                                  uint64_t first_index, uint64_t snap_term) {
-  PersistedHardState hs;
-  hs.term = term;
-  hs.voted_for = std::move(voted_for);
-  hs.commit_index = commit;
-  hs.last_applied = last_applied;
-  hs.first_index = first_index;
-  hs.snapshot_term = snap_term;
-  impl_->node.load_hard_state(hs, entries);
-}
 
 bool RawNode::has_ready() const { return impl_->node.has_ready(); }
 Ready RawNode::ready() { return impl_->node.take_ready(); }

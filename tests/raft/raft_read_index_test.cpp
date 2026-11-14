@@ -40,11 +40,11 @@ TEST(RaftFrameTest, EncodeDecodeRoundTrip) {
 
 TEST(RaftReadIndexTest, LeaseReadOnSingleNode) {
   RaftNode::Options opts;
+  opts.external_io = false;
   opts.self_id = "n0";
   opts.peers = {{"n0", "1", false}};
   opts.enable_lease_read = true;
   opts.leader_lease_ms = 1000;
-  opts.enable_async_apply = false;
   opts.coalesce_replication = false;
   auto node = std::make_unique<RaftNode>(std::move(opts), [](auto&&...) {}, [](auto&&...) {});
   for (int i = 0; i < 40; ++i) {
@@ -61,9 +61,9 @@ TEST(RaftReadIndexTest, LeaseReadOnSingleNode) {
 
 TEST(RaftReadIndexTest, SoftStateMetrics) {
   RaftNode::Options opts;
+  opts.external_io = false;
   opts.self_id = "n0";
   opts.peers = {{"n0", "1", false}};
-  opts.enable_async_apply = false;
   auto node = std::make_unique<RaftNode>(std::move(opts), [](auto&&...) {}, [](auto&&...) {});
   for (int i = 0; i < 40; ++i) node->tick();
   auto st = node->soft_state();

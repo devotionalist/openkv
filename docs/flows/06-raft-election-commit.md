@@ -23,13 +23,14 @@ stateDiagram-v2
   end note
 ```
 
-| 概念 | 含义 |
+| 概念 | 含义（说人话） |
 |------|------|
-| **term** | 逻辑时钟；RPC 带 term，落后则 step down |
+| **term（当前任期）** | 「第几轮选举 / 谁在当家」的逻辑时钟，单调递增；同 term 最多一位 Leader；收到更高 term 就退位。RPC 带 term，落后则 step down |
+| **vote** | 这一任票投给了谁；同 term 只能投一次 |
 | **LogEntry** | `{term, index, data}`；`data` = KV Command / ConfChange / MetaCommand |
-| **commit_index** | 多数派已复制、可 apply 的水位 |
+| **commit_index** | 多数派已确认、可以交给状态机执行的最大日志下标 |
 | **match / next_index** | Leader 记每个 peer 已对齐到哪、下一条发哪 |
-| **HardState** | `{term, vote, commit}`，须持久化 |
+| **HardState** | `{term, vote, commit}`，须持久化（白话释义见 [RAFT_DATA_TOPOLOGY §2](../topology/RAFT_DATA_TOPOLOGY.md#hardstate-三字段说人话)） |
 
 ---
 
@@ -225,6 +226,16 @@ sequenceDiagram
 | 持久化 | `RocksRaftEngine`（生产） | `FileRaftEngine` / 配置目录 |
 
 字段级拓扑：[RAFT_DATA_TOPOLOGY](../topology/RAFT_DATA_TOPOLOGY.md)。源码调用图：[35-raft-module-call-flows](35-raft-module-call-flows.md)。
+
+---
+
+## 7. 成员变更（ConfChange = 成员变更提案）
+
+`ConfChange` 名字不形象：它不是选举「角色」，而是**对成员名单的变更提案**。图解、枚举白话、Joint 两阶段见拓扑文档：
+
+→ [RAFT_DATA_TOPOLOGY · ConfChange](../topology/RAFT_DATA_TOPOLOGY.md#peer--logentry--confchange成员变更提案)
+
+要点：`learner` 只收日志；转正/删节点走 **EnterJoint → LeaveJoint**（双多数），避免一步切配置导致双主。
 
 ---
 
