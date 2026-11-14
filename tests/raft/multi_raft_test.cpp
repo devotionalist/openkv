@@ -19,35 +19,46 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <memory>
+#include <thread>
 
 using openkv::raft::MultiRaft;
 using openkv::raft::RaftNode;
 
 TEST(MultiRaftTest, GetOrCreateAndLeaders) {
-  MultiRaft mr([](uint32_t shard) {
-    RaftNode::Options opts;
-    opts.shard_id = shard;
-    opts.self_id = "n0";
-    opts.peers = {{"n0", "127.0.0.1:1", false}};
-    opts.election_timeout_ms = 100;
-    opts.heartbeat_ms = 50;
-    return std::make_shared<RaftNode>(
-        opts, [](uint64_t, const std::string&) {},
-        [](const std::string&, const std::string&, const std::string&) {});
-  });
+  MultiRaft::Options mopts;
+  mopts.raft_workers = 1;
+  mopts.apply_workers = 1;
+  MultiRaft mr(
+      [](uint32_t shard) {
+        RaftNode::Options opts;
+        opts.shard_id = shard;
+        opts.self_id = "n0";
+        opts.peers = {{"n0", "127.0.0.1:1", false}};
+        opts.election_timeout_ms = 100;
+        opts.heartbeat_ms = 50;
+        return std::make_shared<RaftNode>(
+            opts, [](uint64_t, const std::string&) {},
+            [](const std::string&, const std::string&, const std::string&) {});
+      },
+      mopts);
 
+  mr.start();
   EXPECT_EQ(mr.get(0), nullptr);
   auto& g0 = mr.get_or_create(0);
   auto& g1 = mr.get_or_create(1);
   EXPECT_EQ(mr.get(0), &g0);
   EXPECT_NE(&g0, &g1);
 
-  for (int i = 0; i < 40; ++i) {
+  for (int i = 0; i < 80; ++i) {
     mr.tick_all();
+    if (mr.leader_shards().size() == 2u) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   auto leaders = mr.leader_shards();
   EXPECT_EQ(leaders.size(), 2u);
   auto all = mr.all_shards();
   EXPECT_EQ(all.size(), 2u);
+  mr.stop();
 }

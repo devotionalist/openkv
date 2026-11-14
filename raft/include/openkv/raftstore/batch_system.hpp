@@ -16,7 +16,8 @@
 // 职责：Raft / Apply **双 worker 池**；有活 Region 经 ScheduleQueue 唤醒，mailbox drain-until-empty。
 // 架构：region_id % N 映射到固定 worker，保证同 Region 串行；跨 Region 并行。
 // 协作：Router 投递成功后 notify → schedule；Store 注册 RaftHandler / ApplyHandler。
-// 注意：单 Region 热点时多 worker 帮不上——吞吐受该 Region 的 persist/apply 流水线限制。
+// 注意：单 Region 热点时多 raft worker 帮不上（region 钉死）；persist 可经 PersistWorker
+// 与其它 Region 的 raft 步进重叠（见 Store persist_workers）。
 
 #pragma once
 

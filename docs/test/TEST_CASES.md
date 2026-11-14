@@ -127,7 +127,7 @@
 |-------|------|
 | KvEngineTest | Put/Get/Delete、Snapshot、**SnapshotRangePreservesSibling**（兄弟区间不被空 range 抹掉）、Checkpoint、CF、SyncMode |
 | MvccTest | Lock、可见性、WriteConflict、悲观锁、GC、TxnScan、TxnTtl |
-| StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite** / **TxnOpsAsyncPrewriteCommitResolve**、Epoch、Split seed、幂等 Propose |
+| StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite** / **TxnOpsAsyncPrewriteCommitResolve**、Epoch、Split seed |
 | WatchHubTest / WatchLogTest | Watch 过滤与持久化 |
 | InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、`lock_async` Latch、前缀扫描 |
 | RocksRaftEngineTest / ShardEngineManagerTest | Raft 引擎、单 Store 共享引擎 |
@@ -143,6 +143,7 @@
 | ScalerTest | ScaleOut 完成、未知节点失败、CatchUp 门闩、**ConcurrentScaleOutQueues**、**CancelInflight** |
 | RegionSchedulerTest | 提交/恢复任务、扫描欠副本 |
 | MetaFsmTest / MetaHaTest | FSM 编解码、单副本 Leader Register、`RegisterNodeAsyncFinishOnApply`、`WatchRouteAsyncAndActivatePrecheck` |
+| RaftstoreTest / MultiRaftTest | Store/MultiRaft 须 `start()`；BatchSystem tick/Ready；`PersistPipelineUnblocksRaftWorker` |
 
 </details>
 

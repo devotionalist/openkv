@@ -77,34 +77,40 @@ TEST(StoreCodecTest, RejectTruncated) {
   EXPECT_FALSE(decode_command("", &out));
 }
 
-TEST(StoreCodecTest, RequestIdRoundTrip) {
-  Command in{CmdOp::kPut, "k", "v", 0, 0xabcdef0123456789ULL};
-  auto bytes = encode_command(in);
+TEST(StoreCodecTest, LegacyRequestIdTrailerIgnored) {
+  // 旧 8 字节 request_id 尾：解码忽略，不设 cas。
+  auto bytes = encode_command(Command{CmdOp::kPut, "k", "v", 0});
+  const uint64_t old_rid = 0xabcdef0123456789ULL;
+  bytes.append(reinterpret_cast<const char*>(&old_rid), sizeof(old_rid));
   Command out;
   ASSERT_TRUE(decode_command(bytes, &out));
-  EXPECT_EQ(out.request_id, 0xabcdef0123456789ULL);
-  // 无 request_id 的旧格式仍可解
-  Command legacy{CmdOp::kPut, "k", "v", 0};
-  auto old = encode_command(legacy);
-  Command out2;
-  ASSERT_TRUE(decode_command(old, &out2));
-  EXPECT_EQ(out2.request_id, 0u);
+  EXPECT_EQ(out.op, CmdOp::kPut);
+  EXPECT_EQ(out.key, "k");
+  EXPECT_FALSE(out.cas);
+  EXPECT_EQ(out.expected_revision, 0u);
 }
 
 TEST(StoreCodecTest, CasTrailerRoundTrip) {
-  Command in;
-  in.op = CmdOp::kPut;
-  in.key = "k";
-  in.value = "v";
+  Command in{CmdOp::kPut, "k", "v", 0};
   in.cas = true;
   in.expected_revision = 42;
-  in.request_id = 7;
   auto bytes = encode_command(in);
   Command out;
   ASSERT_TRUE(decode_command(bytes, &out));
   EXPECT_TRUE(out.cas);
   EXPECT_EQ(out.expected_revision, 42u);
-  EXPECT_EQ(out.request_id, 7u);
+
+  // 旧 17 字节尾：request_id(8)|cas(1)|expected_revision(8)
+  std::string old = encode_command(Command{CmdOp::kPut, "k", "v", 0});
+  const uint64_t rid = 7;
+  const uint64_t rev = 42;
+  old.append(reinterpret_cast<const char*>(&rid), sizeof(rid));
+  old.push_back(1);
+  old.append(reinterpret_cast<const char*>(&rev), sizeof(rev));
+  Command out2;
+  ASSERT_TRUE(decode_command(old, &out2));
+  EXPECT_TRUE(out2.cas);
+  EXPECT_EQ(out2.expected_revision, 42u);
 }
 
 TEST(StoreCodecTest, KvPayloadExpireRoundTripAndLegacy) {

@@ -39,6 +39,9 @@ using openkv::raftstore::Store;
 TEST(RaftstoreTest, StoreTickElectsLeader) {
   Store::Options opts;
   opts.hibernate_after_ms = 0;
+  opts.batch.raft_workers = 1;
+  opts.batch.apply_workers = 1;
+  opts.batch.poll_timeout_ms = 20;
   Store store(opts, [](uint32_t shard) {
     RaftNode::Options o;
     o.shard_id = shard;
@@ -49,14 +52,22 @@ TEST(RaftstoreTest, StoreTickElectsLeader) {
     return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {},
                                       [](auto&&...) {});
   });
+  store.start();
   store.get_or_create(1);
-  for (int i = 0; i < 50; ++i) store.schedule_tick();
+  for (int i = 0; i < 80 && !store.get(1)->is_leader(); ++i) {
+    store.schedule_tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
   ASSERT_TRUE(store.get(1)->is_leader());
+  store.stop();
 }
 
 TEST(RaftstoreTest, HibernateSkipsTickUntilWake) {
   Store::Options opts;
   opts.hibernate_after_ms = 1;
+  opts.batch.raft_workers = 1;
+  opts.batch.apply_workers = 1;
+  opts.batch.poll_timeout_ms = 20;
   Store store(opts, [](uint32_t shard) {
     RaftNode::Options o;
     o.shard_id = shard;
@@ -69,14 +80,19 @@ TEST(RaftstoreTest, HibernateSkipsTickUntilWake) {
     return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {},
                                       [](auto&&...) {});
   });
+  store.start();
   auto& n = store.get_or_create(9);
   // 非 Leader，立刻变冷
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
   store.schedule_tick();  // 应进入 hibernate
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
   store.schedule_tick();
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
   EXPECT_FALSE(n.is_leader());
   store.mark_hot(9);
   store.schedule_tick();
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  store.stop();
 }
 
 TEST(RaftstoreTest, RequestReadyCoalescesByCount) {
@@ -218,9 +234,92 @@ TEST(RaftstoreTest, DriveReadyCoalescesPersist) {
   EXPECT_GE(max_entries.load(), 2u) << "at least one Ready should carry multiple entries";
 }
 
+TEST(RaftstoreTest, PersistPipelineUnblocksRaftWorker) {
+  // persist_fn 阻塞时，同 Store 上另一 Region 的 Tick 仍应能推进（IO 不占 raft worker）。
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() /
+                   ("okv_persist_pipe_" +
+                    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(dir);
+  auto engine = std::make_shared<FileRaftEngine>(dir.string(), SyncMode::kNone);
+
+  std::atomic<bool> persist_entered{false};
+  std::atomic<bool> release_persist{false};
+
+  Store::Options opts;
+  opts.hibernate_after_ms = 0;
+  opts.batch.raft_workers = 1;  // 故意单 worker，突出跨 Region 重叠
+  opts.batch.apply_workers = 1;
+  opts.batch.poll_timeout_ms = 20;
+  opts.persist_workers = 2;
+  opts.ready_coalesce_n = 1;
+  opts.ready_coalesce_ms = 0;
+
+  Store store(opts, [engine](uint32_t shard) {
+    RaftNode::Options o;
+    o.shard_id = shard;
+    o.self_id = "n0";
+    o.peers = {{"n0", "a", false}};
+    o.election_timeout_ms = 80;
+    o.heartbeat_ms = 30;
+    o.external_io = true;
+    o.raft_engine = engine;
+    o.raft_group_id = shard;
+    o.persist_sync = SyncMode::kNone;
+    o.check_quorum = false;
+    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {}, [](auto&&...) {});
+  });
+  store.set_persist_fn([&](uint32_t rid, const Ready& rd) {
+    if (rid == 1) {
+      persist_entered.store(true);
+      while (!release_persist.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    if (auto* n = store.get(rid)) n->persist_ready(rd);
+  });
+  store.set_apply_fn([](uint32_t, uint64_t, const std::string&) {});
+  store.start();
+
+  auto& n1 = store.get_or_create(1);
+  auto& n2 = store.get_or_create(2);
+  for (int i = 0; i < 80 && (!n1.is_leader() || !n2.is_leader()); ++i) {
+    store.schedule_tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(n1.is_leader());
+  ASSERT_TRUE(n2.is_leader());
+
+  ASSERT_TRUE(n1.propose("block"));
+  store.drive_ready(1);
+  for (int i = 0; i < 200 && !persist_entered.load(); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(persist_entered.load()) << "persist IO should start";
+
+  // Region1 落盘卡住期间，Region2 应仍能选主后的 propose/Ready。
+  ASSERT_TRUE(n2.propose("other"));
+  store.drive_ready(2);
+  bool n2_applied = false;
+  for (int i = 0; i < 100; ++i) {
+    if (n2.soft_state().commit_index >= 1) {
+      n2_applied = true;
+      break;
+    }
+    store.schedule_tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  release_persist.store(true);
+  store.stop();
+  fs::remove_all(dir);
+  EXPECT_TRUE(n2_applied) << "region2 should progress while region1 persist blocked";
+}
+
 TEST(RaftstoreTest, ApplyQosFlag) {
   Store::Options opts;
   opts.batch.max_apply_queue_depth = 1;
+  opts.batch.raft_workers = 1;
+  opts.batch.apply_workers = 1;
   Store store(opts, [](uint32_t shard) {
     RaftNode::Options o;
     o.shard_id = shard;
@@ -229,8 +328,10 @@ TEST(RaftstoreTest, ApplyQosFlag) {
     return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {},
                                       [](auto&&...) {});
   });
+  store.start();
   store.get_or_create(3);
   EXPECT_FALSE(store.apply_queue_overloaded(3));
+  store.stop();
 }
 
 TEST(SnapWorkerTest, CoalesceSameRegion) {

@@ -1034,7 +1034,7 @@ void RaftNode::step_down_if_stale(uint64_t term) {
   if (term > term_) become_follower(term);
 }
 
-void RaftNode::start_pre_vote() {
+void RaftNode::start_pre_vote() { // 开始预投票
   in_pre_vote_ = true;
   pre_votes_.clear();
   pre_votes_[opts_.self_id] = true;
@@ -1047,9 +1047,10 @@ void RaftNode::start_pre_vote() {
                           "|" + std::to_string(log_.last_term());
     enqueue(p.id, "RequestPreVote", std::move(payload));
   }
-  if (votes_won(pre_votes_)) {
-    become_candidate();
-    start_election();
+
+  if (votes_won(pre_votes_)) {// 如果预投票获胜，则成为候选者并开始选举
+    become_candidate();// 成为候选者
+    start_election();// 开始选举
   }
 }
 

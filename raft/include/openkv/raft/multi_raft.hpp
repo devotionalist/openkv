@@ -53,6 +53,8 @@ class MultiRaft {
     uint32_t ready_coalesce_n{32};
     /// propose 后 Ready 攒批：最长等待 ms（默认 1；0=仅条数）。
     uint32_t ready_coalesce_ms{1};
+    /// 异步 Raft persist IO 线程（默认 2；0=raft worker 同步落盘）。
+    size_t persist_workers{2};
   };
 
   explicit MultiRaft(GroupFactory factory);
@@ -61,28 +63,41 @@ class MultiRaft {
 
   /// 未创建则返回 nullptr。
   RaftNode* get(uint32_t shard_id);
+  // 获取共享节点
   std::shared_ptr<RaftNode> get_shared(uint32_t shard_id);
+  // 获取或创建节点
   RaftNode& get_or_create(uint32_t shard_id);
+  // 删除节点
   bool erase(uint32_t shard_id);
+  // 获取节点
   std::shared_ptr<RaftNode> take(uint32_t shard_id);
+  // 标记热点
   void mark_hot(uint32_t shard_id);
   /// 经 Router 投递 Tick（BatchSystem Raft worker 处理）。
   void tick_all();
+  // 获取领导者区域列表
   std::vector<uint32_t> leader_shards() const;
+  // 获取所有区域列表
   std::vector<uint32_t> all_shards() const;
 
+  // 获取选项
   const Options& options() const { return opts_; }
+  // 获取存储
   raftstore::Store& store() { return *store_; }
+  // 获取存储
   const raftstore::Store& store() const { return *store_; }
 
+  // 启动
   void start();
+  // 停止
   void stop();
   /// 同步 Region range/epoch 到 StoreMeta / Peer。
+  // 更新节点元数据
   void update_peer_meta(uint32_t region_id, openkv::KeyRange range, uint64_t epoch);
 
  private:
   Options opts_;
-  std::unique_ptr<raftstore::Store> store_;
+  std::unique_ptr<raftstore::Store> store_;// 存储
 };
 
 }  // namespace openkv::raft

@@ -86,7 +86,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 
 | 流程 | 文件 | 要点 |
 |------|------|------|
-| Raft 选举 / 心跳 / 提交 | [06-raft-election-commit.md](06-raft-election-commit.md) | `maybe_commit`、选票、AE/SNAP |
+| Raft 原理 / 交互 / 提交 | [06-raft-election-commit.md](06-raft-election-commit.md) | 角色·邮箱·gRPC 载荷·tick/commit·写路径时序 |
 | **Raft 模块调用流程** | [35-raft-module-call-flows.md](35-raft-module-call-flows.md) · [raft/ARCHITECTURE.md](../../raft/ARCHITECTURE.md) | Propose→Ready→Engine；分层契约；源码地图 |
 | **Propose→ACK 落盘保证** | [36-propose-ack-durability.md](36-propose-ack-durability.md) | 调用链；ACK=apply；persist 先于 apply |
 | Storage 启动 | [07-storage-startup.md](07-storage-startup.md) | MultiRaft 工厂、WAL、tick、gRPC listen |

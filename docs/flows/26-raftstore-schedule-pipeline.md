@@ -38,7 +38,8 @@ flowchart LR
 
 ### 边界
 
-- 未 `start()` 的 Store 仍走同步 `drive_ready`（单测）。  
+- 须先 `Store::start()`；`schedule_tick` / `drive_ready` 一律经 Router → BatchSystem（无未 start 同步旁路）。  
+- Ready 落盘默认走 `PersistWorker`（`SKV_PERSIST_WORKERS`，默认 2）：raft worker 提交 IO 后可服务其它 Region；同 Region `persist_inflight` 直至 `kPersistDone` 再发 AE/apply。入站 RPC 仍同步落盘。  
 - schedule 去重：同 Region 连续投递只占队一项，drain 时一次取光。  
 - 回滚：恢复扫表 worker（git）；或临时不设 notify（勿在生产关）。
 

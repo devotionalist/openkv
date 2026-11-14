@@ -36,7 +36,6 @@
 #include <deque>
 #include <functional>
 #include <mutex>
-#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -70,15 +69,6 @@ class StorageNode {
   ProposalQueue& proposals() { return proposals_; }
   const ProposalQueue& proposals() const { return proposals_; }
 
-  /// E4：request_id 去重缓存（Leader 重试短路 / apply 跳过重复）。
-  struct IdempotentRecord {
-    bool ok{true};
-    uint64_t revision{0};
-    std::string error;
-  };
-  std::optional<IdempotentRecord> lookup_request(uint32_t shard_id, uint64_t request_id) const;
-  void remember_request(uint32_t shard_id, uint64_t request_id, IdempotentRecord rec);
-
   bool add_learner(uint32_t shard_id, const raft::Peer& peer);
   bool promote_learner(uint32_t shard_id, const std::string& peer_id);
   bool remove_peer(uint32_t shard_id, const std::string& peer_id);
@@ -98,8 +88,10 @@ class StorageNode {
 
   raft::MultiRaft& multi_raft() { return *multi_raft_; }
   ShardEngineManager& engines() { return *engines_; }
-  RaftKV* raftkv() { return raftkv_.get(); }
-  Scheduler* scheduler() { return scheduler_.get(); }
+  /// `start()` 后必有；写路径直接用，勿再判空兜底 propose。
+  RaftKV& raftkv() { return *raftkv_; }
+  /// `start()` 后必有；与 raftkv 同生命周期。
+  Scheduler& scheduler() { return *scheduler_; }
   WatchHub& watch_hub() { return watch_hub_; }
   /// Coprocessor：对本机 Region range scan（key/value 前缀、keys_only、count_only）。
   CoprocessorResponse coprocessor_execute(uint32_t region_id, const CoprocessorRequest& req);
@@ -243,10 +235,6 @@ class StorageNode {
   void publish_apply_result(uint64_t index, std::string error);
 
   ProposalQueue proposals_;
-
-  mutable std::mutex req_mu_;
-  std::unordered_map<uint32_t, std::unordered_map<uint64_t, IdempotentRecord>> req_cache_;
-  std::unordered_map<uint32_t, std::deque<uint64_t>> req_order_;
 
   void maybe_auto_merge(uint32_t region_id);
   bool meta_suggest_place(std::vector<std::string>* out,

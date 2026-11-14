@@ -170,5 +170,7 @@ flowchart TB
 
 ## 相关
 
+- [06-raft-election-commit.md](../flows/06-raft-election-commit.md) — 原理、RPC/邮箱交互、提交与写路径  
+- [35-raft-module-call-flows.md](../flows/35-raft-module-call-flows.md) — 协议核 + raftstore 调用图  
 - [MULTI_RAFT_PRODUCTION.md](../production/MULTI_RAFT_PRODUCTION.md)  
 - [DATA_TOPOLOGY_INDEX.md](DATA_TOPOLOGY_INDEX.md)  

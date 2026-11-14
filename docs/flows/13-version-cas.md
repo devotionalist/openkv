@@ -52,7 +52,7 @@ sequenceDiagram
 - 与多 key 事务互补：单 key 版本 CAS 用 PutCAS；跨 key 仍走 Txn*。
 - plain Propose 与 MVCC **不共享**同一物理 value；不要混用两平面的 revision。
 - 分裂窗：`splitting` 拒写（与普通 Put 相同）。
-- 幂等：`request_id` 缓存含 CAS 成败。
+- 幂等：服务端无 `request_id` 缓存；CAS 冲突靠 `cas_failed` + 客户端重试。
 
 ## 验收
 

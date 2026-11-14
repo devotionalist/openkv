@@ -383,9 +383,10 @@ void GatewayServer::route_watch_loop() {
 /// 异步申请 start/commit_ts（alloc_async(2)），失败走 on_err，成功回调 cont。
 void GatewayServer::with_start_commit_ts(std::function<void(grpc::Status)> on_err,
                                          std::function<void(uint64_t, uint64_t)> cont) {
+                                          
   note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
-  ts_.alloc_async(2, [on_err = std::move(on_err), cont = std::move(cont)](grpc::Status st,
-                                                                             uint64_t start) {
+
+  ts_.alloc_async(2, [on_err = std::move(on_err), cont = std::move(cont)](grpc::Status st,uint64_t start) {
     if (!st.ok()) {
       if (on_err) on_err(st);
       return;
@@ -444,32 +445,35 @@ void GatewayServer::put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutRespo
                           .count() +
                       req->ttl_ms();
         }
-        const uint32_t region = region_of(req->key());
-        const uint64_t epoch = epoch_of(region);
-        auto order = try_order(region);
+        const uint32_t region = region_of(req->key()); // 区域ID
+        const uint64_t epoch = epoch_of(region); // 区域epoch
+        auto order = try_order(region); // 尝试获取区域顺序
         if (order.empty()) {
           active_ts_.remove(start);
           done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
           return;
         }
-        const std::string addr = order.front();
+        const std::string addr = order.front(); // 获取区域地址 
         ProposeOnePcArgs args;
-        args.shard_id = region;
-        args.key = req->key();
-        args.value = req->value();
-        args.start_ts = start;
-        args.commit_ts = commit_ts;
-        args.primary = req->key();
-        args.mvcc_op = 0;
-        args.epoch = epoch;
-        args.cas = req->cas();
-        args.expected_revision = req->expected_revision();
-        args.expire_at_ms = expire_at;
+        args.shard_id = region; // 区域ID
+        args.key = req->key(); // 键
+        args.value = req->value(); // 值
+        args.start_ts = start; // start_ts
+        args.commit_ts = commit_ts; // commit_ts
+        args.primary = req->key(); // 主键
+        args.mvcc_op = 0; // MVCC操作
+        args.epoch = epoch; // 区域epoch
+        args.cas = req->cas(); // CAS
+        args.expected_revision = req->expected_revision(); // 期望的revision
+        args.expire_at_ms = expire_at; // 过期时间
         note_to_store(addr);
+
+        // 异步调用 store_propose_onepc_async 
         store_propose_onepc_async(
-            addr, std::move(args), 15000,
+            addr, std::move(args), 15000, // 15000毫秒
             [this, req, resp, attempt, start, region, addr, done](grpc::Status sst,
                                                                   ProposeOnePcResult out) {
+                                                                    
               active_ts_.remove(start);
               if (!sst.ok()) {
                 done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));

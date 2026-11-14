@@ -232,47 +232,6 @@ TEST(StoreAdminRaftTest, SplitSeedsRightWithLeftPeers) {
   fs::remove_all(dir);
 }
 
-TEST(StoreAdminRaftTest, ProposeIdempotentByRequestId) {
-  auto dir = fs::temp_directory_path() / ("skv_reqid_" + std::to_string(::getpid()));
-  fs::remove_all(dir);
-  NodeConfig cfg;
-  cfg.node_id = "storage-test";
-  cfg.listen_addr = "127.0.0.1:0";
-  cfg.data_dir = dir.string();
-  cfg.bootstrap_regions = {0};
-  cfg.raft_election_timeout_ms = 200;
-  cfg.raft_heartbeat_ms = 50;
-  StorageNode node(cfg);
-  StoreFacade facade(node);
-  node.start();
-  for (int i = 0; i < 80; ++i) {
-    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-  ASSERT_TRUE(node.multi_raft().get(0)->is_leader());
-
-  Command cmd;
-  cmd.op = CmdOp::kPut;
-  cmd.key = "k";
-  cmd.value = "v1";
-  cmd.request_id = 1001;
-  auto r1 = facade.propose(0, cmd);
-  ASSERT_TRUE(r1.ok) << r1.error;
-  const uint64_t rev = r1.revision;
-
-  cmd.value = "v2";  // 重试应忽略新 value，返回首次 revision
-  auto r2 = facade.propose(0, cmd);
-  ASSERT_TRUE(r2.ok) << r2.error;
-  EXPECT_EQ(r2.revision, rev);
-
-  auto g = facade.get(0, "k", true);
-  ASSERT_TRUE(g.found);
-  EXPECT_EQ(g.value, "v1");
-
-  node.stop();
-  fs::remove_all(dir);
-}
-
 TEST(StoreAdminRaftTest, MigrateGeAtomicBatches) {
   auto dir = fs::temp_directory_path() / ("skv_mig_" + std::to_string(::getpid()));
   fs::remove_all(dir);

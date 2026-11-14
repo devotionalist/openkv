@@ -142,35 +142,6 @@ void StorageNode::wait_apply_async(uint64_t index, std::chrono::milliseconds tim
   proposals_.wait_async(index, timeout, std::move(cb));
 }
 
-std::optional<StorageNode::IdempotentRecord> StorageNode::lookup_request(
-    uint32_t shard_id, uint64_t request_id) const {
-  if (request_id == 0) return std::nullopt;
-  std::lock_guard<std::mutex> lock(req_mu_);
-  auto sit = req_cache_.find(shard_id);
-  if (sit == req_cache_.end()) return std::nullopt;
-  auto it = sit->second.find(request_id);
-  if (it == sit->second.end()) return std::nullopt;
-  return it->second;
-}
-
-void StorageNode::remember_request(uint32_t shard_id, uint64_t request_id, IdempotentRecord rec) {
-  if (request_id == 0) return;
-  std::lock_guard<std::mutex> lock(req_mu_);
-  auto& map = req_cache_[shard_id];
-  auto& order = req_order_[shard_id];
-  if (map.count(request_id)) {
-    map[request_id] = std::move(rec);
-    return;
-  }
-  map[request_id] = std::move(rec);
-  order.push_back(request_id);
-  constexpr size_t kMax = 4096;
-  while (order.size() > kMax) {
-    map.erase(order.front());
-    order.pop_front();
-  }
-}
-
 void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::LogEntry>& entries) {
   if (entries.empty()) return;
   if (entries.size() == 1) {
@@ -185,13 +156,19 @@ void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::Lo
   std::vector<std::string> dels;
   struct Pending {
     uint64_t index{0};
-    uint64_t req_id{0};
     std::string err;
     WatchRecord watch{};
     bool has_watch{false};
   };
   std::vector<Pending> pending;
   bool need_watch_trim = false;
+
+  auto push_pending = [&](uint64_t index, std::string err = {}) {
+    Pending p;
+    p.index = index;
+    p.err = std::move(err);
+    pending.push_back(std::move(p));
+  };
 
   auto flush = [&] {
     if (!puts.empty() || !dels.empty()) {
@@ -206,13 +183,6 @@ void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::Lo
     for (auto& p : pending) {
       if (p.has_watch && p.err.empty()) watch_hub_.push(p.watch);
       publish_apply_result(p.index, p.err);
-      if (p.req_id != 0) {
-        IdempotentRecord rec;
-        rec.ok = p.err.empty();
-        rec.revision = p.index;
-        rec.error = p.err;
-        remember_request(shard_id, p.req_id, std::move(rec));
-      }
     }
     pending.clear();
   };
@@ -232,12 +202,6 @@ void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::Lo
       fallback(e);
       continue;
     }
-    if (cmd.request_id != 0) {
-      if (auto hit = lookup_request(shard_id, cmd.request_id)) {
-        publish_apply_result(e.index, hit->error);
-        continue;
-      }
-    }
 
     // 热路径：无 CAS 的 ONEPC / Put / Delete 合并写；其余退回逐条语义。
     if (cmd.op == CmdOp::kOnePc && !cmd.cas) {
@@ -250,26 +214,16 @@ void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::Lo
         continue;
       }
       if (auto lk = mvcc.get_lock(cmd.key)) {
-        Pending p;
-        p.index = e.index;
-        p.req_id = cmd.request_id;
-        p.err = "locked primary=" + to_hex(lk->primary) + " lock_ts=" + std::to_string(lk->start_ts);
-        pending.push_back(std::move(p));
+        push_pending(e.index,
+                     "locked primary=" + to_hex(lk->primary) + " lock_ts=" + std::to_string(lk->start_ts));
         continue;
       }
       if (mvcc.has_write_conflict(cmd.key, start_ts)) {
-        Pending p;
-        p.index = e.index;
-        p.req_id = cmd.request_id;
-        p.err = "write_conflict";
-        pending.push_back(std::move(p));
+        push_pending(e.index, "write_conflict");
         continue;
       }
       if (mvcc.find_commit_ts(cmd.key, start_ts)) {
-        Pending p;
-        p.index = e.index;
-        p.req_id = cmd.request_id;
-        pending.push_back(std::move(p));
+        push_pending(e.index);  // 已提交：幂等成功
         continue;
       }
       const auto op = static_cast<MvccOp>(mop);
@@ -284,7 +238,6 @@ void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::Lo
       puts.emplace_back(write_key(cmd.key, commit_ts), encode_write(wi), e.index, cmd.ttl_ms);
       Pending p;
       p.index = e.index;
-      p.req_id = cmd.request_id;
       p.has_watch = true;
       p.watch = WatchRecord{shard_id, e.index, is_del, cmd.key, is_del ? std::string{} : value};
       puts.emplace_back(WatchLog::make_key(e.index),
@@ -302,10 +255,7 @@ void StorageNode::on_apply_entries(uint32_t shard_id, const std::vector<raft::Lo
       } else {
         dels.emplace_back(cmd.key);
       }
-      Pending p;
-      p.index = e.index;
-      p.req_id = cmd.request_id;
-      pending.push_back(std::move(p));
+      push_pending(e.index);
       continue;
     }
 
@@ -322,23 +272,8 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string&
     publish_apply_result(index, "bad_command");
     return;
   }
-  if (cmd.request_id != 0) {
-    if (auto hit = lookup_request(shard_id, cmd.request_id)) {
-      // 重复 apply：跳过状态机副作用，回传首次结果
-      publish_apply_result(index, hit->error);
-      return;
-    }
-  }
-  const uint64_t req_id = cmd.request_id;
-  auto finish = [this, shard_id, index, req_id](std::string err = {}) {
+  auto finish = [this, index](std::string err = {}) {
     publish_apply_result(index, err);
-    if (req_id != 0) {
-      IdempotentRecord rec;
-      rec.ok = err.empty();
-      rec.revision = index;
-      rec.error = err;
-      remember_request(shard_id, req_id, std::move(rec));
-    }
   };
   auto& eng = engines_->get_or_create(shard_id);
   auto cas_fail = [&](uint64_t cur) {
@@ -1249,28 +1184,15 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
   uint64_t idx = 0;
   // 与 Propose 热路径同一套 lock_async；Admin 线程上 future 等待占锁（不进 Latches::cv）。
   const std::string latch = encoded.size() > 16 ? encoded.substr(0, 16) : encoded;
-  uint64_t latch_tok = 0;
-  if (scheduler_) {
-    std::promise<uint64_t> granted;
-    auto fut = granted.get_future();
-    scheduler_->lock_key_async(latch, [&granted](uint64_t tok) { granted.set_value(tok); });
-    latch_tok = fut.get();
-  }
+  std::promise<uint64_t> granted;
+  auto fut = granted.get_future();
+  scheduler().lock_key_async(latch, [&granted](uint64_t tok) { granted.set_value(tok); });
+  uint64_t latch_tok = fut.get();
   auto unlock_latch = [&] {
-    if (scheduler_ && latch_tok != 0) {
-      scheduler_->unlock(latch_tok);
-      latch_tok = 0;
-    }
+    scheduler().unlock(latch_tok);
+    latch_tok = 0;
   };
-  bool ok = false;
-  if (raftkv_) {
-    ok = raftkv_->async_write(shard_id, std::move(encoded), &idx, error);
-  } else if (g->propose(std::move(encoded), &idx)) {
-    ok = true;
-  } else {
-    if (error) *error = "propose_failed";
-  }
-  if (!ok) {
+  if (!raftkv().async_write(shard_id, std::move(encoded), &idx, error)) {
     unlock_latch();
     return false;
   }
@@ -2293,6 +2215,18 @@ void StorageNode::start() {
   };
   mr_opts.ready_coalesce_n = parse_u32(proto::env::kReadyCoalesceN, 32);
   mr_opts.ready_coalesce_ms = parse_u32(proto::env::kReadyCoalesceMs, 1);
+  {
+    // 允许 0=关闭异步 persist（raft worker 同步落盘）。
+    size_t pw = 2;
+    if (const char* e = std::getenv(proto::env::kPersistWorkers)) {
+      try {
+        const int v = std::stoi(e);
+        if (v >= 0 && v <= 64) pw = static_cast<size_t>(v);
+      } catch (...) {
+      }
+    }
+    mr_opts.persist_workers = pw;
+  }
   multi_raft_ = std::make_unique<raft::MultiRaft>([this](uint32_t shard_id) {
     engines_->get_or_create(shard_id);
     raft::RaftNode::Options opts;
@@ -2450,7 +2384,8 @@ void StorageNode::start() {
            << " raft_workers=" << mr_opts.raft_workers
            << " apply_workers=" << mr_opts.apply_workers
            << " ready_coalesce_n=" << mr_opts.ready_coalesce_n
-           << " ready_coalesce_ms=" << mr_opts.ready_coalesce_ms;
+           << " ready_coalesce_ms=" << mr_opts.ready_coalesce_ms
+           << " persist_workers=" << mr_opts.persist_workers;
 }
 
 void StorageNode::stop() {

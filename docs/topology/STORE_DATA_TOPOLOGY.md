@@ -19,7 +19,6 @@ classDiagram
     +watch_hub_ : Watch 订阅 — 变更通知
     +transport_ : GrpcRaftTransport — Raft RPC 出站（gRPC）
     +region_epochs_ : Region→epoch — 防陈旧拓扑
-    +req_cache_ : 幂等缓存 — request_id 去重
     +apply_results_ : propose 等待 apply 结果
     +split_pauses_ : 分裂写暂停窗口
   }
@@ -40,7 +39,7 @@ classDiagram
     +op : CmdOp — Put/Txn/Admin…
     +key / value : 业务载荷
     +ttl_ms : 锁/过期相关
-    +request_id : 幂等键 — 0=不去重
+    +cas / expected_revision : 版本 CAS
   }
 
   class LockInfo {
@@ -70,7 +69,7 @@ classDiagram
 
 ```mermaid
 flowchart TB
-  SN["StorageNode<br/>────────────────────────<br/>cfg_ — 节点运行参数<br/>engines_ — 每 Region 一个 RocksDB<br/>multi_raft_ — 每 Region 一组 Raft<br/>region_epochs_ — 拓扑世代<br/>req_cache_ — E4 幂等<br/>apply_results_ — 等 apply 错误串<br/>split_pauses_ — prepare_split 禁写<br/>placing_ — place 防重入"]
+  SN["StorageNode<br/>────────────────────────<br/>cfg_ — 节点运行参数<br/>engines_ — 每 Region 一个 RocksDB<br/>multi_raft_ — 每 Region 一组 Raft<br/>region_epochs_ — 拓扑世代<br/>apply_results_ — 等 apply 错误串<br/>split_pauses_ — prepare_split 禁写<br/>placing_ — place 防重入"]
 
   SN --> ENG["KvEngine / Region<br/>────────────────────────<br/>put/del/get — Raft apply 落盘<br/>migrate_ge — split 搬 key<br/>create_checkpoint — E3 廉价快照<br/>CF lock/data/write — E2"]
 
@@ -96,7 +95,6 @@ flowchart TB
 | `transport_` | Raft 传输 | 跨节点 AE/Vote/Snap |
 | `region_epochs_` | epoch 表 | txn 校验 / Admin 递增 |
 | `apply_results_` | index→error | propose 同步等待 |
-| `req_cache_` / `req_order_` | 幂等记录 | 重试短路、有界淘汰 |
 | `split_pauses_` | 分裂暂停 | prepare→split 间拒写 |
 | `pending_peers_` | 待 ENSURE 成员 | 首次建组 |
 | `auto_split_*` | 阈值 | 自动分裂/合并 |
@@ -108,7 +106,7 @@ flowchart TB
 | `op` | 操作码 | apply 分支 |
 | `key` / `value` | 载荷 | KV 或编码的 txn/Admin |
 | `ttl_ms` | TTL | 锁过期等 |
-| `request_id` | 客户端请求号 | E4 幂等 |
+| `cas` / `expected_revision` | 版本 CAS | apply 内校验 |
 | `kPrewrite`…`kCommit` | 事务 | MVCC Prewrite/Commit |
 | `kAdminSplit` 等 | Admin 入 Raft | 与 ConfChange 分离 |
 
@@ -140,12 +138,6 @@ flowchart TB
 | `max_[Client/Raft/Admin]` | 并发上限 | 保护 Raft 不被 Client 打满 |
 | `inflight_` | 当前在途 | try_enter |
 | `rejected_` | 拒绝计数 | STATS |
-
-### `IdempotentRecord`
-
-| 字段 | 含义 | 作用 |
-|------|------|------|
-| `ok` / `revision` / `error` | 首次执行结果 | 重试直接返回 |
 
 ---
 

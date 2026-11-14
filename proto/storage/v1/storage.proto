@@ -116,7 +116,8 @@ message ProposeRequest {
   bytes value = 4;
   int64 ttl_ms = 5;  // plain Put 相对 TTL；ONEPC/PREWRITE 为绝对 expire_at_ms
   string client_id = 6;
-  uint64 request_id = 7;
+  reserved 7;  // was request_id（未接线的假幂等，已移除）
+  reserved "request_id";
   bool cas = 8;
   uint64 expected_revision = 9;
   uint64 start_ts = 10;

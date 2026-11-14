@@ -165,6 +165,7 @@ void store_admin_set_epoch_async(const std::string& addr, uint32_t region_id, ui
       });
 }
 
+// 异步调用 store_propose_onepc_async
 void store_propose_onepc_async(const std::string& addr, ProposeOnePcArgs args, int timeout_ms,
                                std::function<void(grpc::Status, ProposeOnePcResult)> cb) {
   if (!cb) return;
@@ -185,6 +186,8 @@ void store_propose_onepc_async(const std::string& addr, ProposeOnePcArgs args, i
   req->set_expected_revision(args.expected_revision);
   req->set_ttl_ms(args.expire_at_ms);
   auto resp = std::make_shared<::storage::v1::ProposeResponse>();
+
+  // 异步调用 Propose
   stub->async()->Propose(
       ctx.get(), req.get(), resp.get(),
       [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {

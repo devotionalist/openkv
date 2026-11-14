@@ -2,7 +2,7 @@
 
 **状态：** 与源码对齐（`raft/` · `openkv_raft`）  
 **源码地图：** [raft/README.md](../../raft/README.md) · **分层契约：** [raft/ARCHITECTURE.md](../../raft/ARCHITECTURE.md)  
-**相关：** [06-raft-election-commit](06-raft-election-commit.md) · [24-persist-raft-vs-kv](24-persist-raft-vs-kv.md) · [26-raftstore-schedule-pipeline](26-raftstore-schedule-pipeline.md) · [36-propose-ack-durability](36-propose-ack-durability.md) · [MULTI_RAFT_PRODUCTION](../production/MULTI_RAFT_PRODUCTION.md)
+**相关：** [06-raft-election-commit](06-raft-election-commit.md)（原理 + RPC/邮箱交互） · [24-persist-raft-vs-kv](24-persist-raft-vs-kv.md) · [26-raftstore-schedule-pipeline](26-raftstore-schedule-pipeline.md) · [36-propose-ack-durability](36-propose-ack-durability.md) · [MULTI_RAFT_PRODUCTION](../production/MULTI_RAFT_PRODUCTION.md)
 
 ## 问题
 
@@ -189,8 +189,9 @@ File 引擎布局与追加契约见 [ARCHITECTURE.md §5](../../raft/ARCHITECTUR
 
 ## 边界与失败
 
-- 单 Region 热点：固定落在同一 raft/apply worker + 一条 fsync 流水线。
+- 单 Region 热点：固定落在同一 raft/apply worker；fsync 经 `PersistWorker` 与**其它 Region** 步进重叠（同 Region 仍 `persist_inflight` 串行）。
 - `persist_sync=data`：Raft Engine sync；业务 KV apply 异步（[24](24-persist-raft-vs-kv.md)）。
+- `SKV_PERSIST_WORKERS`（默认 2；0=同步落盘在 raft worker）。
 - `external_io` 下 propose 不等 apply；可见性靠 Apply / ProposalQueue。
 
 ## 验收

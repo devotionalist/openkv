@@ -22,6 +22,7 @@
 
 #include "openkv/raftstore/batch_system.hpp"
 #include "openkv/raftstore/peer.hpp"
+#include "openkv/raftstore/persist_worker.hpp"
 #include "openkv/raftstore/router.hpp"
 #include "openkv/raftstore/snap_worker.hpp"
 #include "openkv/raftstore/store_meta.hpp"
@@ -53,37 +54,50 @@ class Store {
     uint32_t ready_coalesce_n{32};
     /// Ready group-commit：最长等待 ms（0=仅按条数；与 n≤1 且 ms=0 时立即 flush）。
     uint32_t ready_coalesce_ms{1};
+    /// 异步 persist IO 线程数（0=raft worker 同步落盘；默认 2 流水线）。
+    size_t persist_workers{2};
   };
 
+  // ------------------------------------------------------------
+  // 节点工厂：创建区域节点
   using NodeFactory = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
+  // 应用函数
   using ApplyFn = std::function<void(uint32_t region_id, uint64_t index, const std::string& data)>;
-  /// 同 Region 一批 committed entries（可合并 WriteBatch）；未设置则退回逐条 ApplyFn。
-  using ApplyBatchFn =
-      std::function<void(uint32_t region_id, const std::vector<raft::LogEntry>& entries)>;
+  // 应用批处理函数： 同 Region 一批 committed entries（可合并 WriteBatch）；未设置则退回逐条 ApplyFn。
+  using ApplyBatchFn = std::function<void(uint32_t region_id, const std::vector<raft::LogEntry>& entries)>;
+  // 持久化函数
   using PersistFn = std::function<void(uint32_t region_id, const raft::Ready& rd)>;
-  using TransportFn =
-      std::function<void(uint32_t region_id, const std::string& to, const std::string& type,
-                         const std::string& payload)>;
-  using SnapProviderFn =
-      std::function<std::string(uint32_t region_id, uint64_t* last_idx, uint64_t* last_term)>;
+  // 传输函数
+  using TransportFn = std::function<void(uint32_t region_id, const std::string& to, const std::string& type, const std::string& payload)>;
+  // 快照提供函数
+  using SnapProviderFn = std::function<std::string(uint32_t region_id, uint64_t* last_idx, uint64_t* last_term)>;
+  // 重新加载函数
   using ReloadFn = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
 
   Store(Options opts, NodeFactory factory);
   ~Store();
 
+  // ------------------------------------------------------------
+  // 设置应用函数
   void set_apply_fn(ApplyFn f) { apply_fn_ = std::move(f); }
+  // 设置应用批处理函数
   void set_apply_batch_fn(ApplyBatchFn f) { apply_batch_fn_ = std::move(f); }
+  // 设置持久化函数
   void set_persist_fn(PersistFn f) { persist_fn_ = std::move(f); }
+  // 设置传输函数
   void set_transport_fn(TransportFn f) { transport_fn_ = std::move(f); }
+  // 设置快照提供函数
   void set_snap_provider(SnapProviderFn f) { snap_provider_ = std::move(f); }
+  // 设置重新加载函数
   void set_reload_fn(ReloadFn f) { reload_fn_ = std::move(f); }
 
+  /// 启动 BatchSystem / SnapWorker / ready_coalesce 线程；tick / Ready 前必须调用。
   void start();
   void stop();
 
-  /// StoreTicker：向所有 Peer 邮箱投递 Tick（替代 MultiRaft::tick_all）。
+  /// StoreTicker：向所有 Peer 邮箱投递 Tick（须已 start；由 BatchSystem 处理）。
   void schedule_tick();
-  /// 仅驱动指定 Region 的 Ready（propose 后调用；批内多个请求合并为一次 persist/sync）。
+  /// 仅驱动指定 Region 的 Ready（propose 后；邮箱 kWake，批内合并 persist/sync；须已 start）。
   void drive_ready(uint32_t region_id);
   /// propose 热路径：按 ready_coalesce_n/ms 攒批后再 drive_ready（group commit）。
   void request_ready(uint32_t region_id);
@@ -119,11 +133,18 @@ class Store {
   void handle_raft_message(Peer& peer, const RaftMessage& msg);
   /// run_ready：入站同步路径在 step 成功后立刻 Ready；批处理路径传 false。
   std::string step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready);
-  void process_ready(Peer& peer);
+  /// pipeline=true：persist 丢 PersistWorker，完成后 kPersistDone 再发网/apply。
+  /// pipeline=false：入站 RPC 同步落盘后再回包（耐久与响应一致）。
+  void process_ready(Peer& peer, bool pipeline);
+  void dispatch_ready_after_persist(Peer& peer, raft::Ready& rd);
+  void finish_persist_pipeline(Peer& peer);
   void maybe_hibernate_or_unload(Peer& peer);
   void wake_peer(Peer& peer);
   std::shared_ptr<Peer> peer_locked(uint32_t region_id);
   raft::RaftNode* peer_node(Peer& peer);
+  bool persist_pipeline_enabled() const {
+    return persist_ && opts_.persist_workers > 0;
+  }
 
   Options opts_;
   NodeFactory factory_;
@@ -137,6 +158,7 @@ class Store {
   std::shared_ptr<Router> router_;
   std::unique_ptr<BatchSystem> batch_;
   std::unique_ptr<SnapWorker> snap_;
+  std::unique_ptr<PersistWorker> persist_;
   StoreMeta meta_;
 
   mutable std::mutex mu_;

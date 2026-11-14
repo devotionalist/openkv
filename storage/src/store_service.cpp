@@ -89,6 +89,7 @@ bool read_u64(std::string_view s, size_t& off, uint64_t& v) {
 
 }  // namespace
 
+// Prewrite value 布局：start_ts(8) | mvcc_op(1) | plen(4) | primary | vlen(4) | value
 std::string encode_prewrite_value(uint64_t start_ts, uint8_t mvcc_op, std::string_view primary,
                                   std::string_view value) {
   std::string out;
@@ -103,6 +104,7 @@ std::string encode_prewrite_value(uint64_t start_ts, uint8_t mvcc_op, std::strin
 
 bool decode_prewrite_value(std::string_view data, uint64_t* start_ts, uint8_t* mvcc_op,
                            std::string* primary, std::string* value) {
+  // 1) start_ts → 2) mvcc_op → 3) primary → 4) value；任一字段越界则失败。
   size_t off = 0;
   if (!read_u64(data, off, *start_ts) || off >= data.size()) return false;
   *mvcc_op = static_cast<uint8_t>(data[off++]);
@@ -115,6 +117,7 @@ bool decode_prewrite_value(std::string_view data, uint64_t* start_ts, uint8_t* m
   return true;
 }
 
+// Commit value：start_ts(8) | commit_ts(8)
 std::string encode_commit_value(uint64_t start_ts, uint64_t commit_ts) {
   std::string out;
   out.append(reinterpret_cast<const char*>(&start_ts), sizeof(start_ts));
@@ -127,6 +130,7 @@ bool decode_commit_value(std::string_view data, uint64_t* start_ts, uint64_t* co
   return read_u64(data, off, *start_ts) && read_u64(data, off, *commit_ts);
 }
 
+// ONEPC value：commit_ts(8) | prewrite payload（一次 propose 写 lock+data+write）
 std::string encode_onepc_value(uint64_t start_ts, uint64_t commit_ts, uint8_t mvcc_op,
                                std::string_view primary, std::string_view value) {
   std::string out;
@@ -142,6 +146,7 @@ bool decode_onepc_value(std::string_view data, uint64_t* start_ts, uint64_t* com
   return decode_prewrite_value(data.substr(off), start_ts, mvcc_op, primary, value);
 }
 
+// Rollback / PessimisticRollback value：仅 start_ts(8)
 std::string encode_rollback_value(uint64_t start_ts) {
   std::string out;
   out.append(reinterpret_cast<const char*>(&start_ts), sizeof(start_ts));
@@ -153,6 +158,7 @@ bool decode_rollback_value(std::string_view data, uint64_t* start_ts) {
   return read_u64(data, off, *start_ts);
 }
 
+// PessimisticLock value：start_ts | for_update_ts | ttl_ms | plen | primary
 std::string encode_pessimistic_lock_value(uint64_t start_ts, uint64_t for_update_ts,
                                           uint64_t ttl_ms, std::string_view primary) {
   std::string out;
@@ -178,10 +184,10 @@ bool decode_pessimistic_lock_value(std::string_view data, uint64_t* start_ts,
   return true;
 }
 
-// 二进制布局：
+// Command 二进制布局（Raft log data）：
 //   op(1) | klen(4) | vlen(4) | ttl_ms(8) | key | value
-//   [| request_id(8)]                                    — 旧格式
-//   [| request_id(8) | cas(1) | expected_revision(8)]    — CAS 扩展（17 字节尾）
+//   [| cas(1) | expected_revision(8)]                         — CAS 尾（9 字节）
+// 兼容旧尾（解码忽略）：request_id(8)；request_id(8)|cas(1)|expected_revision(8)
 std::string encode_command(const Command& cmd) {
   std::string out;
   out.push_back(static_cast<char>(cmd.op));
@@ -193,11 +199,8 @@ std::string encode_command(const Command& cmd) {
   out.append(cmd.key);
   out.append(cmd.value);
   if (cmd.cas) {
-    out.append(reinterpret_cast<const char*>(&cmd.request_id), sizeof(cmd.request_id));
     out.push_back(static_cast<char>(1));
     out.append(reinterpret_cast<const char*>(&cmd.expected_revision), sizeof(cmd.expected_revision));
-  } else if (cmd.request_id != 0) {
-    out.append(reinterpret_cast<const char*>(&cmd.request_id), sizeof(cmd.request_id));
   }
   return out;
 }
@@ -222,26 +225,25 @@ bool decode_command(const std::string& data, Command* out) {
   off += klen;
   out->value.assign(data.data() + off, vlen);
   off += vlen;
-  out->request_id = 0;
   out->cas = false;
   out->expected_revision = 0;
   if (off == data.size()) return true;
+
+  // rem: 8=旧 request_id（忽略）；9=CAS；17=旧 request_id+CAS（跳过 request_id）
   const size_t rem = data.size() - off;
-  if (rem == sizeof(uint64_t)) {
-    std::memcpy(&out->request_id, data.data() + off, sizeof(out->request_id));
-    return true;
-  }
+  if (rem == sizeof(uint64_t)) return true;
   if (rem == sizeof(uint64_t) + 1 + sizeof(uint64_t)) {
-    std::memcpy(&out->request_id, data.data() + off, sizeof(out->request_id));
-    off += sizeof(out->request_id);
-    out->cas = (static_cast<uint8_t>(data[off++]) != 0);
-    std::memcpy(&out->expected_revision, data.data() + off, sizeof(out->expected_revision));
-    return true;
+    off += sizeof(uint64_t);
+  } else if (rem != 1 + sizeof(uint64_t)) {
+    return false;
   }
-  return false;
+  out->cas = (static_cast<uint8_t>(data[off++]) != 0);
+  std::memcpy(&out->expected_revision, data.data() + off, sizeof(out->expected_revision));
+  return true;
 }
 
 int64_t stamp_expire_at_ms(int64_t ttl_ms) {
+  // 相对 TTL → 绝对 expire_at；≤0 表示永久（存 0）。
   if (ttl_ms <= 0) return 0;
   return wall_ms_now() + ttl_ms;
 }
@@ -250,12 +252,15 @@ StoreFacade::StoreFacade(StorageNode& node)
     : node_(node), metrics_(std::make_shared<RegionMetrics>()) {}
 
 ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_epoch) {
+  // ---- 事务写预检共用门闩：Region 存在 → Leader → epoch → 非分裂。
   ProposeResult r;
+  // 1) 本机是否托管该 Region。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
     r.error = "no_region";
     return r;
   }
+  // 2) 仅 Leader 可写；Follower 填 redirect。
   if (!group->is_leader()) {
     r.redirect_to = group->leader_address();
     if (r.redirect_to.empty()) {
@@ -264,6 +269,7 @@ ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_e
     r.error = "not_leader";
     return r;
   }
+  // 3) 可选 epoch，防路由陈旧。
   if (expected_epoch != 0) {
     const uint64_t cur = node_.region_epoch(shard_id);
     if (cur != expected_epoch) {
@@ -271,6 +277,7 @@ ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_e
       return r;
     }
   }
+  // 4) 分裂窗口内拒绝事务写。
   if (node_.region_splitting(shard_id)) {
     r.error = "splitting";
     return r;
@@ -281,6 +288,7 @@ ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_e
 
 namespace {
 bool cmd_has_user_key(const Command& cmd) {
+  // 带用户 key 的 op 才做 key_in_region / 按 key 占 latch；Admin/GC 等无用户 key。
   switch (cmd.op) {
     case CmdOp::kPut:
     case CmdOp::kDelete:
@@ -299,18 +307,19 @@ bool cmd_has_user_key(const Command& cmd) {
 
 namespace {
 
-/// Leader 线性读：ReadIndex 后等到 apply 追上（CV，无 sleep 自旋）。
 bool ensure_applied_catchup(StorageNode& node, raft::RaftNode* group, uint32_t shard_id,
                             uint64_t read_ci) {
+  // ---- Leader 线性读：ReadIndex 拿到 commit 点后，等到 last_applied ≥ read_ci。
+  // 1) 已追上则立即成功；2) 否则 CV 等待，等待期间 flush_ready 推进 Ready（无 sleep 自旋）。
   if (!group) return false;
   if (group->soft_state().last_applied >= read_ci) return true;
   return group->wait_applied(read_ci, 400, [&] {
-    if (auto* kv = node.raftkv()) kv->flush_ready(shard_id);
-    else group->tick();
+    node.raftkv().flush_ready(shard_id);
   });
 }
 
 void fill_cas_meta(ProposeResult& pr) {
+  // 从 apply 错误串解析 cas_failed + current_revision，供 Gateway 回客户端。
   if (pr.error.rfind("cas_failed", 0) != 0) return;
   pr.cas_failed = true;
   const auto pos = pr.error.find("current_revision=");
@@ -319,34 +328,29 @@ void fill_cas_meta(ProposeResult& pr) {
   }
 }
 
-ProposeResult finish_propose(StorageNode& node, uint32_t shard_id, const Command& cmd, uint64_t idx,
+ProposeResult finish_propose(StorageNode& node, uint64_t idx,
                              const ProposalQueue::WaitOutcome& outcome, uint64_t latch_tok) {
-  if (auto* sched = node.scheduler()) sched->unlock(latch_tok);
+  // apply 收尾：unlock latch → 填 ProposeResult（超时 / 业务错 / 成功）。
+  node.scheduler().unlock(latch_tok);
   ProposeResult r;
   if (outcome.timed_out) {
     r.error = "apply_timeout";
     return r;
   }
-  r.revision = idx;
+  r.revision = idx;  // 默认 Raft log index；ONEPC 外层改为 commit_ts
   if (!outcome.error.empty()) {
     r.error = outcome.error;
     fill_cas_meta(r);
-    if (cmd.request_id != 0) {
-      node.remember_request(shard_id, cmd.request_id,
-                            StorageNode::IdempotentRecord{false, idx, r.error});
-    }
     return r;
   }
   r.ok = true;
-  if (cmd.request_id != 0 && !node.lookup_request(shard_id, cmd.request_id)) {
-    node.remember_request(shard_id, cmd.request_id, StorageNode::IdempotentRecord{true, idx, {}});
-  }
   return r;
 }
 
 }  // namespace
 
 ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
+  // ---- 同步包装：promise 堵住调用线程直到 apply；仅单测 / 后台（txn GC），CQ 勿用。
   std::promise<ProposeResult> done;
   propose_async(shard_id, cmd, [&](ProposeResult out) { done.set_value(std::move(out)); });
   return done.get_future().get();
@@ -354,8 +358,10 @@ ProposeResult StoreFacade::propose(uint32_t shard_id, const Command& cmd) {
 
 void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
                                 std::function<void(ProposeResult)> cb, uint64_t expected_epoch) {
+  // ---- 入口：异步 Propose；本函数不阻塞等 apply，结果经 cb 回传（gRPC Finish / 同步 propose 的 future）。
   if (!cb) return;
-  // metrics_ shared_ptr：临时 StoreFacade（txn GC）析构后回调仍可 observe。
+
+  // 1) 延迟直方图：shared_ptr 保证临时 StoreFacade（如 txn GC）析构后，apply 回调仍能 observe。
   auto timer = std::make_shared<ScopedRegionTimer>(metrics_, shard_id, true);
   auto fail = [&](std::string err, std::string redirect = {}) {
     ProposeResult r;
@@ -364,18 +370,23 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     cb(std::move(r));
   };
 
+  // 2) 取本机该 Region 的 Raft 组；未托管则拒绝（禁止 get_or_create，避免误拉孤儿 Leader）。
   StorageNode& node = node_;
   auto* group = node.multi_raft().get(shard_id);
-  if (!group) {
+  if (!group) {  // shard 未托管于本节点
     fail("no_region");
     return;
   }
+
+  // 3) 仅 Leader 可写；Follower 带回 redirect，供 Gateway 重路由。
   if (!group->is_leader()) {
     std::string redir = group->leader_address();
     if (redir.empty()) redir = node.peer_address(group->soft_state().leader_id);
     fail("not_leader", std::move(redir));
     return;
   }
+
+  // 4) 可选 epoch 校验：Gateway 带路由 epoch，防分裂/合并后打到陈旧 Region。
   if (expected_epoch != 0) {
     const uint64_t cur = node.region_epoch(shard_id);
     if (cur != expected_epoch) {
@@ -383,87 +394,79 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
       return;
     }
   }
-  // E4：同 request_id 重试直接返回缓存，不再二次 propose
-  if (cmd.request_id != 0) {
-    if (auto hit = node.lookup_request(shard_id, cmd.request_id)) {
-      ProposeResult r;
-      r.ok = hit->ok;
-      r.revision = hit->revision;
-      r.error = hit->error;
-      cb(std::move(r));
-      return;
-    }
-  }
-  // PUT/DEL/ONEPC 走分裂暂停（与事务写一致）；窗口仅覆盖 Raft apply 元数据，无物理搬迁。
+
+  // 5) 分裂窗口：PUT/DEL/ONEPC 暂停写入（仅挡 Raft apply 元数据窗口，无物理搬迁）。
   if ((cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete || cmd.op == CmdOp::kOnePc) &&
       node.region_splitting(shard_id)) {
     fail("splitting");
     return;
   }
+
+  // 6) Key 归属：用户 key 必须落在本 Region range，否则 Gateway 应改路由。
   if (cmd_has_user_key(cmd) && !node.key_in_region(shard_id, cmd.key)) {
     fail("key_not_in_region");
     return;
   }
 
-  // Raw 平面 LWW（非 CAS Put/Delete）：Raft apply 已串行，跳过 latch，避免 Propose CQ 上 cv.wait。
-  // 事务 / CAS：lock_async 占锁持到 apply；冲突时回调续跑，不阻塞接收线程。
-  // 回调只捕获 StorageNode&（节点寿命覆盖异步），禁止捕获 StoreFacade* this。
-  auto* sched = node.scheduler();
+  // 7) 是否跳过 latch：
+  //    - Raw 非 CAS Put/Delete：LWW，Raft apply 已串行 → 跳过，省 CQ 上排队。
+  //    - 事务 / CAS / 其它写：同 key 先占内存 latch，持到 apply，防并发乱序。
   const bool skip_latch =
       (cmd.op == CmdOp::kPut || cmd.op == CmdOp::kDelete) && !cmd.cas;
 
-  auto after_latch = [&node, shard_id, cmd, timer = std::move(timer), cb = std::move(cb),
-                      sched](uint64_t latch_tok) mutable {
+  // 8) 占锁成功（或跳过 latch）后的续跑闭包。
+  //    只捕获 StorageNode&（节点寿命覆盖异步路径）；禁止捕获 StoreFacade* this。
+  auto after_latch = [&node, shard_id, cmd, timer = std::move(timer), cb = std::move(cb)](
+                         uint64_t latch_tok) mutable {
+    // 8a) 写入门面：encode → RaftNode::propose（仅 append 日志拿 index）→ Store::request_ready 攒批。
+    //     此处返回 true 只表示已进日志+登记 Ready，不等于已落盘/复制/apply。
     uint64_t idx = 0;
     std::string perr;
-    bool proposed = false;
-    if (auto* kv = node.raftkv()) {
-      proposed = kv->async_write(shard_id, encode_command(cmd), &idx, &perr);
-    } else if (auto* g = node.multi_raft().get(shard_id)) {
-      if (g->propose(encode_command(cmd), &idx)) {
-        proposed = true;
-      } else {
-        perr = "propose_failed";
-      }
-    } else {
-      perr = "no_region";
-    }
-    if (!proposed) {
-      if (sched) sched->unlock(latch_tok);
+    if (!node.raftkv().async_write(shard_id, encode_command(cmd), &idx, &perr)) {
+      node.scheduler().unlock(latch_tok);  // propose 失败立即放锁
       ProposeResult r;
       r.error = perr.empty() ? "propose_failed" : std::move(perr);
       cb(std::move(r));
       return;
     }
 
-    // 无 waiter tick：BatchSystem 经 flush_ready + tick_loop 推进；apply → invoke → Finish。
+    // 8b) 按 log index 挂 ProposalQueue waiter（≤5s）；
+    //     Ready→persist→复制→commit→apply→invoke 后唤醒；本线程不 tick、不自旋。
     node.wait_apply_async(
         idx, std::chrono::milliseconds(5000),
-        [&node, shard_id, cmd, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
+        [&node, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
             ProposalQueue::WaitOutcome outcome) mutable {
-          cb(finish_propose(node, shard_id, cmd, idx, outcome, latch_tok));
-          timer.reset();
+          // 8c) finish_propose：unlock latch → 填 ProposeResult → 调 cb。
+          cb(finish_propose(node, idx, outcome, latch_tok));
+          timer.reset();  // 结束计时，写入 metrics
         });
   };
 
-  if (skip_latch || !sched) {
+  // 9) 无 latch：直接续跑（latch_tok=0，unlock 为空操作）。
+  if (skip_latch) {
     after_latch(0);
     return;
   }
+
+  // 10) 有 latch：按用户 key（或 op:N）异步占锁；冲突则入队，unlock 时再回调 after_latch。
   const std::string latch_key =
       cmd_has_user_key(cmd) ? cmd.key : (std::string("op:") + std::to_string(static_cast<int>(cmd.op)));
-  sched->lock_key_async(latch_key, std::move(after_latch));
+  node.scheduler().lock_key_async(latch_key, std::move(after_latch));
 }
 
 GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool linearizable) {
+  // ---- Raw / plain 读：可选线性（ReadIndex+catchup），否则本地引擎直读。
+  // 1) 读延迟计时。
   ScopedRegionTimer timer{metrics_, shard_id, false};
   GetResult r;
+  // 2) Region 存在性。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
     r.redirect_to = "no_region";  // tcp 层识别
     return r;
   }
   r.is_leader = group->is_leader();
+  // 3) 线性读要求 Leader；Follower 只回 redirect。
   if (linearizable && !r.is_leader) {
     r.redirect_to = group->leader_address();
     if (r.redirect_to.empty()) {
@@ -471,6 +474,7 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
     }
     return r;
   }
+  // 4) Leader 线性：ReadIndex 取 commit 点，再等 apply 追上（防读到未提交可见性）。
   if (linearizable && r.is_leader) {
     uint64_t read_ci = 0;
     if (!group->read_index(&read_ci)) {
@@ -479,10 +483,12 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
     }
     (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
+  // 5) Key 必须在本 Region range。
   if (!node_.key_in_region(shard_id, key)) {
     r.redirect_to = "key_not_in_region";
     return r;
   }
+  // 6) 引擎直读 plain KvRecord（非 MVCC txn_get）。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) return r;
   if (auto rec = eng->get(key)) {
@@ -497,8 +503,11 @@ ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uin
                                     std::string_view primary, uint8_t mvcc_op,
                                     std::string_view value, uint64_t expected_epoch, bool cas,
                                     uint64_t expected_revision, int64_t expire_at_ms) {
+  // ---- 同步 Prewrite（2PC 第一阶段）：预检后 propose 写 lock CF。
+  // 1) Leader / epoch / 分裂门闩。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) return gate;
+  // 2) 取引擎。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) {
     gate.ok = false;
@@ -506,19 +515,20 @@ ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uin
     return gate;
   }
   MvccStore mvcc(*eng);
+  // 3) 锁冲突：异事务锁 → locked；同 start_ts 悲观锁可升级为 prewrite。
   if (auto lk = mvcc.get_lock(key)) {
     if (lk->start_ts != start_ts) {
       gate.ok = false;
       gate.error = "locked";
       return gate;
     }
-    // 同事务悲观锁 → 允许升级为 prewrite
   } else if (mvcc.has_write_conflict(key, start_ts)) {
+    // 4) 无锁时再查 write 冲突（有更新的 commit）。
     gate.ok = false;
     gate.error = "write_conflict";
     return gate;
   }
-  // Leader 快路径 CAS 预检（最终仍以 apply 为准）
+  // 5) CAS 快路径预检（最终仍以 apply 为准）。
   if (cas) {
     bool locked = false;
     uint64_t cur_rev = 0;
@@ -537,6 +547,7 @@ ProposeResult StoreFacade::prewrite(uint32_t shard_id, std::string_view key, uin
       return gate;
     }
   }
+  // 6) 组 Command → 同步 propose（等 apply）。
   Command cmd;
   cmd.op = CmdOp::kPrewrite;
   cmd.key = std::string(key);
@@ -551,6 +562,7 @@ ProposeResult StoreFacade::one_pc(uint32_t shard_id, std::string_view key, uint6
                                   uint64_t commit_ts, std::string_view primary, uint8_t mvcc_op,
                                   std::string_view value, uint64_t expected_epoch, bool cas,
                                   uint64_t expected_revision, int64_t expire_at_ms) {
+  // ---- 同步 ONEPC 包装：promise 等 one_pc_async 完成。
   std::promise<ProposeResult> done;
   one_pc_async(shard_id, std::string(key), start_ts, commit_ts, std::string(primary), mvcc_op,
                std::string(value), expected_epoch, cas, expected_revision, expire_at_ms,
@@ -563,7 +575,9 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
                                std::string value, uint64_t expected_epoch, bool cas,
                                uint64_t expected_revision, int64_t expire_at_ms,
                                std::function<void(ProposeResult)> cb) {
+  // ---- 异步 1PC（Put/Delete 热路径）：预检失败同步 cb；成功走 propose_async。
   if (!cb) return;
+  // 1) Leader / epoch / 分裂。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err, bool cas_failed = false, uint64_t cur_rev = 0) {
     gate.ok = false;
@@ -576,10 +590,12 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
     cb(std::move(gate));
     return;
   }
+  // 2) commit_ts 必须严格大于 start_ts。
   if (commit_ts <= start_ts) {
     fail("bad_ts");
     return;
   }
+  // 3) 引擎。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) {
     fail("no_engine");
@@ -590,14 +606,17 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
            std::to_string(lk.start_ts);
   };
   MvccStore mvcc(*eng);
+  // 4) 已有任意锁 → 拒（1PC 不升级悲观锁）。
   if (auto lk = mvcc.get_lock(key)) {
     fail(locked_err(*lk));
     return;
   }
+  // 5) write 冲突。
   if (mvcc.has_write_conflict(key, start_ts)) {
     fail("write_conflict");
     return;
   }
+  // 6) 可选 CAS 预检。
   if (cas) {
     bool locked = false;
     uint64_t cur_rev = 0;
@@ -613,6 +632,7 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
       return;
     }
   }
+  // 7) 组 kOnePc → propose_async；成功时 revision 对外暴露为 commit_ts（非 log index）。
   Command cmd;
   cmd.op = CmdOp::kOnePc;
   cmd.key = std::move(key);
@@ -630,7 +650,9 @@ void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t st
                                  std::string primary, uint8_t mvcc_op, std::string value,
                                  uint64_t expected_epoch, bool cas, uint64_t expected_revision,
                                  int64_t expire_at_ms, std::function<void(ProposeResult)> cb) {
+  // ---- 异步 Prewrite：预检同 sync；成功走 propose_async（不占 CQ 等 apply）。
   if (!cb) return;
+  // 1) 门闩。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err, bool cas_failed = false, uint64_t cur_rev = 0) {
     gate.ok = false;
@@ -643,22 +665,24 @@ void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t st
     cb(std::move(gate));
     return;
   }
+  // 2) 引擎。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) {
     fail("no_engine");
     return;
   }
   MvccStore mvcc(*eng);
+  // 3) 锁 / write 冲突（同事务悲观锁可升级）。
   if (auto lk = mvcc.get_lock(key)) {
     if (lk->start_ts != start_ts) {
       fail("locked");
       return;
     }
-    // 同事务悲观锁 → 允许升级为 prewrite
   } else if (mvcc.has_write_conflict(key, start_ts)) {
     fail("write_conflict");
     return;
   }
+  // 4) CAS 预检。
   if (cas) {
     bool locked = false;
     uint64_t cur_rev = 0;
@@ -673,6 +697,7 @@ void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t st
       return;
     }
   }
+  // 5) 组 Command → propose_async。
   Command cmd;
   cmd.op = CmdOp::kPrewrite;
   cmd.key = std::move(key);
@@ -685,6 +710,8 @@ void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t st
 
 ProposeResult StoreFacade::commit(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                   uint64_t commit_ts, uint64_t expected_epoch) {
+  // ---- 同步 Commit（2PC 第二阶段）：清 lock、写 write CF。
+  // 1) 门闩。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) return gate;
   auto* eng = node_.engines().get(shard_id);
@@ -694,16 +721,16 @@ ProposeResult StoreFacade::commit(uint32_t shard_id, std::string_view key, uint6
     return gate;
   }
   MvccStore mvcc(*eng);
-  // 已提交则幂等成功（崩溃恢复 resolve）
+  // 2) 已有 write → 幂等成功（崩溃恢复 / 重复 commit）。
   if (auto cts = mvcc.find_commit_ts(key, start_ts)) {
     if (*cts == commit_ts || commit_ts != 0) {
       gate.ok = true;
       return gate;
     }
   }
+  // 3) 锁必须存在且 start_ts 匹配；否则再查是否已 resolve。
   auto lk = mvcc.get_lock(key);
   if (!lk || lk->start_ts != start_ts) {
-    // 无锁且已有 write → 视为已 resolve
     if (mvcc.find_commit_ts(key, start_ts)) {
       gate.ok = true;
       return gate;
@@ -712,11 +739,13 @@ ProposeResult StoreFacade::commit(uint32_t shard_id, std::string_view key, uint6
     gate.error = "lock_not_found";
     return gate;
   }
+  // 4) 仍是悲观锁未 prewrite → 不能 commit。
   if (lk->op == MvccOp::kPessimistic) {
     gate.ok = false;
     gate.error = "pessimistic_not_prewritten";
     return gate;
   }
+  // 5) 组 kCommit → 同步 propose。
   Command cmd;
   cmd.op = CmdOp::kCommit;
   cmd.key = std::string(key);
@@ -727,7 +756,9 @@ ProposeResult StoreFacade::commit(uint32_t shard_id, std::string_view key, uint6
 void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                                uint64_t commit_ts, uint64_t expected_epoch,
                                std::function<void(ProposeResult)> cb) {
+  // ---- 异步 Commit：预检同 sync；成功走 propose_async。
   if (!cb) return;
+  // 1) 门闩。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err) {
     gate.ok = false;
@@ -744,6 +775,7 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
     return;
   }
   MvccStore mvcc(*eng);
+  // 2) 幂等：已提交直接成功。
   if (auto cts = mvcc.find_commit_ts(key, start_ts)) {
     if (*cts == commit_ts || commit_ts != 0) {
       gate.ok = true;
@@ -751,6 +783,7 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
       return;
     }
   }
+  // 3) 锁校验。
   auto lk = mvcc.get_lock(key);
   if (!lk || lk->start_ts != start_ts) {
     if (mvcc.find_commit_ts(key, start_ts)) {
@@ -765,6 +798,7 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
     fail("pessimistic_not_prewritten");
     return;
   }
+  // 4) propose_async。
   Command cmd;
   cmd.op = CmdOp::kCommit;
   cmd.key = std::move(key);
@@ -774,6 +808,7 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
 
 ProposeResult StoreFacade::rollback(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                     uint64_t expected_epoch) {
+  // ---- 同步 Rollback：清 lock / 记 rollback；门闩后直接 propose。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) return gate;
   Command cmd;
@@ -785,6 +820,7 @@ ProposeResult StoreFacade::rollback(uint32_t shard_id, std::string_view key, uin
 
 void StoreFacade::rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                                  uint64_t expected_epoch, std::function<void(ProposeResult)> cb) {
+  // ---- 异步 Rollback。
   if (!cb) return;
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) {
@@ -802,6 +838,7 @@ ProposeResult StoreFacade::pessimistic_lock(uint32_t shard_id, std::string_view 
                                             uint64_t start_ts, uint64_t for_update_ts,
                                             std::string_view primary, uint64_t ttl_ms,
                                             uint64_t expected_epoch) {
+  // ---- 同步悲观锁：占 lock CF（op=pessimistic），后续 prewrite 可升级。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) return gate;
   auto* eng = node_.engines().get(shard_id);
@@ -811,20 +848,23 @@ ProposeResult StoreFacade::pessimistic_lock(uint32_t shard_id, std::string_view 
     return gate;
   }
   MvccStore mvcc(*eng);
+  // 1) 已有同事务锁 → 幂等成功；异事务 → locked。
   if (auto lk = mvcc.get_lock(key)) {
     if (lk->start_ts == start_ts) {
       gate.ok = true;
-      return gate;  // idempotent
+      return gate;
     }
     gate.ok = false;
     gate.error = "locked";
     return gate;
   }
+  // 2) 相对 for_update_ts（或 start_ts）的 write 冲突。
   if (mvcc.has_write_conflict(key, for_update_ts != 0 ? for_update_ts : start_ts)) {
     gate.ok = false;
     gate.error = "write_conflict";
     return gate;
   }
+  // 3) propose。
   Command cmd;
   cmd.op = CmdOp::kPessimisticLock;
   cmd.key = std::string(key);
@@ -836,6 +876,7 @@ void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uin
                                          uint64_t for_update_ts, std::string primary,
                                          uint64_t ttl_ms, uint64_t expected_epoch,
                                          std::function<void(ProposeResult)> cb) {
+  // ---- 异步悲观锁：预检同 sync。
   if (!cb) return;
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err) {
@@ -866,7 +907,7 @@ void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uin
     fail("write_conflict");
     return;
   }
-  if (ttl_ms == 0) ttl_ms = 5000;
+  if (ttl_ms == 0) ttl_ms = 5000;  // 默认锁 TTL
   Command cmd;
   cmd.op = CmdOp::kPessimisticLock;
   cmd.key = std::move(key);
@@ -876,6 +917,7 @@ void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uin
 
 ProposeResult StoreFacade::pessimistic_rollback(uint32_t shard_id, std::string_view key,
                                                 uint64_t start_ts, uint64_t expected_epoch) {
+  // ---- 同步悲观回滚：清 pessimistic lock（value 仍用 start_ts）。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) return gate;
   Command cmd;
@@ -888,6 +930,7 @@ ProposeResult StoreFacade::pessimistic_rollback(uint32_t shard_id, std::string_v
 void StoreFacade::pessimistic_rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                                              uint64_t expected_epoch,
                                              std::function<void(ProposeResult)> cb) {
+  // ---- 异步悲观回滚。
   if (!cb) return;
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) {
@@ -904,6 +947,7 @@ void StoreFacade::pessimistic_rollback_async(uint32_t shard_id, std::string key,
 ProposeResult StoreFacade::resolve_lock(uint32_t shard_id, std::string_view key,
                                         uint64_t start_ts, uint64_t commit_ts,
                                         uint64_t expected_epoch) {
+  // ---- 同步 resolve：commit_ts==0 → rollback，否则 commit（异步锁清理入口）。
   if (commit_ts == 0) {
     return rollback(shard_id, key, start_ts, expected_epoch);
   }
@@ -913,6 +957,7 @@ ProposeResult StoreFacade::resolve_lock(uint32_t shard_id, std::string_view key,
 void StoreFacade::resolve_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                                      uint64_t commit_ts, uint64_t expected_epoch,
                                      std::function<void(ProposeResult)> cb) {
+  // ---- 异步 resolve：同上分支。
   if (!cb) return;
   if (commit_ts == 0) {
     rollback_async(shard_id, std::move(key), start_ts, expected_epoch, std::move(cb));
@@ -923,7 +968,9 @@ void StoreFacade::resolve_lock_async(uint32_t shard_id, std::string key, uint64_
 
 TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                   bool linearizable) {
+  // ---- MVCC 点读：按 start_ts 可见性；遇锁返回 locked + blocking_lock。
   TxnGetResult r;
+  // 1) Region / Leader（线性时）。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
     r.redirect_to = "no_region";
@@ -937,6 +984,7 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
     }
     return r;
   }
+  // 2) Leader 线性：ReadIndex + apply catchup。
   if (linearizable && r.is_leader) {
     uint64_t read_ci = 0;
     if (!group->read_index(&read_ci)) {
@@ -946,6 +994,7 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
     }
     (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
+  // 3) MvccStore::txn_get：锁挡 → locked；否则返回可见 value + commit_ts。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) return r;
   MvccStore mvcc(*eng);
@@ -971,7 +1020,9 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
                                     std::string_view end_key, std::string_view start_after,
                                     uint64_t start_ts, uint32_t limit, bool keys_only,
                                     bool linearizable) {
+  // ---- MVCC 范围扫：夹在 Region range 内；limit 默认 256、硬顶 4096。
   TxnScanResult r;
+  // 1) Region / 线性读门闩（同 txn_get）。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
     r.redirect_to = "no_region";
@@ -996,8 +1047,10 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
   }
   auto* eng = node_.engines().get(shard_id);
   if (!eng) return r;
+  // 2) 规范化 limit。
   if (limit == 0) limit = 256;
   if (limit > 4096) limit = 4096;
+  // 3) 扫引擎；truncated/next_key 供客户端续扫。
   auto range = node_.region_range(shard_id);
   auto sr = MvccStore(*eng).txn_scan(start_key, end_key, start_after, start_ts, limit, keys_only,
                                      range);
@@ -1009,6 +1062,7 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
 
 TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint64_t start_ts,
                                   bool linearizable) {
+  // ---- 查剩余 TTL（-2 不存在/过期；-1 永久；>=0 剩余 ms）；遇锁同 txn_get。
   TxnTtlResult r;
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
@@ -1048,7 +1102,9 @@ TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint6
 }
 
 GetLockResult StoreFacade::get_lock(uint32_t shard_id, std::string_view key) {
+  // ---- 读 lock CF（须 Leader）：异步 resolve / 诊断用。
   GetLockResult r;
+  // 1) Region + 强制 Leader。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
     r.redirect_to = "no_region";
@@ -1062,6 +1118,7 @@ GetLockResult StoreFacade::get_lock(uint32_t shard_id, std::string_view key) {
     }
     return r;
   }
+  // 2) 有锁则填 LockInfo。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) return r;
   if (auto lk = MvccStore(*eng).get_lock(key)) {
@@ -1073,6 +1130,7 @@ GetLockResult StoreFacade::get_lock(uint32_t shard_id, std::string_view key) {
 
 CheckTxnResult StoreFacade::check_txn_status(uint32_t shard_id, std::string_view primary,
                                              uint64_t lock_ts) {
+  // ---- 查 primary 事务状态（须 Leader）：Committed / Locked / RolledBack + 是否过期。
   CheckTxnResult r;
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {

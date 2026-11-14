@@ -31,6 +31,7 @@ MultiRaft::MultiRaft(GroupFactory factory, Options opts) : opts_(opts) {
   so.batch.apply_workers = opts_.apply_workers == 0 ? 8 : opts_.apply_workers;
   so.ready_coalesce_n = opts_.ready_coalesce_n;
   so.ready_coalesce_ms = opts_.ready_coalesce_ms;
+  so.persist_workers = opts_.persist_workers;
   store_ = std::make_unique<raftstore::Store>(so, std::move(factory));
 }
 

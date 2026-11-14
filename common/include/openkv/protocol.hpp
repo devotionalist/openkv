@@ -145,6 +145,8 @@ inline constexpr const char* kApplyWorkers = "SKV_APPLY_WORKERS";
 inline constexpr const char* kReadyCoalesceN = "SKV_READY_COALESCE_N";
 /// Ready group commit：最长等待毫秒（0=仅按条数）。
 inline constexpr const char* kReadyCoalesceMs = "SKV_READY_COALESCE_MS";
+/// Raft Ready 异步 persist IO 线程数（默认 2；0=raft worker 同步落盘）。
+inline constexpr const char* kPersistWorkers = "SKV_PERSIST_WORKERS";
 /// gRPC 优雅关机宽限（毫秒）：Shutdown(deadline) 后拒新请求，排空在途；超时则取消剩余。
 inline constexpr const char* kGrpcShutdownMs = "SKV_GRPC_SHUTDOWN_MS";
 }  // namespace env

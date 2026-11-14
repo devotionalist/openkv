@@ -50,10 +50,12 @@ sequenceDiagram
   ST->>BS: drive_ready → kWake
   BS->>ST: on_raft_batch
   ST->>RN: take_ready()
-  ST->>RN: persist_fn → persist_ready(rd)
+  ST->>ST: 提交 PersistWorker（同 Region inflight）
+  Note over ST: raft worker 可继续其它 Region
+  ST->>RN: persist_fn → persist_ready(rd)（IO 线程）
   RN->>Eng: build_engine_batch + consume(sync)
   Note over Eng: Raft 日志耐久点
-  ST->>ST: 发 AE / 投递 ApplyMsg
+  ST->>ST: kPersistDone → 发 AE / 投递 ApplyMsg / advance
   ST->>SF: on_apply / on_apply_entries
   SF->>PQ: invoke(index)
   PQ->>C: wait_apply 回调 → gRPC ACK

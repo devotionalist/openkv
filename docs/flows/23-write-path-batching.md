@@ -24,12 +24,13 @@
 
 | 改动 | 行为 |
 |------|------|
-| `Store::drive_ready` | 只对本 Region 投 `kWake`；BatchSystem 未起时同步 `process_ready` |
+| `Store::drive_ready` | 只对本 Region 投 `kWake`（须已 `Store::start()`；无未 start 同步旁路） |
 | `Store::request_ready` | propose 热路径攒批（`SKV_READY_COALESCE_*`）后再 `drive_ready`；见 [25](25-write-path-knives.md) |
 | `Store::on_raft_batch` | 同批 Tick/Wake/Msg **只 `process_ready` 一次** |
 | `BatchSystem` schedule | Router 投递唤醒 worker + drain-until-empty；见 [26](26-raftstore-schedule-pipeline.md) |
 | `RaftKV::async_write` | propose 后 `request_ready`；`flush_ready` 仍强制 `drive_ready` |
 | `RaftNode::persist_ready` | 持锁组 batch；`persist_io_mu_` 下 consume/sync；再推进 `stable_*`（只前进） |
+| `PersistWorker`（默认 2） | raft worker 提交落盘后可处理**其它 Region**；同 Region 仍串行（`persist_inflight` → `kPersistDone` 再发 AE/apply）。`SKV_PERSIST_WORKERS=0` 回退同步。入站 RPC 始终同步落盘再回包 |
 
 `data` 下 Raft Ready 仍 sync；KV 不 sync。目标是 **多数派 + Raft sync 摊销**，崩溃用日志重放，而不是每笔 apply 再 fsync。  
 Group commit **不在** Raft sync 前 ACK；客户端仍等 apply（内存可见）。完整调用链与崩溃窗口见 [36-propose-ack-durability.md](36-propose-ack-durability.md)。
@@ -38,10 +39,11 @@ Group commit **不在** Raft sync 前 ACK；客户端仍等 apply（内存可见
 flowchart TD
   A[多条 propose] --> B[drive_ready / on_raft_batch]
   B --> C[同批一次 process_ready]
-  C --> D[persist_ready 组 batch]
-  D --> E[persist_io_mu sync]
-  E --> F[推进 stable]
-  F --> G[AE 复制 → commit → apply 批]
+  C --> D[提交 PersistWorker]
+  D --> E[raft worker 可服务其它 Region]
+  D --> F[IO: persist_ready / fsync]
+  F --> G[kPersistDone]
+  G --> H[发 AE + ApplyMsg + advance]
 ```
 
 ### apply WriteBatch

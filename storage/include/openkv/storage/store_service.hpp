@@ -60,8 +60,6 @@ struct Command {
   std::string value;
   /// 用户 KV：propose 前打成绝对 expire_at_ms（0=永久）。锁路径仍用独立 value 编码的相对 ttl。
   int64_t ttl_ms{0};
-  /// E4：非 0 时 Leader 去重；编码为 payload 尾部 u64（旧消息无尾部则视为 0）。
-  uint64_t request_id{0};
   /// 版本 CAS：apply 内校验；plain Put/Del 用 KvRecord.revision，Prewrite 用最新 commit_ts。
   bool cas{false};
   uint64_t expected_revision{0};

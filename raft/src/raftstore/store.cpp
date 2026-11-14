@@ -14,7 +14,7 @@
 
 // @file store.cpp
 // 实现：Tick / 入站 step / Ready 合并 / ready_coalesce / Hibernate / 冷卸载。
-// on_raft_batch 批末统一 process_ready；request_ready 做 group-commit 攒批。
+// on_raft_batch 批末 process_ready（可 pipeline 到 PersistWorker）；request_ready 攒批。
 
 #include "openkv/raftstore/store.hpp"
 
@@ -84,6 +84,9 @@ Store::Store(Options opts, NodeFactory factory)
     batch_->note_snap_done();
   };
   snap_ = std::make_unique<SnapWorker>(opts_.snap, std::move(prov), std::move(send));
+  if (opts_.persist_workers > 0) {
+    persist_ = std::make_unique<PersistWorker>(opts_.persist_workers);
+  }
 }
 
 Store::~Store() { stop(); }
@@ -91,6 +94,7 @@ Store::~Store() { stop(); }
 void Store::start() {
   batch_->start();
   snap_->start();
+  if (persist_) persist_->start();
   const bool need_coalesce = opts_.ready_coalesce_n > 1 || opts_.ready_coalesce_ms > 0;
   if (need_coalesce && !coalesce_running_.exchange(true)) {
     coalesce_thr_ = std::thread([this] { coalesce_loop(); });
@@ -113,6 +117,8 @@ void Store::stop() {
     }
   }
   for (auto rid : flush_ids) drive_ready(rid);
+  // 先停 PersistWorker（排空 IO），再停 BatchSystem，避免 PersistDone 无人收。
+  if (persist_) persist_->stop();
   if (snap_) snap_->stop();
   if (batch_) batch_->stop();
 }
@@ -130,15 +136,13 @@ void Store::request_ready(uint32_t region_id) {
     std::lock_guard<std::mutex> lk(coalesce_mu_);
     auto& st = coalesce_[region_id];
     st.pending++;
-    const bool count_hit =
-        opts_.ready_coalesce_n > 1 && st.pending >= opts_.ready_coalesce_n;
+    const bool count_hit = opts_.ready_coalesce_n > 1 && st.pending >= opts_.ready_coalesce_n;
     if (count_hit) {
       st.pending = 0;
       st.armed = false;
       should_flush = true;
     } else if (opts_.ready_coalesce_ms > 0) {
-      const auto dl = std::chrono::steady_clock::now() +
-                      std::chrono::milliseconds(opts_.ready_coalesce_ms);
+      const auto dl = std::chrono::steady_clock::now() + std::chrono::milliseconds(opts_.ready_coalesce_ms);
       if (!st.armed) {
         st.armed = true;
         st.deadline = dl;
@@ -191,34 +195,14 @@ void Store::coalesce_loop() {
 }
 
 void Store::schedule_tick() {
-  // BatchSystem 未启动时（单测）：同步 tick，保持 MultiRaft 旧语义。
-  if (!batch_ || !batch_->running()) {
-    std::vector<std::shared_ptr<Peer>> snap;
-    {
-      std::lock_guard<std::mutex> lk(mu_);
-      for (auto& [_, p] : peers_) snap.push_back(p);
-    }
-    for (auto& p : snap) handle_tick(*p, /*run_ready=*/true);
-    return;
-  }
+  // 一律经 Router → BatchSystem；调用方须先 Store::start()。
   router_->broadcast_tick();
 }
 
 void Store::drive_ready(uint32_t region_id) {
-  if (!batch_ || !batch_->running()) {
-    // BatchSystem 未起：同步 Ready（单测 / 早期路径）。
-    std::shared_ptr<Peer> peer;
-    {
-      std::lock_guard<std::mutex> lk(mu_);
-      peer = peer_locked(region_id);
-    }
-    if (!peer) return;
-    wake_peer(*peer);
-    process_ready(*peer);
-    return;
-  }
   // 只对本 Region 投递 Wake；同批多个 propose 合并为一次 Ready/sync。
   // mark_hot = wake + kWake；勿再 schedule_tick（避免每 Put 全表 Tick）。
+  // 须先 Store::start()，否则邮箱无人 drain。
   mark_hot(region_id);
 }
 
@@ -373,7 +357,7 @@ void Store::maybe_hibernate_or_unload(Peer& peer) {
 
 void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
   // BatchSystem raft worker 回调：同 Region 串行 drain 邮箱。
-  // 先 step/tick（不落盘），批末一次 process_ready → persist_fn + 发网 + 投递 ApplyMsg。
+  // 先 step/tick；批末 process_ready（可异步 persist）；kPersistDone 收尾发网/apply。
   std::shared_ptr<Peer> peer;
   {
     std::lock_guard<std::mutex> lk(mu_);
@@ -398,6 +382,11 @@ void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
             handle_raft_message(*peer, arg);
             need_ready = true;
           } else if constexpr (std::is_same_v<T, SignificantMsg>) {
+            if (arg.type == SignificantMsg::Type::kPersistDone) {
+              finish_persist_pipeline(*peer);
+              need_ready = true;  // 可能还有后续 Ready
+              return;
+            }
             wake_peer(*peer);
             if (arg.type == SignificantMsg::Type::kMsgUnreachable && peer->raft_node()) {
               peer->raft_node()->on_rpc_transport_fail(arg.peer_id);
@@ -412,7 +401,7 @@ void Store::on_raft_batch(uint32_t region_id, std::vector<PeerMsg> msgs) {
         },
         m);
   }
-  if (need_ready) process_ready(*peer);
+  if (need_ready) process_ready(*peer, persist_pipeline_enabled());
 }
 
 void Store::handle_tick(Peer& peer, bool run_ready) {
@@ -434,7 +423,7 @@ void Store::handle_tick(Peer& peer, bool run_ready) {
   if (n->consume_activity_flag() || n->is_leader()) {
     peer.touch_activity();
   }
-  if (run_ready) process_ready(peer);
+  if (run_ready) process_ready(peer, /*pipeline=*/false);
   maybe_hibernate_or_unload(peer);
   meta_.set_leader(peer.region_id(), n->soft_state().leader_id);
 }
@@ -455,7 +444,8 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
   const auto& type = msg.type;
   const auto parts = split_pipe(msg.payload);
   auto maybe_ready = [&] {
-    if (run_ready) process_ready(peer);
+    // 入站须同步落盘后再回包，禁止 pipeline。
+    if (run_ready) process_ready(peer, /*pipeline=*/false);
   };
   try {
     if (type == "RequestVote" || type == "RequestPreVote") {
@@ -525,52 +515,83 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
   return "ERR unknown_raft_type";
 }
 
-void Store::process_ready(Peer& peer) {
-  auto drive = [&](auto take_ready_fn, auto advance_fn, auto has_fn) {
-    while (has_fn()) {
-      raft::Ready rd = take_ready_fn();
-      if (persist_fn_) persist_fn_(peer.region_id(), rd);
-      if (transport_fn_) {
-        for (const auto& m : rd.messages) {
-          if (m.type == "InstallSnapshot" &&
-              ((rd.snapshot && rd.snapshot->to == m.to) || m.payload.empty() ||
-               m.payload.back() == '|')) {
-            // 空 blob / SnapshotMeta：走 SnapWorker，与心跳隔离
-            if (batch_ && batch_->snap_overloaded()) {
-              SKV_WARN << "snap QoS reject region=" << peer.region_id();
-              continue;
-            }
-            SnapTask t;
-            t.region_id = peer.region_id();
-            if (rd.snapshot) t.meta = *rd.snapshot;
-            else {
-              t.meta.to = m.to;
-            }
-            if (batch_) batch_->note_snap_enqueued();
-            if (snap_) snap_->enqueue(std::move(t));
-            continue;
-          }
-          transport_fn_(peer.region_id(), m.to, m.type, m.payload);
+void Store::dispatch_ready_after_persist(Peer& peer, raft::Ready& rd) {
+  if (transport_fn_) {
+    for (const auto& m : rd.messages) {
+      if (m.type == "InstallSnapshot" &&
+          ((rd.snapshot && rd.snapshot->to == m.to) || m.payload.empty() ||
+           m.payload.back() == '|')) {
+        if (batch_ && batch_->snap_overloaded()) {
+          SKV_WARN << "snap QoS reject region=" << peer.region_id();
+          continue;
         }
-      }
-      if (!rd.committed_entries.empty()) {
-        if (batch_ && batch_->apply_overloaded(peer.region_id())) {
-          SKV_WARN << "apply QoS reject region=" << peer.region_id();
-        } else {
-          ApplyMsg am;
-          am.region_id = peer.region_id();
-          am.entries = rd.committed_entries;
-          router_->send_apply(peer.region_id(), std::move(am));
+        SnapTask t;
+        t.region_id = peer.region_id();
+        if (rd.snapshot) t.meta = *rd.snapshot;
+        else {
+          t.meta.to = m.to;
         }
+        if (batch_) batch_->note_snap_enqueued();
+        if (snap_) snap_->enqueue(std::move(t));
+        continue;
       }
-      advance_fn(rd);
+      transport_fn_(peer.region_id(), m.to, m.type, m.payload);
     }
-  };
+  }
+  if (!rd.committed_entries.empty()) {
+    if (batch_ && batch_->apply_overloaded(peer.region_id())) {
+      SKV_WARN << "apply QoS reject region=" << peer.region_id();
+    } else {
+      ApplyMsg am;
+      am.region_id = peer.region_id();
+      am.entries = rd.committed_entries;
+      router_->send_apply(peer.region_id(), std::move(am));
+    }
+  }
+  if (auto* n = peer.raft_node()) n->advance(rd);
+}
 
+void Store::finish_persist_pipeline(Peer& peer) {
+  auto rd = peer.take_pending_ready();
+  peer.set_persist_inflight(false);
+  if (!rd) return;
+  dispatch_ready_after_persist(peer, *rd);
+}
+
+void Store::process_ready(Peer& peer, bool pipeline) {
   auto* n = peer.raft_node();
   if (!n || !n->has_ready()) return;
-  drive([&] { return n->take_ready(); }, [&](const raft::Ready& rd) { n->advance(rd); },
-        [&] { return n->has_ready(); });
+
+  if (pipeline && persist_pipeline_enabled()) {
+    if (peer.persist_inflight()) return;  // 等 kPersistDone
+    // 每次只提交一批 Ready 到 IO；完成后由 PersistDone 再发网/apply/advance。
+    raft::Ready rd = n->take_ready();
+    const uint32_t rid = peer.region_id();
+    if (!persist_fn_) {
+      dispatch_ready_after_persist(peer, rd);
+      // 无 persist 时继续抽干 Ready。
+      while (n->has_ready()) {
+        raft::Ready more = n->take_ready();
+        dispatch_ready_after_persist(peer, more);
+      }
+      return;
+    }
+    auto rd_io = std::make_shared<raft::Ready>(rd);
+    peer.set_pending_ready(std::move(rd));
+    peer.set_persist_inflight(true);
+    persist_->submit([this, rid, rd_io] {
+      if (persist_fn_) persist_fn_(rid, *rd_io);
+      router_->send_raft(rid, SignificantMsg{SignificantMsg::Type::kPersistDone, {}});
+    });
+    return;
+  }
+
+  // 同步路径：入站 RPC / persist_workers=0。
+  while (n->has_ready()) {
+    raft::Ready rd = n->take_ready();
+    if (persist_fn_) persist_fn_(peer.region_id(), rd);
+    dispatch_ready_after_persist(peer, rd);
+  }
 }
 
 void Store::on_apply_batch(uint32_t region_id, std::vector<ApplyControl> msgs) {

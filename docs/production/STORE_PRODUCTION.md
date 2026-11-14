@@ -38,7 +38,7 @@ Raft 运行时见 [MULTI_RAFT_PRODUCTION.md](MULTI_RAFT_PRODUCTION.md)；本文�
 | E1 | RocksDB sync/WAL 与 Raft `SyncMode` 对齐 | **已实现** |
 | E2 | Column Family（data/lock/write） | **已实现** |
 | E3 | Checkpoint / 增量快照 | **已实现**（Checkpoint；线式快照仍全量） |
-| E4 | Propose 幂等（request_id） | **已实现** |
+| E4 | Propose 幂等（request_id） | **已移除**（未接线；幂等由客户端/上层负责） |
 
 ### 2.3 安全与运维（P1/P2）
 
@@ -73,7 +73,7 @@ Raft 运行时见 [MULTI_RAFT_PRODUCTION.md](MULTI_RAFT_PRODUCTION.md)；本文�
 
 ### Store Phase S3
 
-- [x] E4 Propose 幂等：`Command.request_id` 尾部编码；Leader 缓存短路；apply 跳过重复  
+- [x] ~~E4 Propose 幂等~~：**已移除**（Gateway 从不下发；假幂等已删）  
 - [x] E1：`persist_sync` / `SKV_PERSIST_SYNC`  
   - **默认 `data`**：耐久靠 **Raft log sync**；RocksDB apply **异步**（崩溃用 `recover_apply` 重放）  
   - `all`：Raft + RocksDB `WriteOptions.sync` / `use_fsync`  
@@ -115,6 +115,7 @@ Epoch meta key：`\xff\xffskv/epoch`（每 Region 引擎内）。
 | 2026-10-21 | S2 核心：Apply 结果回传 + migrate WriteBatch |
 | 2026-10-21 | S2b：`seed_right_region` + Split 去 TCP 广播 |
 | 2026-10-21 | E4：`request_id` 幂等 propose |
+| 2026-11-14 | E4 移除：假幂等（Gateway 未下发）整段删除 |
 | 2026-10-21 | **S4 跨 Region 2PC 暂缓**，记入 backlog |
 | 2026-10-21 | E1：RocksDB sync 与 Raft SyncMode 对齐 |
 | 2026-10-21 | E2：Column Family lock/data/write |

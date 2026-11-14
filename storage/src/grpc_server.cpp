@@ -67,7 +67,6 @@ Command command_from_propose_req(const pb::ProposeRequest& req) {
   cmd.key = req.key();
   cmd.value = req.value();
   cmd.ttl_ms = stamp_expire_at_ms(req.ttl_ms());
-  cmd.request_id = req.request_id();
   cmd.cas = req.cas();
   cmd.expected_revision = req.expected_revision();
   return cmd;
