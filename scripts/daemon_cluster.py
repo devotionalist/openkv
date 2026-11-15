@@ -15,7 +15,7 @@ RUN = ROOT / ".run"
 
 def stop_old() -> None:
     names = [
-        "gateway",
+        "gateway", "gateway-1",
         "storage-0", "storage-1", "storage-2", "storage-3", "storage-4", "storage-5",
         "meta-0", "meta-1", "meta-2", "meta", "supervisor",
     ]
@@ -139,23 +139,38 @@ def main() -> int:
     gw = RUN / "gateway_node"
     if not gw.exists():
         gw = RUN / "compute-gateway"
+    stores = (
+        "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
+        "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105"
+    )
+    metas = "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502"
+    # 双 Gateway：19000 / 19002（19001 留给 gateway 默认 stats HTTP，勿占用）
     procs.append(
         start(
             "gateway",
-            [
-                str(gw),
-                "-listen",
-                "0.0.0.0:19000",
-                "-storages",
-                "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
-                "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105",
-                "-metas",
-                "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502",
-            ],
+            [str(gw), "-listen", "0.0.0.0:19000", "-storages", stores, "-metas", metas],
             "gateway.log",
         )
     )
+    procs.append(
+        start(
+            "gateway-1",
+            [
+                str(gw),
+                "-listen",
+                "0.0.0.0:19002",
+                "-stats-listen",
+                "127.0.0.1:19102",
+                "-storages",
+                stores,
+                "-metas",
+                metas,
+            ],
+            "gateway-1.log",
+        )
+    )
     wait_port(19000, hint_log="gateway.log")
+    wait_port(19002, hint_log="gateway-1.log")
     (RUN / "supervisor.pid").write_text(str(os.getpid()))
 
     while True:

@@ -2312,6 +2312,11 @@ void StorageNode::start() {
     auto node = std::make_shared<raft::RaftNode>(std::move(opts), nullptr, nullptr,
                                                  std::move(snap_provider),
                                                  std::move(snap_applier));
+    // 回包线程改 Ready 时立刻 mark_hot，别干等 tick。
+    const uint32_t rid = shard_id;
+    node->set_ready_notify([this, rid] {
+      if (multi_raft_) multi_raft_->store().mark_hot(rid);
+    });
     transport_.register_node(shard_id, cfg_.node_id, node);
     return node;
   },

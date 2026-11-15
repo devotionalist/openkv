@@ -13,6 +13,7 @@
 | CMake | `OPENKV_USE_GRPC` 固定 `ON`（无需也不应再 OFF） |
 | 线程 | Callback/CQ 接收线程 + Gateway `WorkPool`（仅 Watch）+ BatchSystem / Transport worker；Meta/Storage 无 WorkPool（见 [22](./flows/22-async-threading-model.md)） |
 | 关机 | SIGTERM：拒新 RPC + 排空在途（见 [31-graceful-shutdown](./flows/31-graceful-shutdown.md)；`SKV_GRPC_SHUTDOWN_MS`） |
+| Keepalive | 全仓统一 **10s ping / 3s 超时**（`grpc_keepalive.hpp`）；切勿 1s——入站 AE 同步 persist 会被误杀导致写路径 `apply_timeout` |
 
 ```
 Client / skv / Web
@@ -60,8 +61,27 @@ MetaService  StoreService + RaftService + AdminService
 | **Go SDK** | 独立仓 `openkv-client-go`（`kv`/`ds`） | 客户端 → Gateway |
 | **Meta** | `meta/src/grpc_server.cpp` | 主端口（如 `:8500`）`MetaService` |
 | **Storage** | `storage/src/grpc_server.cpp` | 主端口（如 `:9100`）三服务同端口 |
-| **Raft 出站** | `raft/src/grpc_transport.cpp` | Storage↔Storage：`AppendEntries` / Vote / Snapshot |
+| **Raft 出站** | `raft/src/grpc_transport.cpp` | Storage↔Storage：`AppendEntries` / Vote / Snapshot（`grpc_insecure_channel`） |
 | **运维** | `tools/skv`、`web/`、`client/go/cmd/line-rpc` | 经 gRPC 访问 Meta/Storage |
+
+### 2.2.1 半开连接探活（keepalive）
+
+对端进程被杀后，TCP 半开连接若无探活，会卡到 RPC deadline（Gateway→Store 可达 15s，Raft 快照可达 60s）。统一约定：
+
+| 侧 | API | 行为 |
+|----|-----|------|
+| 出站 | `grpc_client_channel_args` / `grpc_insecure_channel` | **10s** ping；**3s** 无响应判死；重连退避 100ms–1s |
+| 入站 | `apply_server_keepalive(ServerBuilder*)` | 允许无调用 ping；收 ping 最小间隔 5s；**不**对客户端狂 ping |
+| 接入点 | Compute 缓存 channel、Raft transport、Admin/Meta 类型化 RPC、skv→Gateway、三端 ServerBuilder | 同一头文件，禁止各写一套 |
+
+Go SDK（`openkv-client-go/kv`）Dial 同等 Client keepalive；多 Gateway 默认 `19000,19002`（`19001` 留给 stats HTTP）。
+
+**写慢排查：**
+1. put 固定 ~5s + `apply_timeout` → keepalive 是否 1s 误杀慢盘 AE；GW2 是否占了 stats `19001`
+2. put/rawput p50 数百 ms（读仍 ~1ms）→ `persist_ready` 是否在 `none` 下仍被 `must_sync` 强行 fsync（macOS `F_FULLFSYNC`）
+3. AE 回包后是否 `ready_notify`→`mark_hot`（否则干等 50ms tick）
+
+**演练注入（默认关）：** `SKV_FAULT_DROP_AE_PCT` / `DELAY_AE_MS` / `DROP_RAFT_PCT` / `DELAY_RAFT_MS` → `GrpcRaftTransport` 出站抖动；见 [FAULT_DRILL 网络抖动分类](ops/FAULT_DRILL.md#网络抖动分类节点间)。
 
 ### 2.3 Storage 三个服务（同端口）
 

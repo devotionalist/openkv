@@ -234,7 +234,8 @@ stateDiagram-v2
 | `compact_threshold` | 日志条数阈值 | 触发快照压缩 |
 | `enable_pre_vote` | PreVote | 防打断任期 |
 | `check_quorum` | 多数派存活检查 | Leader 让位 |
-| `coalesce_replication` | propose 后攒 AE | 降发送频率；RF=1 仍立即发 |
+| `coalesce_replication` | 嵌入路径 propose 后攒 AE | 降发送频率；RF=1 仍立即发；**external_io 忽略**（出站走 Ready，propose 当拍入队） |
+| `ready_notify` | AE/选票回包后唤醒 Store | 否则 commit 进 Ready 只能等 tick → 写 ACK 百 ms 级 |
 | `max_ae_entries` / `max_ae_bytes` | AE 批大小 | 复制批处理 |
 | `leader_lease_ms` / `enable_lease_read` | Leader lease | 线性读捷径 |
 | `persist_sync` / `persist_batch_n` | 同步级别/批写 | 嵌入路径耐久 vs 吞吐 |

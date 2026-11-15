@@ -138,20 +138,35 @@ flowchart LR
 
 ## 5. 故障域对照（验收用）
 
-与 [FAULT_DRILL.md](../ops/FAULT_DRILL.md) 场景 ID 对齐：
+### 5.1 按组件：能杀几个还可用（默认 RF=3 / Meta×3 / GW×1）
+
+| 组件 | 最多同时挂 | 仍可用？ | 再挂一台 |
+|------|------------|----------|----------|
+| Store（同 Region） | **1** | 数据面读写（Leader 挂则短暂选主） | **2** → Region 不可写 |
+| Meta | **1** | 管控 + 数据面 | **2** → 管控不可用 |
+| Gateway（×2） | **1** | 客户端换另一台 → 数据面 100% | **2** → 入口全断（盘上数据不丢） |
+| Store 滚动 | 每次 **1** | 可滚完全部，全程数据面 100% | 同刻 2 台 = 丢多数派 |
+
+跨组件：`1 Store + 1 Meta` 同时挂仍双面可用。细则与场景 ID 见 [FAULT_DRILL.md §按组件](../ops/FAULT_DRILL.md)。
+
+### 5.2 场景 ID 对照
+
+与 [FAULT_DRILL.md](../ops/FAULT_DRILL.md) 对齐：
 
 | 故障 | 期望 | 演练 ID |
 |------|------|---------|
-| 杀 1 Follower Store | 成功率下降后恢复；有追赶日志 | F1 |
+| 杀 1 Follower Store | **数据面 100%**（Leader 仍服务）；有追赶日志 | F1 |
 | 杀 Region Leader Store | 短暂选主；新 `*L`；数据完整 | F2 |
 | 杀同 Region 2 副本 | **不可用**（预期）→ 恢复多数派后 ≥90% | F3 |
-| 杀 1 Meta | 数据面 ≥90%；路由仍可达 | F5 |
+| 滚动重启 Store（每次 1 台） | **数据面 100%**（始终保多数派） | F4 |
+| 杀 1 Meta | **数据面 100%**；路由仍可达 | F5 |
 | 杀 Meta Leader | 选主后 TSO/路由恢复 | F6 |
 | 杀 2 Meta | 管控不可用 | F7 |
-| AE 丢包/延迟 | 非永久 0 → 愈合 | F10 |
+| AE 丢包/延迟（网络抖动） | 非永久 0 → 愈合 | F10 · `make it-net-jitter` |
+| Meta Raft 出站抖动 | 数据面仍可用 | F17 |
 | Store 分区 | 多数派侧仍服务 | F11 |
 
-发版子集：`make fault-drill`（F1/F2/F4/F5/F8/F10）。分区近似：`make it-partition`。
+发版子集：`make fault-drill`（F1/F2/F4/F5/F8/F10）。网络抖动：`make it-net-jitter`。分区近似：`make it-partition`。
 
 ---
 
@@ -163,7 +178,7 @@ flowchart LR
 | Multi-Raft / Apply | `storage/` · `MultiRaft` · raftstore Ready 路径 |
 | 持久化 / 快照 | `RaftPersist` · `KvEngine::{create,apply}_snapshot` · SnapWorker |
 | Meta | `meta/` · `MetaNode` · `MetaFsm` · `ClusterState` · RegionScheduler |
-| 入口重试 | `client/go` Gateway · `not_leader` / `rememberLeader` |
+| 入口重试 | C++ Gateway `with_store_async`：`store_skip_err` 换副本 + `not_leader` redirect（先 clear 再 remember） |
 
 ---
 
@@ -183,10 +198,10 @@ flowchart LR
 
 | ID | 命令 / 动作 | 期望 |
 |----|-------------|------|
-| HA-1 | `make fault-drill` | 默认子集 PASS；全程 `kv-chaos` `overall_success` 达脚本阈值 |
-| HA-2 | 杀 Region Leader Store 再启 | 新 `*L`；Put/Get 恢复；日志可有 `recovered term=` / snapshot |
-| HA-3 | 杀 1 Meta | `skv route` / 数据面 Put 仍可用 |
-| HA-4 | `make it-partition` 或手册 F3 | 丢 2 副本时写失败；恢复多数派后成功 |
+| HA-1 | `make fault-drill` | 默认子集 PASS；`write_success` / `read_success` 分别达脚本阈值（`overall` 仅汇总） |
+| HA-2 | 杀 Region Leader Store 再启 | 新 `*L`；写/读恢复；日志可有 `recovered term=` / snapshot |
+| HA-3 | 杀 1 Meta | `skv route` / 数据面写=读仍可用 |
+| HA-4 | `make it-partition` 或手册 F3 | 丢 2 副本时 **write≈0**；恢复多数派后写/读成功 |
 | HA-5 | 单测 | `RaftNodeTest` / `RaftPersistTest` / `MetaHaTest` 绿 |
 
 最近登记见 [TEST_CASES.md](../test/TEST_CASES.md)「故障演练」行与执行记录。

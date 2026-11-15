@@ -13,16 +13,22 @@
 // limitations under the License.
 
 // @file main.cpp
-// skv — OpenKV C++ 运维 CLI（生命周期 + Meta/Storage TCP + KV）；CLI11 解析。
+// skv — OpenKV C++ 运维 CLI（生命周期 + Meta/Admin 类型化 RPC + Gateway KV）；CLI11 解析。
 #include "cluster.hpp"
 #include "tcp_line.hpp"
 
 #include <CLI/CLI.hpp>
 
+#include "kv/v1/kv.grpc.pb.h"
+#include "openkv/grpc_keepalive.hpp"
+
+#include <grpcpp/grpcpp.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -206,18 +212,38 @@ uint32_t locate_region(const std::string& key) {
   return 0;
 }
 
+std::string gateway_addr() {
+  if (const char* e = std::getenv("SKV_GATEWAY")) {
+    if (*e) return e;
+  }
+  return "127.0.0.1:19000";
+}
+
+std::unique_ptr<kv::v1::KVService::Stub> gateway_stub() {
+  auto ch = openkv::grpc_insecure_channel(gateway_addr());
+  return kv::v1::KVService::NewStub(std::move(ch));
+}
+
+// 数据面 KV 必须走 Gateway（gRPC 强制后 Storage 不再接行协议 PUT/GET）。
 int cmd_put(const std::vector<std::string>& args) {
   if (args.size() < 2) {
     std::cerr << "usage: skv put <key> <value>\n";
     return 2;
   }
-  uint32_t region = locate_region(args[0]);
-  std::ostringstream req;
-  req << "PUT " << region << ' ' << skv::to_hex(args[0]) << ' ' << skv::to_hex(args[1]);
-  // 迁副本后首轮 propose 常 >1s；过短会 truncation/假 not_leader。流量脚本另用外层 timeout 卡死保护。
-  auto resp = storage_call(req.str(), region_addrs(region), 8000, 8);
-  std::cout << resp << "  (region=" << region << ")\n";
-  return resp.rfind("OK", 0) == 0 ? 0 : 1;
+  auto stub = gateway_stub();
+  kv::v1::PutRequest req;
+  req.set_key(args[0]);
+  req.set_value(args[1]);
+  kv::v1::PutResponse resp;
+  grpc::ClientContext ctx;
+  ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(8));
+  auto st = stub->Put(&ctx, req, &resp);
+  if (!st.ok()) {
+    std::cerr << "put failed: " << st.error_message() << " (gw=" << gateway_addr() << ")\n";
+    return 1;
+  }
+  std::cout << "OK PUT rev=" << resp.revision() << "  (gw=" << gateway_addr() << ")\n";
+  return 0;
 }
 
 int cmd_get(const std::vector<std::string>& args) {
@@ -225,25 +251,23 @@ int cmd_get(const std::vector<std::string>& args) {
     std::cerr << "usage: skv get <key>\n";
     return 2;
   }
-  uint32_t region = locate_region(args[0]);
-  std::ostringstream req;
-  req << "GET " << region << ' ' << skv::to_hex(args[0]);
-  auto resp = storage_call(req.str(), region_addrs(region), 8000, 8);
-  auto parts = skv::split_ws(resp);
-  if (parts.size() >= 4 && parts[0] == "OK" && parts[3] != "-") {
-    std::string val;
-    if (skv::from_hex(parts[3], &val)) {
-      std::cout << "found=true rev=" << parts[2] << " value=" << val << " region=" << region
-                << "\n";
-      return 0;
-    }
+  auto stub = gateway_stub();
+  kv::v1::GetRequest req;
+  req.set_key(args[0]);
+  kv::v1::GetResponse resp;
+  grpc::ClientContext ctx;
+  ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(8));
+  auto st = stub->Get(&ctx, req, &resp);
+  if (!st.ok()) {
+    std::cerr << "get failed: " << st.error_message() << " (gw=" << gateway_addr() << ")\n";
+    return 1;
   }
-  if (parts.size() >= 3 && parts[0] == "OK") {
-    std::cout << "found=false region=" << region << "\n";
-    return 0;
+  if (resp.found()) {
+    std::cout << "found=true rev=" << resp.revision() << " value=" << resp.value() << "\n";
+  } else {
+    std::cout << "found=false\n";
   }
-  std::cout << resp << "\n";
-  return 1;
+  return 0;
 }
 
 int cmd_del(const std::vector<std::string>& args) {
@@ -251,12 +275,20 @@ int cmd_del(const std::vector<std::string>& args) {
     std::cerr << "usage: skv del <key>\n";
     return 2;
   }
-  uint32_t region = locate_region(args[0]);
-  std::ostringstream req;
-  req << "DEL " << region << ' ' << skv::to_hex(args[0]);
-  auto resp = storage_call(req.str(), region_addrs(region));
-  std::cout << resp << "  (region=" << region << ")\n";
-  return resp.rfind("OK", 0) == 0 ? 0 : 1;
+  auto stub = gateway_stub();
+  kv::v1::DeleteRequest req;
+  req.set_key(args[0]);
+  kv::v1::DeleteResponse resp;
+  grpc::ClientContext ctx;
+  ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(8));
+  auto st = stub->Delete(&ctx, req, &resp);
+  if (!st.ok()) {
+    std::cerr << "del failed: " << st.error_message() << " (gw=" << gateway_addr() << ")\n";
+    return 1;
+  }
+  std::cout << "OK DEL deleted=" << (resp.deleted() ? "true" : "false")
+            << " rev=" << resp.revision() << "  (gw=" << gateway_addr() << ")\n";
+  return 0;
 }
 
 int cmd_locate(const std::vector<std::string>& args) {

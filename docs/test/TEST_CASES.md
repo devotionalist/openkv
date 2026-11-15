@@ -23,7 +23,8 @@
 | Web 全链路 | I50–I54 + `/api/ds` | `make it-web` / `bash scripts/it-web.sh` |
 | Region scatter | I30–I36 硬断言 | `make it-region` |
 | Txn 硬门禁 | I20–I22 | `make it-txn` |
-| 磁盘 / 分区 | F14、F3/F11 近似 | `make integ-extra` |
+| 磁盘 / 分区 | F14、F3/F11 近似 | `make it-disk-fault` · `make it-partition` |
+| 网络抖动 | F10 NJ1–NJ3、F17 NJ4；分类见 [FAULT_DRILL](../ops/FAULT_DRILL.md)「网络抖动分类」 | `make it-net-jitter` |
 | 故障演练 | F1/F2/F4/F5/F8/F10 子集；设计见 [DATA_HA.md](../architecture/DATA_HA.md) | `make fault-drill` |
 | 发版门禁 | unit + e2e + it-web/region/txn + fault-drill | `make release-gate` |
 | Sanitizer | ASan/UBSan | `make memcheck` |
@@ -59,9 +60,10 @@
 | `it-web.sh` | I50–I54 | **PASS** | overview/KV/split/DS/启停 |
 | `it-region.sh` | I30–I36 | **PASS** | scatter→3/4/5 双侧可读；align 后 merge |
 | `it-txn.sh` | I20–I22 | **PASS** | txn_gate |
-| `it-partition.sh` | F3/F11 | **PASS** | STOP 1 可写；STOP 2/杀 2 降级后恢复 |
+| `it-partition.sh` | F3/F11 | **PASS** | STOP 1 写/读仍可用；STOP 2/杀 2 **写降级**后恢复 |
+| `it-net-jitter.sh` | F10/F17 | **PASS** | NJ1–NJ4：写/读分开门槛；失败清注入 |
 | `it-disk-fault.sh` | F14 | 周跑 | 只读目录；需稳态基线（见 IT_COVERAGE_EXPANSION） |
-| `make fault-drill` | F1/F2/… | SKIP | 含 F2 |
+| `make fault-drill` | F1/F2/… | **PASS** 2026-11-15（25/0；写/读分开验收） | `write_success`/`read_success` 分卡 |
 | `make release-gate` | 门禁 | SKIP | |
 | 手工：KV Put/Get | — | **PASS** | 清盘后 `kv-example` |
 | 手工：Split/Merge 数据 | I30/I33 | **FAIL→已修** | 空 range 快照清空兄弟区间；已禁 |
@@ -98,6 +100,7 @@
 | RegionTest.{ContainsAndInf,LocateSorted,CanSplitAt} | `common/region_test.cpp` |
 | MetaRpcTest.FormatRoutingTableLineIncludesNrepComma | `common/meta_rpc_test.cpp` |
 | GrpcShutdownTest.{GraceMsDefaultWhenUnset,GraceMsFromEnv,GraceMsRejectsGarbage,NullServerNoop} | `common/grpc_shutdown_test.cpp` |
+| GrpcKeepaliveTest.{ClientArgsDefaults,InsecureChannelConstructible,ApplyServerKeepaliveNullSafe} | `common/grpc_keepalive_test.cpp` |
 
 </details>
 
@@ -107,7 +110,8 @@
 | Suite | Cases | 文件 |
 |-------|-------|------|
 | RaftLogTest | AppendAndQuery, AppendEntriesConflictTruncate, AppendEntriesRejectBadPrev, CompactTo, EntriesFromLimit | `raft_log_test.cpp` |
-| RaftNodeTest | SingleNodeElectionAndPropose, ProposeRejectedWhenFollower, ConfChangeAddLearner, PreVoteDoesNotBumpTerm, CheckQuorumStepsDownIsolatedLeader, VoteAndAppendBetweenPeers | `raft_node_test.cpp` |
+| RaftNodeTest | SingleNodeElectionAndPropose, ProposeRejectedWhenFollower, ConfChangeAddLearner, PreVoteDoesNotBumpTerm, CheckQuorumStepsDownIsolatedLeader, VoteAndAppendBetweenPeers, ExternalIoAeReplyNotifiesReady, PersistReadyNoneIgnoresMustSync | `raft_node_test.cpp` |
+| RaftFaultInjectTest | DefaultDisabled, DropAeOnly, DropRaftCoversAll, DelayTakesMaxOfAeAndRaft, FromEnvReadsAndClamps | `raft_fault_inject_test.cpp` |
 | RaftJointTest | PromoteUsesEnterThenLeaveJoint, RejectConfWhileJointPending, ProposeAppliesSync | `raft_joint_test.cpp` |
 | RaftPersistTest | SaveAndRecoverApplied, InstallSnapshotCompactsAndApplies | `raft_persist_test.cpp` |
 | RaftEngineTest | FileLogBatchRoundTrip, EntryCrcRoundTrip, FilePureAppend, FileConflictRewrite, CutAndGc | `raft_engine_test.cpp` |
@@ -154,12 +158,13 @@
 |-------|-------|----------|
 | RouterTest | BootstrapSingle, UpdateIgnoresStaleVersion, RangeLocateAfterSplit, ReplicaAddrsAndFallback（含 epoch/leader 优先）, MissingShard | **PASS** 2026-11-12 |
 | DsEncodeTest | MetaKeyPrefix, HashRoundTrip, WrongType, SetListZSet | **PASS** 2026-11-12 |
+| StoreSkipErrTest | MatchesDialFailures, RejectsBusinessErrors（Leader 被杀后 Gateway 换副本依据） | `store_skip_err_test.cpp` |
 | GrpcUtilTest / TsoTest / ActiveTsTest / TsRangeQueueTest | ParseRedirect, DefaultBatchAndWatermark, MinAndExpire；队列见 `ts_range_queue_test.cpp` | `meta_client_test.cpp` |
 | ~~KvProxyTest~~ | 已随遗留 `KvProxy`/`ComputeNode` 删除 | — |
 
 ```bash
 # 验收 C1（出站库）：docs/flows/18-cpp-gateway.md
-ctest --test-dir build -R 'DsEncodeTest|MetaClientTest|TsoTest|ActiveTsTest|GrpcUtilTest|ParseRedirect|RouterTest' --output-on-failure
+ctest --test-dir build -R 'DsEncodeTest|MetaClientTest|TsoTest|ActiveTsTest|GrpcUtilTest|ParseRedirect|RouterTest|StoreSkipErrTest' --output-on-failure
 
 # 验收 G1（gateway_node）：docs/flows/18-cpp-gateway.md
 cmake --build build -j8 --target gateway_node
@@ -204,8 +209,9 @@ ctest --test-dir build -R KvEngineTest --output-on-failure
 | `scripts/it-region.sh` | I30–I36 | Split→place scatter→双侧读→merge | 有（`make it-region`） |
 | `scripts/it-txn.sh` / `examples/txn_gate` | I20–I22 | 提交可见/冲突/Rollback | 有（`make it-txn`） |
 | `scripts/it-disk-fault.sh` | F14 (+轻 F15) | 数据目录只读 + 追赶 | 有（`make it-disk-fault`） |
-| `scripts/it-partition.sh` | F3 / F11 近似 | STOP/杀 2 副本须降级 | 有（`make it-partition`） |
-| `scripts/fault-drill.sh` | F1,F2,F4,F5,F8,F10 | 杀 Store/Meta/GW、**F2 Leader**、滚动、AE | 有（`make fault-drill`） |
+| `scripts/it-partition.sh` | F3 / F11 近似 | STOP/杀 2 副本须 **写**降级；读写分开量 | 有（`make it-partition`） |
+| `scripts/it-net-jitter.sh` | F10 NJ1–NJ3 · F17 NJ4 | 写/读分开门槛；Leader AE / Meta Raft 抖动 | 有（`make it-net-jitter`） |
+| `scripts/fault-drill.sh` | F1,F2,F4,F5,F8,F10 | 杀 Store/Meta/GW、**F2**；稳态用 `write_success`/`read_success` | 有（`make fault-drill`） |
 | `scripts/release-gate.sh` | 门禁串联 | ctest + e2e + it-web/region/txn + fault-drill | 有（`make release-gate`） |
 
 故障全表 F1–F16 的手册步骤与结果模板：[FAULT_DRILL.md](../ops/FAULT_DRILL.md)。

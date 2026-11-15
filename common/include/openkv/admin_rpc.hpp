@@ -18,6 +18,7 @@
 
 #include "openkv/codec.hpp"
 #include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_keepalive.hpp"
 #include "openkv/protocol.hpp"
 
 #include <chrono>
@@ -68,7 +69,7 @@ inline std::string admin_typed_call(std::string_view addr, std::string_view req,
   if (parts.empty()) throw std::runtime_error("admin empty");
   const std::string& op = parts[0];
 
-  auto ch = grpc::CreateChannel(std::string(addr), grpc::InsecureChannelCredentials());
+  auto ch = openkv::grpc_insecure_channel(std::string(addr));
   auto stub = ::storage::v1::AdminService::NewStub(ch);
   grpc::ClientContext ctx;
   ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
@@ -324,7 +325,7 @@ inline void admin_ping_async(std::string addr, std::string_view token, int timeo
     ::storage::v1::PingResponse resp;
   };
   auto call = std::make_shared<Call>();
-  call->ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+  call->ch = openkv::grpc_insecure_channel(addr);
   call->stub = ::storage::v1::AdminService::NewStub(call->ch);
   call->ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
   grpc_attach_admin_token(&call->ctx, std::string(token));
@@ -356,7 +357,7 @@ inline void admin_peer_progress_async(std::string addr, uint32_t region_id, std:
     ::storage::v1::PeerProgressResponse resp;
   };
   auto call = std::make_shared<Call>();
-  call->ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+  call->ch = openkv::grpc_insecure_channel(addr);
   call->stub = ::storage::v1::AdminService::NewStub(call->ch);
   call->ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));
   grpc_attach_admin_token(&call->ctx, std::string(token));

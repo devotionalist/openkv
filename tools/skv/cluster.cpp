@@ -160,6 +160,7 @@ const std::vector<Component>& default_components() {
       {"storage-4", "127.0.0.1:9104", "conf/storage-4.conf"},
       {"storage-5", "127.0.0.1:9105", "conf/storage-5.conf"},
       {"gateway", "127.0.0.1:19000", ""},
+      {"gateway-1", "127.0.0.1:19002", ""},
   };
   return k;
 }
@@ -236,11 +237,18 @@ int cmd_start(const std::string& root, bool fresh) {
   const char* stores =
       "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
       "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105";
+  const char* metas = "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502";
   spawn_logged(root, "gateway",
-               {gw.string(), "-listen", "0.0.0.0:19000", "-storages", stores, "-metas",
-                "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502"});
+               {gw.string(), "-listen", "0.0.0.0:19000", "-storages", stores, "-metas", metas});
+  spawn_logged(root, "gateway-1",
+               {gw.string(), "-listen", "0.0.0.0:19002", "-stats-listen", "127.0.0.1:19102",
+                "-storages", stores, "-metas", metas});
   if (!wait_port("127.0.0.1:19000", 25)) {
     std::cerr << "gateway not ready\n";
+    return 1;
+  }
+  if (!wait_port("127.0.0.1:19002", 25)) {
+    std::cerr << "gateway-1 not ready\n";
     return 1;
   }
   std::cout << "cluster started\n";
@@ -249,7 +257,7 @@ int cmd_start(const std::string& root, bool fresh) {
 
 int cmd_stop(const std::string& root) {
   // reverse order
-  const char* order[] = {"gateway",    "storage-0", "storage-1", "storage-2",
+  const char* order[] = {"gateway-1",  "gateway",   "storage-0", "storage-1", "storage-2",
                          "storage-3",  "storage-4", "storage-5", "meta-0",
                          "meta-1",     "meta-2",    "supervisor"};
   for (auto* n : order) stop_pid(root, n, false);
@@ -280,15 +288,24 @@ int cmd_restart(const std::string& root, const std::string& name) {
   } else if (name.rfind("storage-", 0) == 0) {
     auto stor = bin / "storage" / "storage_node";
     spawn_logged(root, name, {stor.string(), (fs::path(root) / c->conf).string()});
-  } else if (name == "gateway") {
+  } else if (name == "gateway" || name == "gateway-1") {
     auto gw = run_dir(root) / "gateway_node";
     if (!fs::exists(gw)) gw = bin / "compute" / "gateway_node";
     if (!fs::exists(gw)) gw = run_dir(root) / "compute-gateway";
-    spawn_logged(root, "gateway",
-                 {gw.string(), "-listen", "0.0.0.0:19000", "-storages",
-                  "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
-                  "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105",
-                  "-metas", "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502"});
+    if (name == "gateway-1") {
+      spawn_logged(root, name,
+                   {gw.string(), "-listen", "0.0.0.0:19002", "-stats-listen", "127.0.0.1:19102",
+                    "-storages",
+                    "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
+                    "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105",
+                    "-metas", "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502"});
+    } else {
+      spawn_logged(root, name,
+                   {gw.string(), "-listen", "0.0.0.0:19000", "-storages",
+                    "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
+                    "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105",
+                    "-metas", "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502"});
+    }
   }
   if (!wait_port(c->addr, 30)) {
     std::cerr << "restart failed: " << c->addr << " not up\n";

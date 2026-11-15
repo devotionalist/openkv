@@ -17,6 +17,7 @@
 
 #include "openkv/compute/gateway_server.hpp"
 #include "openkv/compute/store_rpc.hpp"
+#include "openkv/grpc_keepalive.hpp"
 #include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/net/tcp_line_client.hpp"
@@ -156,6 +157,7 @@ int main(int argc, char** argv) {
   gateway.start_background();
 
   grpc::ServerBuilder builder;
+  openkv::apply_server_keepalive(&builder);
   builder.AddListeningPort(listen, grpc::InsecureServerCredentials());
   builder.RegisterService(static_cast<kv::v1::KVService::CallbackService*>(&gateway));
   builder.RegisterService(static_cast<kv::v1::DSService::CallbackService*>(&gateway));

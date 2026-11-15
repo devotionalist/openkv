@@ -38,6 +38,12 @@ cd ../openkv-client-go
 
 Raw* 约定见 [27-raw-vs-txn.md](27-raw-vs-txn.md)。
 
+## 多 Gateway
+
+`kv.Dial` 地址支持逗号分隔，例如 `127.0.0.1:19000,127.0.0.1:19002`（`19001` 留给 Gateway stats HTTP）。  
+当前连接传输失败（`Unavailable` / connection refused 等）时，SDK 换下一台再试。  
+演练：`FAULT_DRILL` F8（杀 1 台 Gateway，多地址仍 100%）。
+
 ## 验收
 
 ```bash

@@ -13,7 +13,7 @@ make e2e                   # Stage 1–2 子集
 make it-web it-region it-txn
 make integ-workload        # 集成：后台多用户 R/W + e2e/txn + 杀 Store
 make fault-drill           # Stage 5；含 F2 Leader；全程 bg kv-chaos
-make integ-extra           # 周跑：F14 磁盘只读 + F3/F11 分区近似
+make integ-extra           # 周跑：F14 磁盘 + F3/F11 分区 + F10/F17 网络抖动
 ```
 
 持续负载参数（可选）：`CHAOS_QPS=40 CHAOS_WORKERS=4 CHAOS_WRITE_RATIO=0.5`。
@@ -23,7 +23,7 @@ make integ-extra           # 周跑：F14 磁盘只读 + F3/F11 分区近似
 | 入口 | 行为 |
 |------|------|
 | `make integ-workload` | 启集群 → 功能用例 → **后台多 worker Put/Get** → 杀 1 Store → 验收成功率 |
-| `make fault-drill` | 演练全程挂 `-duration 0` 的 `kv-chaos` 后台负载，结束输出 `overall_success` |
+| `make fault-drill` | 演练全程挂 `-duration 0` 的 `kv-chaos`；结束看 `write_success` / `read_success`（`overall` 仅汇总） |
 | `make release-gate` | `ctest` + `run-e2e` + `fault-drill` |
 
 负载工具：`client/go/examples/chaos` → `.run/kv-chaos`  
@@ -148,7 +148,8 @@ scripts/release-gate.sh
   ├── scripts/it-txn.sh               # I20–I22
   └── scripts/fault-drill.sh          # F1/F2/F4/F5/F8/F10
 
-make integ-extra → it-disk-fault + it-partition   # F14 / F3 / F11-approx
+make integ-extra → it-disk-fault + it-partition + it-net-jitter
+  # F14 / F3 / F11-approx / F10 NJ1–NJ3 / F17 NJ4
 ```
 
 设计说明：[flows/IT_COVERAGE_EXPANSION.md](../flows/IT_COVERAGE_EXPANSION.md)
@@ -158,7 +159,7 @@ make integ-extra → it-disk-fault + it-partition   # F14 / F3 / F11-approx
 make release-gate
 
 # 夜间 / 周
-make integ-extra         # 磁盘 + 分区近似
+make integ-extra         # 磁盘 + 分区近似 + 网络抖动
 make fault-drill-extra   # fault-drill + integ-extra
 make memcheck
 ```
@@ -175,7 +176,7 @@ make memcheck
 | 统一 `release-gate` | **已落地**（unit+e2e+web+region+txn+drill） |
 | `it-region.sh`（scatter 读写硬断言） | **有** |
 | `it-web.sh` | **有** |
-| `it-txn.sh` / `it-disk-fault` / `it-partition` | **有**（后二者周跑） |
+| `it-txn.sh` / `it-disk-fault` / `it-partition` / `it-net-jitter` | **有**（后三者周跑） |
 | 默认 6 Store 集成拓扑 | start-cluster / skv 默认 6 Store |
 
 ---
@@ -191,4 +192,4 @@ make memcheck
 | Region | I30–I36 | split/place/merge + **scatter 后可读** |
 | HA | I40–I44 | 杀单副本/Meta/GW 可恢复 |
 | Web | I50–I54 | API + 拓扑/策略 UI |
-| 故障全表 | F1–F16 | 见 FAULT_DRILL |
+| 故障全表 | F1–F17 | 见 FAULT_DRILL（网络抖动 NJ1–NJ4） |

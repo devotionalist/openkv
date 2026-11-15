@@ -13,10 +13,11 @@
 | `scripts/it-txn.sh` | I20–I22 | Begin/Commit 可见、冲突、Rollback（失败即非 0） |
 | `scripts/it-disk-fault.sh` | F14（+轻量 F15） | 数据目录只读多数派仍服务；修权限后追赶 |
 | `scripts/it-partition.sh` | F3 / F11 近似 | 杀 2/3 副本须不可写；`kill -STOP` 冻结近似分区 |
+| `scripts/it-net-jitter.sh` | F10 NJ1–NJ3 · F17 NJ4 | Leader AE / Meta Raft 出站延迟与丢包；写/读分开门槛 |
 | `scripts/fault-drill.sh` | +F2 | 解析 Region Leader → 杀掉 → 新 `*L` + seed Get |
 
 `make release-gate` 串联：unit → e2e → **it-web → it-region → it-txn** → fault-drill（含 F2）。  
-磁盘/分区脚本默认进 `make integ-extra` / `make fault-drill-extra`（破坏性更强，周跑）。
+磁盘/分区/网络抖动脚本默认进 `make integ-extra` / `make fault-drill-extra`（破坏性更强，周跑）。
 
 ## 边界与失败
 
@@ -37,6 +38,7 @@ bash scripts/it-region.sh       # ALL PASS: it-region
 bash scripts/it-txn.sh          # ALL PASS: it-txn
 bash scripts/it-disk-fault.sh   # ALL PASS: it-disk-fault
 bash scripts/it-partition.sh    # ALL PASS: it-partition
+bash scripts/it-net-jitter.sh   # ALL PASS: it-net-jitter（NJ1–NJ4）
 make fault-drill                # 含 F2；FAULT DRILL PASSED
 ```
 

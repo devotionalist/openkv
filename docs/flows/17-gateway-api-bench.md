@@ -54,22 +54,26 @@ kubectl -n openkv exec okv-bench -- /kv-bench \
 | B2 | `-mode all` 跑完打印 `SUMMARY` 表；进程 exit 0 |
 | B3 | 读路径（get / get_stale）fail=0；写路径允许 fail（`apply_timeout` / `locked`）但 ok>0 |
 
-## 基线结果（2026-11-12）
+## 基线结果
 
-环境：Colima k3s · meta=1 / storage=1 / RF=1 · workers=8 · duration=5s · keys=50 · vsize=64  
-镜像含 ONEPC / TSO 无锁环 / 优雅关机。完整表见 [TEST_CASES](../test/TEST_CASES.md)。
+### 本地 RF=3（2026-11-15，写路径修复后）
+
+环境：本机 daemon · Meta×3 / Storage×6 / Gateway×2 · RF=3 · `SKV_PERSIST_SYNC=none` · workers=8 · duration=5s  
+修复：keepalive 10s/3s、GW2=`19002`、`persist_ready` 尊重 `none`、AE 回包 `ready_notify`。
 
 | API | ops/s | p50 | ok | fail |
 |-----|------:|----:|---:|-----:|
-| get / get_stale | 2693 / 3714 | ~2ms | 高 | 0 |
-| put / rawput（隔离） | **227 / 344** | **7.8ms / 4.0ms** | 1817 / 2750 | 0 |
-| rawget / batch_get / ttl | 2848 / 2084 / 2453 | ~2ms | 高 | 0 |
-| scan / list_prefix | ~22 | ~350ms | ~110 | 0 |
-| txn / txn_rollback | 30 / 618 | 216ms / 5ms | 149 / 3088 | 31 / 0 |
-| sadd / lpush / zadd | 116 / 66 / 94 | — | ok>0 | 0 |
-| watch / hset | — | — | 低 | 高（既有路径） |
+| get / get_stale | 5606 / 5311 | ~1.4ms | 高 | 0 |
+| put / rawput | **416 / 1409** | **18.3ms / 4.9ms** | 2080 / 7046 | 0 |
+| rawget / batch_get / ttl | 4627 / 2401 / 4727 | ~1.5–3ms | 高 | 0 |
+| txn / txn_rollback | 112 / 747 | 64ms / 5.7ms | 560 / 3734 | 96 / 0 |
+| watch | 1469 | 4.9ms | 7345 | 0 |
 
-结论：写路径 Raw 非 CAS 跳过 latch 后 **rawput ≥ put**（见 [27](27-raw-vs-txn.md)）。Watch/HSet 仍弱。
+### 历史 k3s RF=1（2026-11-12）
+
+Colima k3s · meta=1 / storage=1 / RF=1 · workers=8 · duration=5s：put/rawput 隔离 **227 / 344 ops/s · 7.8ms / 4.0ms**。
+
+结论：写路径 Raw 非 CAS 跳过 latch 后 **rawput ≥ put**（见 [27](27-raw-vs-txn.md)）。
 
 多 Region 压测：先 `bash scripts/bench-multi-region.sh bench-mr 4 200`，再 `examples/bench -prefix bench-mr …`；设计见 [23-write-path-batching](23-write-path-batching.md)。
 

@@ -36,6 +36,7 @@ flowchart LR
 
 - `data` 下掉电可能丢 **未 sync 进 RocksDB、但已在 Raft log** 的 apply；重启重放补齐。  
 - 若要求 KV 介质也同步落盘，显式设 `all`。
+- Ready 里 `must_sync`（HardState 脏）**不能**在 `persist_sync=none` 时强行 fsync：`persist_ready` 以 `raft_log_sync(mode)` 为总闸。否则 macOS `F_FULLFSYNC` 每次数百 ms，写路径 p50 被钉死。
 
 ## 验收
 

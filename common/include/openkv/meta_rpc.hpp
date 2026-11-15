@@ -57,7 +57,7 @@ inline std::string meta_typed_call(std::string_view addr, std::string_view req, 
   if (parts.empty()) throw std::runtime_error("meta empty");
   const std::string& op = parts[0];
 
-  auto ch = grpc::CreateChannel(std::string(addr), grpc::InsecureChannelCredentials());
+  auto ch = openkv::grpc_insecure_channel(std::string(addr));
   auto stub = ::meta::v1::MetaService::NewStub(ch);
   grpc::ClientContext ctx;
   ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms));

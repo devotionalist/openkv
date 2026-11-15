@@ -47,11 +47,15 @@ bool contains(std::string_view hay, std::string_view needle) {
 
 }  // namespace
 
-/// 判断 Store 错误是否可跳过并换副本重试（连通性 / no_region）。
+/// 判断 Store 错误是否可跳过并换副本重试（连通性 / 超时 / no_region）。
+/// 副本被杀时 TCP 半开常先打出 DeadlineExceeded，必须换人，不能直接打回客户端。
 bool store_skip_err(const std::string& msg) {
   return contains(msg, "no_region") || contains(msg, "connection refused") ||
          contains(msg, "connection reset") || contains(msg, "transport: Error while dialing") ||
-         contains(msg, "Unavailable") || contains(msg, "failed to connect");
+         contains(msg, "Unavailable") || contains(msg, "failed to connect") ||
+         contains(msg, "Deadline Exceeded") || contains(msg, "DeadlineExceeded") ||
+         contains(msg, "deadline exceeded") || contains(msg, "Connection timed out") ||
+         contains(msg, "Socket closed");
 }
 
 /// 从错误串解析 `expected=` 后的 epoch；解析失败返回 0。
@@ -226,28 +230,33 @@ std::vector<std::string> GatewayServer::try_order(uint32_t region) {
   return out;
 }
 
-/// CQ 安全：leader_hint 优先，否则 try_order 首地址。
-std::optional<std::string> GatewayServer::pick_leader_addr(uint32_t region) {
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    auto it = leader_hint_.find(region);
-    if (it != leader_hint_.end() && !it->second.empty()) return it->second;
+/// 按 try_order 挑下一地址，跳过本轮已失败的副本。
+std::optional<std::string> GatewayServer::pick_leader_addr(
+    uint32_t region, const std::unordered_set<std::string>& skip) {
+  for (const auto& addr : try_order(region)) {
+    if (!skip.count(addr)) return addr;
   }
-  auto order = try_order(region);
-  if (order.empty()) return std::nullopt;
-  return order.front();
+  return std::nullopt;
 }
 
-/// CQ 安全 Store 调用：not_leader / redirect / splitting / epoch 回调内重试（≤4）。
 void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpcFn make_call,
                                      StoreAsyncDoneFn on_done) {
+  with_store_async(region, attempt, std::move(make_call), std::move(on_done),
+                   std::make_shared<std::unordered_set<std::string>>());
+}
+
+/// CQ 安全 Store 调用：传输失败换副本；not_leader/redirect/splitting/epoch 回调内重试（≤4）。
+void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpcFn make_call,
+                                     StoreAsyncDoneFn on_done,
+                                     std::shared_ptr<std::unordered_set<std::string>> skipped) {
   if (!make_call || !on_done) return;
+  if (!skipped) skipped = std::make_shared<std::unordered_set<std::string>>();
   if (attempt >= 4) {
     on_done(grpc::Status(grpc::StatusCode::ABORTED, "store: retries_exhausted"), false,
             "retries_exhausted", "", "");
     return;
   }
-  auto addr_opt = pick_leader_addr(region);
+  auto addr_opt = pick_leader_addr(region, *skipped);
   if (!addr_opt) {
     on_done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"), false, "no storage", "",
             "");
@@ -255,32 +264,48 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
   }
   const std::string addr = *addr_opt;
   note_to_store(addr);
-  make_call(addr, [this, region, attempt, make_call, on_done, addr](grpc::Status sst, bool ok,
-                                                                    std::string error,
-                                                                    std::string redirect_to) {
+  make_call(addr, [this, region, attempt, make_call, on_done, addr, skipped](
+                      grpc::Status sst, bool ok, std::string error, std::string redirect_to) {
+    // Leader/Follower 进程被杀：传输失败或打到死人超时。必须清 hint、跳过、换副本。
     if (!sst.ok()) {
-      on_done(sst, false, sst.error_message(), "", addr);
+      const std::string msg = sst.error_message();
+      const bool transport_fail =
+          store_skip_err(msg) || sst.error_code() == grpc::StatusCode::UNAVAILABLE ||
+          sst.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED;
+      if (transport_fail && attempt + 1 < 4) {
+        clear_leader_hint(region);
+        skipped->insert(addr);
+        if (attempt == 0) refresh_routes();
+        with_store_async(region, attempt + 1, make_call, on_done, skipped);
+        return;
+      }
+      on_done(sst, false, msg, "", addr);
       return;
     }
     const bool not_leader = contains(error, "not_leader") || !redirect_to.empty();
     const bool splitting = contains(error, "splitting");
     const bool epoch_mismatch = contains(error, "epoch_not_match");
     if (!ok && (not_leader || splitting || epoch_mismatch)) {
+      // 先清旧 hint，再写入 redirect；以前先 remember 再 clear，redirect 会被抹掉。
+      if (not_leader) {
+        clear_leader_hint(region);
+        skipped->insert(addr);
+      }
       if (!redirect_to.empty()) {
         if (redirect_to == "key_not_in_region" || redirect_to == "no_region") {
           refresh_routes();
         } else {
           remember_leader(region, redirect_to);
+          skipped->erase(redirect_to);
         }
       }
-      if (not_leader) clear_leader_hint(region);
       if (splitting || epoch_mismatch) {
         if (const uint64_t exp = parse_epoch_expected(error); exp > 0) {
           routes_.bump_epoch(region, exp);
         }
         refresh_routes();
       }
-      with_store_async(region, attempt + 1, make_call, on_done);
+      with_store_async(region, attempt + 1, make_call, on_done, skipped);
       return;
     }
     if (ok) remember_leader(region, addr);
@@ -428,7 +453,7 @@ void GatewayServer::put_async(const kv::v1::PutRequest* req, kv::v1::PutResponse
 }
 
 // 事务平面 Put：alloc_async(2) → ONEPC Propose；attempt 封顶 4（含 not_leader/locked/conflict）。
-// Put 异步路径：全程回调，不占用 WorkPool。
+// 传输失败经 with_store_async 换副本，避免杀 Leader 后粘死旧地址。
 void GatewayServer::put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutResponse* resp,
                                  int attempt, std::function<void(grpc::Status)> done) {
   if (attempt >= 4) {
@@ -445,59 +470,68 @@ void GatewayServer::put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutRespo
                           .count() +
                       req->ttl_ms();
         }
-        const uint32_t region = region_of(req->key()); // 区域ID
-        const uint64_t epoch = epoch_of(region); // 区域epoch
-        auto order = try_order(region); // 尝试获取区域顺序
-        if (order.empty()) {
-          active_ts_.remove(start);
-          done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
-          return;
-        }
-        const std::string addr = order.front(); // 获取区域地址 
-        ProposeOnePcArgs args;
-        args.shard_id = region; // 区域ID
-        args.key = req->key(); // 键
-        args.value = req->value(); // 值
-        args.start_ts = start; // start_ts
-        args.commit_ts = commit_ts; // commit_ts
-        args.primary = req->key(); // 主键
-        args.mvcc_op = 0; // MVCC操作
-        args.epoch = epoch; // 区域epoch
-        args.cas = req->cas(); // CAS
-        args.expected_revision = req->expected_revision(); // 期望的revision
-        args.expire_at_ms = expire_at; // 过期时间
-        note_to_store(addr);
-
-        // 异步调用 store_propose_onepc_async 
-        store_propose_onepc_async(
-            addr, std::move(args), 15000, // 15000毫秒
-            [this, req, resp, attempt, start, region, addr, done](grpc::Status sst,
-                                                                  ProposeOnePcResult out) {
-                                                                    
+        const uint32_t region = region_of(req->key());
+        const uint64_t epoch = epoch_of(region);
+        auto got = std::make_shared<ProposeOnePcResult>();
+        with_store_async(
+            region, 0,
+            [this, req, start, commit_ts, expire_at, region, epoch, got](
+                const std::string& addr,
+                std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) {
+              ProposeOnePcArgs args;
+              args.shard_id = region;
+              args.key = req->key();
+              args.value = req->value();
+              args.start_ts = start;
+              args.commit_ts = commit_ts;
+              args.primary = req->key();
+              args.mvcc_op = 0;
+              args.epoch = epoch;
+              args.cas = req->cas();
+              args.expected_revision = req->expected_revision();
+              args.expire_at_ms = expire_at;
+              store_propose_onepc_async(
+                  addr, std::move(args), 15000,
+                  [on_rpc = std::move(on_rpc), got](grpc::Status sst, ProposeOnePcResult out) {
+                    if (!sst.ok()) {
+                      on_rpc(sst, false, sst.error_message(), "");
+                      return;
+                    }
+                    if (out.cas_failed || contains(out.error, "cas_failed")) {
+                      *got = std::move(out);
+                      on_rpc(grpc::Status::OK, true, "__cas__", "");
+                      return;
+                    }
+                    if (out.ok) {
+                      *got = std::move(out);
+                      on_rpc(grpc::Status::OK, true, "", "");
+                      return;
+                    }
+                    on_rpc(grpc::Status::OK, false, out.error, out.redirect_to);
+                  });
+            },
+            [this, req, resp, attempt, start, region, done, got](
+                grpc::Status sst, bool ok, std::string body, std::string /*redirect*/,
+                std::string /*addr*/) {
               active_ts_.remove(start);
               if (!sst.ok()) {
-                done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+                done(sst);
                 return;
               }
-              if (out.cas_failed || contains(out.error, "cas_failed")) {
+              if (ok && body == "__cas__") {
                 resp->set_ok(false);
                 resp->set_cas_failed(true);
-                resp->set_current_revision(out.current_revision != 0
-                                               ? out.current_revision
-                                               : parse_cas_current_rev(out.error));
+                resp->set_current_revision(got->current_revision != 0
+                                               ? got->current_revision
+                                               : parse_cas_current_rev(got->error));
                 done(grpc::Status::OK);
                 return;
               }
-              if (out.ok) {
-                remember_leader(region, addr);
+              if (ok) {
                 resp->set_ok(true);
-                resp->set_revision(out.revision);
+                resp->set_revision(got->revision);
                 done(grpc::Status::OK);
                 return;
-              }
-              std::string body = out.error;
-              if (!out.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
-                body += " redirect=" + out.redirect_to;
               }
               if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/true,
                                     [this, req, resp, attempt, done] {
@@ -588,6 +622,7 @@ void GatewayServer::get_async(const kv::v1::GetRequest* req, kv::v1::GetResponse
 }
 
 /// 事务平面 Get 异步：stale → store_get_async(linearizable=false)；线性 alloc_async + Get。
+/// 传输失败走 with_store_async 换副本（杀 Leader 后不能粘死旧地址）。
 void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetResponse* resp,
                                  int attempt, std::function<void(grpc::Status)> done) {
   if (attempt >= 4) {
@@ -597,53 +632,62 @@ void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetRespo
   const bool linearizable = req->linearizable();
   auto run_get = [this, req, resp, attempt, done, linearizable](uint64_t ts) {
     const uint32_t region = region_of(req->key());
-    auto addr_opt = pick_leader_addr(region);
-    if (!addr_opt) {
-      done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
-      return;
-    }
-    const std::string addr = *addr_opt;
-    note_to_store(addr);
-    store_get_async(
-        addr, region, req->key(), linearizable, ts, 15000,
-        [this, req, resp, attempt, region, addr, done](grpc::Status sst, StoreGetResult out) {
+    auto got = std::make_shared<StoreGetResult>();
+    with_store_async(
+        region, 0,
+        [this, req, region, ts, linearizable, got](
+            const std::string& addr,
+            std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) {
+          store_get_async(
+              addr, region, req->key(), linearizable, ts, 15000,
+              [on_rpc = std::move(on_rpc), got](grpc::Status sst, StoreGetResult out) {
+                if (!sst.ok()) {
+                  on_rpc(sst, false, sst.error_message(), "");
+                  return;
+                }
+                if (out.locked || !out.redirect_to.empty() || contains(out.error, "splitting") ||
+                    contains(out.error, "locked") || contains(out.error, "not_leader") ||
+                    contains(out.error, "epoch_not_match")) {
+                  on_rpc(grpc::Status::OK, false,
+                         out.error.empty() ? (out.locked ? "locked" : "not_leader") : out.error,
+                         out.redirect_to);
+                  return;
+                }
+                if (!out.error.empty() && !out.found) {
+                  on_rpc(grpc::Status::OK, false, out.error, "");
+                  return;
+                }
+                *got = std::move(out);
+                on_rpc(grpc::Status::OK, true, "", "");
+              });
+        },
+        [this, req, resp, attempt, done, got](grpc::Status sst, bool ok, std::string body,
+                                              std::string /*redirect*/, std::string /*addr*/) {
           if (!sst.ok()) {
-            done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+            done(sst);
             return;
           }
-          if (out.locked || !out.redirect_to.empty() || contains(out.error, "splitting") ||
-              contains(out.error, "locked") || contains(out.error, "not_leader")) {
-            if (!out.redirect_to.empty()) {
-              if (out.redirect_to == "key_not_in_region" || out.redirect_to == "no_region") {
-                refresh_routes();
-              } else {
-                remember_leader(region, out.redirect_to);
-                clear_leader_hint(region);
-              }
-            }
-            if (contains(out.error, "splitting") || contains(out.error, "epoch_not_match")) {
-              refresh_routes();
-            }
-            if (out.locked || contains(out.error, "locked")) {
-              LockedError le(out.lock_primary, out.lock_ts,
-                             out.error.empty() ? "locked" : out.error);
+          if (!ok) {
+            if (contains(body, "locked")) {
+              LockedError le = parse_locked_error(body);
               resolve_blocking_lock_async(req->key(), le,
                                          [this, req, resp, attempt, done](grpc::Status) {
                                            get_async_cb(req, resp, attempt + 1, done);
                                          });
               return;
             }
+            // not_leader / splitting 已在 with_store_async 内换副本；仍失败则抬外层 attempt。
+            if (!body.empty() && !contains(body, "not_leader") && !contains(body, "splitting") &&
+                !contains(body, "epoch_not_match")) {
+              done(grpc::Status(grpc::StatusCode::ABORTED, "get: " + body));
+              return;
+            }
             get_async_cb(req, resp, attempt + 1, done);
             return;
           }
-          if (!out.error.empty() && !out.found) {
-            done(grpc::Status(grpc::StatusCode::ABORTED, "get: " + out.error));
-            return;
-          }
-          remember_leader(region, addr);
-          resp->set_found(out.found);
-          if (out.found) resp->set_value(std::move(out.value));
-          resp->set_revision(out.revision);
+          resp->set_found(got->found);
+          resp->set_revision(got->revision);
+          if (got->found) resp->set_value(std::move(got->value));
           done(grpc::Status::OK);
         });
   };
@@ -825,7 +869,7 @@ void GatewayServer::raw_delete_async(const kv::v1::RawDeleteRequest* req,
       });
 }
 
-/// Raw 平面 Get 异步：store_get_async(start_ts=0)；redirect/no_region 刷路由后重试。
+/// Raw 平面 Get 异步：store_get_async(start_ts=0)；传输失败/redirect 换副本重试。
 void GatewayServer::raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawGetResponse* resp,
                                   grpc::ServerUnaryReactor* reactor, int attempt) {
   if (attempt >= 4) {
@@ -833,35 +877,42 @@ void GatewayServer::raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawG
     return;
   }
   const uint32_t region = region_of(req->key());
-  auto order = try_order(region);
-  if (order.empty()) {
-    reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
-    return;
-  }
-  // 非线性：可打任意副本；线性：leader 优先（try_order 已排）。
-  const std::string addr = order.front();
-  note_to_store(addr);
-  store_get_async(
-      addr, region, req->key(), req->linearizable(), /*start_ts=*/0, 15000,
-      [this, req, resp, reactor, attempt, region, addr](grpc::Status sst, StoreGetResult out) {
+  auto got = std::make_shared<StoreGetResult>();
+  with_store_async(
+      region, 0,
+      [this, req, region, got](
+          const std::string& addr,
+          std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) {
+        store_get_async(
+            addr, region, req->key(), req->linearizable(), /*start_ts=*/0, 15000,
+            [on_rpc = std::move(on_rpc), got](grpc::Status sst, StoreGetResult out) {
+              if (!sst.ok()) {
+                on_rpc(sst, false, sst.error_message(), "");
+                return;
+              }
+              if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
+                  contains(out.error, "splitting") || contains(out.error, "epoch_not_match")) {
+                on_rpc(grpc::Status::OK, false,
+                       out.error.empty() ? "not_leader" : out.error, out.redirect_to);
+                return;
+              }
+              *got = std::move(out);
+              on_rpc(grpc::Status::OK, true, "", "");
+            });
+      },
+      [this, req, resp, reactor, attempt, got](grpc::Status sst, bool ok, std::string body,
+                                               std::string /*redirect*/, std::string /*addr*/) {
         if (!sst.ok()) {
-          reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+          reactor->Finish(sst);
           return;
         }
-        if (!out.redirect_to.empty()) {
-          if (out.redirect_to == "key_not_in_region" || out.redirect_to == "no_region") {
-            refresh_routes();
-          } else {
-            remember_leader(region, out.redirect_to);
-            clear_leader_hint(region);
-          }
+        if (!ok) {
           raw_get_async(req, resp, reactor, attempt + 1);
           return;
         }
-        remember_leader(region, addr);
-        resp->set_found(out.found);
-        if (out.found) resp->set_value(std::move(out.value));
-        resp->set_revision(out.revision);
+        resp->set_found(got->found);
+        if (got->found) resp->set_value(std::move(got->value));
+        resp->set_revision(got->revision);
         reactor->Finish(grpc::Status::OK);
       });
 }

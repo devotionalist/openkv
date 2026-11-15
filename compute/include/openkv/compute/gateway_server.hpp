@@ -43,6 +43,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace openkv::compute {
@@ -272,8 +273,9 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
   uint64_t epoch_of(uint32_t region) const;
   /// 尝试顺序：leader_hint 优先，再 Router.replica_addrs，再 boot storage_addrs。
   std::vector<std::string> try_order(uint32_t region);
-  /// CQ 安全：leader_hint_ 优先，否则路由首副本地址。
-  std::optional<std::string> pick_leader_addr(uint32_t region);
+  /// 挑下一个可拨地址；skip 里是本轮已失败/已跳过的副本。
+  std::optional<std::string> pick_leader_addr(
+      uint32_t region, const std::unordered_set<std::string>& skip = {});
   /// 记住 not_leader 后的真实 leader 地址。
   void remember_leader(uint32_t region, const std::string& addr);
   /// 清掉该 Region 的 leader_hint（路由刷新后）。
@@ -285,9 +287,14 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
   /// 后台循环：WatchRoutingTable + 定期 report_min_start_ts。
   void route_watch_loop();
 
-  /// CQ 安全：挑 leader → make_call；not_leader/redirect/splitting 回调内重试（≤4）。
+  /// CQ 安全：挑副本 → make_call。
+  /// 传输失败（store_skip_err）/ not_leader / redirect / splitting：换副本重试（≤4）。
   void with_store_async(uint32_t region, int attempt, StoreAsyncRpcFn make_call,
                         StoreAsyncDoneFn on_done);
+  /// 同上，带本轮已跳过地址集合（递归重试时累积）。
+  void with_store_async(uint32_t region, int attempt, StoreAsyncRpcFn make_call,
+                        StoreAsyncDoneFn on_done,
+                        std::shared_ptr<std::unordered_set<std::string>> skipped);
 
   // ---- Txn helpers（gateway_txn.cpp）----
 

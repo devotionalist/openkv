@@ -15,10 +15,14 @@
 // @file raft_node_test.cpp
 // 测试单节点选举、propose/apply、ConfChange 与 Follower 消息处理。
 
+#include "openkv/raft/file_raft_engine.hpp"
 #include "openkv/raft/raft_node.hpp"
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -49,6 +53,26 @@ void elect(RaftNode& node) {
     }
   }
   FAIL() << "failed to become leader";
+}
+
+// RF=2：本机一票不够，手动喂 peer 的选票。
+void elect_with_vote(RaftNode& node, const std::string& peer_id) {
+  for (int i = 0; i < 40 && !node.is_leader(); ++i) {
+    node.tick();
+    auto st = node.soft_state();
+    if (st.role == Role::kCandidate) {
+      node.on_request_vote_reply(peer_id, st.term, true);
+    }
+  }
+  ASSERT_TRUE(node.is_leader());
+}
+
+void drain_ready(RaftNode& node, bool persist = false) {
+  while (node.has_ready()) {
+    auto rd = node.take_ready();
+    if (persist) node.persist_ready(rd);
+    node.advance(rd);
+  }
 }
 
 }  // namespace
@@ -178,4 +202,85 @@ TEST(RaftNodeTest, VoteAndAppendBetweenPeers) {
   uint64_t match = 0;
   nb.on_append_entries("a", 1, 0, 0, {}, 0, &ok, &match);
   EXPECT_TRUE(ok);
+}
+
+TEST(RaftNodeTest, ExternalIoAeReplyNotifiesReady) {
+  // external_io：propose 本拍入队 AE；AE 回包产生 committed Ready 必须 notify。
+  RaftNode::Options opts;
+  opts.external_io = true;
+  opts.coalesce_replication = true;  // 开着也要本拍入队
+  opts.enable_pre_vote = false;
+  opts.shard_id = 1;
+  opts.self_id = "n0";
+  opts.peers = {{"n0", "a", false}, {"n1", "b", false}};
+  opts.election_timeout_ms = 80;
+  opts.heartbeat_ms = 20;
+  opts.check_quorum = false;
+  opts.persist_sync = openkv::raft::SyncMode::kNone;
+
+  RaftNode node(opts, nullptr, nullptr);
+  std::atomic<int> notifies{0};
+  node.set_ready_notify([&] { notifies.fetch_add(1); });
+
+  elect_with_vote(node, "n1");
+  drain_ready(node);
+  notifies.store(0);
+
+  uint64_t idx = 0;
+  ASSERT_TRUE(node.propose("hello", &idx));
+  ASSERT_GT(idx, 0u);
+  ASSERT_TRUE(node.has_ready());
+  {
+    auto rd = node.take_ready();
+    EXPECT_FALSE(rd.entries.empty());
+    EXPECT_FALSE(rd.messages.empty()) << "external_io propose must enqueue AE into Ready";
+    node.advance(rd);
+  }
+
+  node.on_append_entries_reply("n1", node.soft_state().term, true, idx);
+  EXPECT_GE(notifies.load(), 1) << "AE reply must wake Store via ready_notify";
+  ASSERT_TRUE(node.has_ready());
+  auto rd2 = node.take_ready();
+  ASSERT_FALSE(rd2.committed_entries.empty());
+  EXPECT_EQ(rd2.committed_entries.back().index, idx);
+}
+
+TEST(RaftNodeTest, PersistReadyNoneIgnoresMustSync) {
+  // persist_sync=none 时，即便 Ready.must_sync 也不能走 fsync。
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() /
+                   ("okv_must_sync_none_" +
+                    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(dir);
+  auto engine = std::make_shared<openkv::raft::FileRaftEngine>(dir.string(),
+                                                               openkv::raft::SyncMode::kNone);
+
+  RaftNode::Options opts;
+  opts.external_io = true;
+  opts.shard_id = 1;
+  opts.self_id = "n0";
+  opts.peers = {{"n0", "a", false}};
+  opts.election_timeout_ms = 80;
+  opts.heartbeat_ms = 20;
+  opts.check_quorum = false;
+  opts.persist_sync = openkv::raft::SyncMode::kNone;
+  opts.raft_engine = engine;
+  opts.raft_group_id = 1;
+
+  RaftNode node(opts, nullptr, nullptr);
+  elect(node);
+  drain_ready(node, /*persist=*/true);
+
+  uint64_t idx = 0;
+  ASSERT_TRUE(node.propose("x", &idx));
+  ASSERT_TRUE(node.has_ready());
+  auto rd = node.take_ready();
+  EXPECT_TRUE(rd.must_sync || !rd.entries.empty());
+  const auto t0 = std::chrono::steady_clock::now();
+  node.persist_ready(rd);
+  const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+  EXPECT_LT(us, 50'000) << "persist_ready under none must not fsync; took " << us << "us";
+  fs::remove_all(dir);
 }

@@ -451,7 +451,7 @@ bool RaftNode::try_inc_inflight(const std::string& peer_id) {
   return true;
 }
 
-// 检查是否满足法定人数
+// Leader：多数派太久没回话就让位（Joint 期间不 step-down，否则 LeaveJoint 永远交不了）。
 void RaftNode::maybe_check_quorum() {
   if (!opts_.check_quorum || role_ != Role::kLeader) return;
   // Joint 内必须撑到 LeaveJoint 双多数提交；step-down 会清 match、反复 propose LeaveJoint
@@ -519,7 +519,7 @@ uint32_t RaftNode::majority() const {
   return majority_of(voter_ids());
 }
 
-// 判断是否满足法定人数
+// 指定投票人里，是否已有多数派 match >= index。
 bool RaftNode::quorate_at(const std::vector<std::string>& voters, uint64_t index) const {
   uint32_t ok = 0;
   for (const auto& id : voters) { // 遍历所有投票者
@@ -535,7 +535,7 @@ bool RaftNode::quorate_at(const std::vector<std::string>& voters, uint64_t index
   return ok >= majority_of(voters); // 如果满足法定人数，则返回true
 }
 
-// 判断是否赢得投票
+// 选票是否已达多数同意（含自己）。
 bool RaftNode::votes_won(const std::unordered_map<std::string, bool>& votes) const {
   auto count_yes = [&](const std::vector<std::string>& vs) { // 统计投票者中投票为true的数量
     uint32_t yes = 0;
@@ -552,7 +552,7 @@ bool RaftNode::votes_won(const std::unordered_map<std::string, bool>& votes) con
          count_yes(joint_new_voters_) >= majority_of(joint_new_voters_);
 }
 
-// 入队
+// 攒一条出站消息，等 flush_transport 再真正发出。
 void RaftNode::enqueue(std::string peer_id, std::string type, std::string payload) {
   outbound_.push_back(Outbound{std::move(peer_id), std::move(type), std::move(payload)});
 }
@@ -626,7 +626,9 @@ void RaftNode::persist_ready(const Ready& rd) {
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (!opts_.external_io || !engine_) return;
-    sync = rd.must_sync || raft_log_sync(opts_.persist_sync) || ready_hs_dirty_;
+    // want_sync=这批值得刷；真正 fsync 还要看 persist_sync（none 时绝不 F_FULLFSYNC）。
+    const bool want_sync = rd.must_sync || ready_hs_dirty_ || !rd.entries.empty();
+    sync = want_sync && raft_log_sync(opts_.persist_sync);
     batch = build_engine_batch_locked(first, last);
     ready_hs_dirty_ = false;
     persist_dirty_ = false;
@@ -730,19 +732,8 @@ bool RaftNode::decode_conf(std::string_view data, ConfChange* cc) {
   return true;
 }
 
-/**
- * @brief 提议一条业务/配置日志。
- *
- * 返回 true 只表示已 append 并拿到 index；**不等于**已落盘 / 多数派提交 / apply。
- * 生产（external_io）：持久化与复制由 Store Ready（request_ready → persist → AE）推进；
- * 调用方用 ProposalQueue / wait_apply* 等 apply 后再 ACK。
- *
- * @param data 日志 payload（Command 编码或 ConfChange）
- * @param assigned_index 输出本条 log index（供 wait_apply / wait_applied）
- */
+// 提业务日志：true 只表示已 append 拿到 index，不等于已落盘/提交/apply。详见头文件。
 bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
-  // Leader 本地 append；Follower 直接失败（上层应 redirect）。
-  // 返回 true 只表示已拿到 index；落盘/复制/apply 视 external_io 由 Ready 管线或嵌入同步路径完成。
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (role_ != Role::kLeader) return false;
@@ -756,7 +747,9 @@ bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
 
     persist_locked();
     need_bcast_ = true;
-    if (!opts_.coalesce_replication || majority() <= 1) {
+    // external_io 出站只走 Ready：本拍必须入队 AE，不能等 tick。
+    // 嵌入路径才吃 coalesce_replication。
+    if (opts_.external_io || !opts_.coalesce_replication || majority() <= 1) {
       maybe_broadcast();
     }
     maybe_commit();
@@ -790,7 +783,15 @@ void RaftNode::maybe_broadcast() {
   need_bcast_ = false;
 }
 
-// 心跳
+void RaftNode::set_ready_notify(std::function<void()> cb) { ready_notify_ = std::move(cb); }
+
+void RaftNode::maybe_notify_ready() {
+  // 回包线程：Ready 有货就立刻唤醒 Store，别干等 tick。
+  if (!opts_.external_io || !ready_notify_) return;
+  if (has_ready()) ready_notify_();
+}
+
+// 周期时钟：Leader 发心跳/查多数派；Follower 超时则选主。见头文件注释。
 void RaftNode::tick() {
   {
     std::lock_guard<std::mutex> lock(mu_);
@@ -811,7 +812,7 @@ void RaftNode::tick() {
         if (snap_inflight_.count(id) || peer_send_blocked_.count(id)) continue;
         ++quiet;
       }
-      maybe_check_quorum(); // 检查是否满足法定人数
+      maybe_check_quorum();
     } else if (!self_is_learner()) {
       ++election_elapsed_; // 增加选举时间
       if (election_elapsed_ >= election_timeout_ticks_) { // 如果选举时间大于等于选举超时时间
@@ -834,9 +835,9 @@ void RaftNode::tick() {
   flush_transport();
 }
 
-// 自动离开联合
+// Joint 已稳定且 auto_leave：自动 propose LeaveJoint，收成单一配置。
 void RaftNode::maybe_auto_leave_joint() {
-  if (!auto_leave_pending_ || !in_joint_ || role_ != Role::kLeader) return; // 如果不需要自动离开联合或不是领导者，则返回
+  if (!auto_leave_pending_ || !in_joint_ || role_ != Role::kLeader) return;
   // 已有本任期未提交的 LeaveJoint：只等双多数提交，勿重复 append（换主后旧任期条目需新任期条目才能提交）。
   for (uint64_t i = commit_index_ + 1; i <= log_.last_index(); ++i) { // 从下一个要提交的日志索引开始，遍历到最后一个日志索引
     auto e = log_.entry(i); // 获取日志条目
@@ -945,7 +946,8 @@ void RaftNode::step_down_if_stale(uint64_t term) {
   if (term > term_) become_follower(term);
 }
 
-void RaftNode::start_pre_vote() { // 开始预投票
+// 发起 PreVote（不抬 term）；多数同意后再正式选举。
+void RaftNode::start_pre_vote() {
   in_pre_vote_ = true;
   pre_votes_.clear();
   pre_votes_[opts_.self_id] = true;
@@ -977,11 +979,12 @@ void RaftNode::start_election() {
   if (votes_won(votes_)) become_leader();
 }
 
+// Leader：向各 peer 发心跳 / 探测 AE；落后太多则改发 InstallSnapshot。
 void RaftNode::broadcast_heartbeat() {
   peer_send_blocked_.clear();
   for (const auto& p : opts_.peers) {
     if (p.id == opts_.self_id) continue;
-
+    // peer 的 next 已落在 compact 窗口之前：只能靠快照追上
     if (next_index_[p.id] < log_.first_index()) {
       if (!opts_.external_io && !snap_provider_) {
         SKV_WARN << "shard=" << opts_.shard_id << " peer=" << p.id
@@ -997,6 +1000,7 @@ void RaftNode::broadcast_heartbeat() {
           continue;
         }
       }
+
       if (!try_inc_inflight(p.id)) {
         peer_send_blocked_.insert(p.id);
         continue;
@@ -1038,8 +1042,7 @@ void RaftNode::broadcast_heartbeat() {
     } else if (auto e = log_.entry(prev)) {
       prev_term = e->term;
     }
-    auto ents =
-        log_.entries_from(next_index_[p.id], opts_.max_ae_entries, opts_.max_ae_bytes);
+    auto ents = log_.entries_from(next_index_[p.id], opts_.max_ae_entries, opts_.max_ae_bytes);
     const bool probe = ents.empty();
     if (probe) {
       // 空心跳不占复制管道额度，避免落后 peer 的 snap/AE 堵死保活 → 误 check_quorum
@@ -1059,22 +1062,15 @@ void RaftNode::broadcast_heartbeat() {
 }
 
 
-/**
- * @brief 如果当前角色是leader，则可能提交日志
- * 
- * @param role_ 当前角色
- * @param commit_index_ 当前提交索引
- * @param log_ 日志
- * @return void
- */
+// 按各 peer match_index 抬 commit；Joint 时要新旧两套都多数派同意，且只能提交本任期条目。
 void RaftNode::maybe_commit() {
   if (role_ != Role::kLeader) return;
-  uint64_t lo = commit_index_ + 1; // 下一个要提交的日志索引
-  uint64_t hi = log_.last_index(); // 最后一个日志索引
-  uint64_t best = commit_index_; // 最佳提交索引
-  for (uint64_t cand = hi; cand >= lo; --cand) { // 从最后一个日志索引开始，向前遍历，直到找到最佳提交索引
+  uint64_t lo = commit_index_ + 1;
+  uint64_t hi = log_.last_index();
+  uint64_t best = commit_index_;
+  for (uint64_t cand = hi; cand >= lo; --cand) {
     bool ok;
-    if (in_joint_) { // 如果处于联合角色
+    if (in_joint_) {
       ok = quorate_at(joint_old_voters_, cand) && quorate_at(joint_new_voters_, cand);
     } else {
       ok = quorate_at(voter_ids(), cand);
@@ -1088,18 +1084,10 @@ void RaftNode::maybe_commit() {
   if (best > commit_index_) commit_index_ = best;
 }
 
-
-/**
- * @brief 应用配置变更
- * 
- * @param e 日志条目
- * @return void
- */
+// 应用一条 ConfChange：改成员表 / 进或离 Joint。
 void RaftNode::apply_conf_entry(const LogEntry& e) {
   ConfChange cc;
-  // 解码配置变更
   if (!decode_conf(e.data, &cc)) return;
-  // 如果是离开联合角色
   if (cc.type == ConfChange::kLeaveJoint) {
     if (in_joint_) {
       // 丢掉不在 C_new 中的 voter
@@ -1474,6 +1462,7 @@ void RaftNode::on_append_entries_reply(const std::string& from, uint64_t term, b
     }
   }
   flush_transport();
+  maybe_notify_ready();
 }
 
 void RaftNode::on_request_vote_reply(const std::string& from, uint64_t term, bool granted) {
@@ -1488,6 +1477,7 @@ void RaftNode::on_request_vote_reply(const std::string& from, uint64_t term, boo
     }
   }
   flush_transport();
+  maybe_notify_ready();
 }
 
 void RaftNode::on_request_pre_vote_reply(const std::string& from, uint64_t term, bool granted) {
@@ -1508,6 +1498,7 @@ void RaftNode::on_request_pre_vote_reply(const std::string& from, uint64_t term,
     }
   }
   flush_transport();
+  maybe_notify_ready();
 }
 
 void RaftNode::on_install_snapshot(const std::string& from, uint64_t term, uint64_t last_index,
@@ -1594,6 +1585,7 @@ void RaftNode::on_install_snapshot_reply(const std::string& from, uint64_t term,
     }
   }
   flush_transport();
+  maybe_notify_ready();
 }
 
 void RaftNode::add_peer(const Peer& p) {

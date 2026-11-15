@@ -19,6 +19,7 @@
 
 #include "openkv/admin_acl.hpp"
 #include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_keepalive.hpp"
 
 #include <chrono>
 #include <mutex>
@@ -36,7 +37,8 @@ std::unordered_map<std::string, std::shared_ptr<::meta::v1::MetaService::Stub>> 
 std::shared_ptr<grpc::Channel> channel_locked(const std::string& addr) {
   auto it = g_channels.find(addr);
   if (it != g_channels.end() && it->second) return it->second;
-  auto ch = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+  // 统一 keepalive：对端被杀尽快感知半开连接（见 openkv/grpc_keepalive.hpp）。
+  auto ch = openkv::grpc_insecure_channel(addr);
   g_channels[addr] = ch;
   return ch;
 }

@@ -149,6 +149,14 @@ inline constexpr const char* kReadyCoalesceMs = "SKV_READY_COALESCE_MS";
 inline constexpr const char* kPersistWorkers = "SKV_PERSIST_WORKERS";
 /// gRPC 优雅关机宽限（毫秒）：Shutdown(deadline) 后拒新请求，排空在途；超时则取消剩余。
 inline constexpr const char* kGrpcShutdownMs = "SKV_GRPC_SHUTDOWN_MS";
+/// 出站 AE 丢包百分比 0–100（演练；GrpcRaftTransport 启动时读）。
+inline constexpr const char* kFaultDropAePct = "SKV_FAULT_DROP_AE_PCT";
+/// 出站 AE 额外延迟毫秒（演练）。
+inline constexpr const char* kFaultDelayAeMs = "SKV_FAULT_DELAY_AE_MS";
+/// 出站全部 Raft RPC 丢包百分比 0–100（演练；含 Vote/AE/Snap）。
+inline constexpr const char* kFaultDropRaftPct = "SKV_FAULT_DROP_RAFT_PCT";
+/// 出站全部 Raft RPC 额外延迟毫秒（演练）。
+inline constexpr const char* kFaultDelayRaftMs = "SKV_FAULT_DELAY_RAFT_MS";
 }  // namespace env
 
 // ---------------------------------------------------------------------------

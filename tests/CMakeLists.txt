@@ -31,6 +31,7 @@ set(OPENKV_TEST_SOURCES
   common/admin_acl_test.cpp
   common/meta_rpc_test.cpp
   common/grpc_shutdown_test.cpp
+  common/grpc_keepalive_test.cpp
   # raft：日志、单节点、MultiRaft、持久化恢复
   raft/raft_log_test.cpp
   raft/raft_node_test.cpp
@@ -44,6 +45,7 @@ set(OPENKV_TEST_SOURCES
   raft/raw_node_test.cpp
   raft/raftstore_test.cpp
   raft/batch_system_test.cpp
+  raft/raft_fault_inject_test.cpp
   # storage：引擎、命令编解码、StoreFacade 端到端
   storage/kv_engine_test.cpp
   storage/store_codec_test.cpp
@@ -66,6 +68,7 @@ set(OPENKV_TEST_SOURCES
   compute/ds_encode_test.cpp
   compute/meta_client_test.cpp
   compute/ts_range_queue_test.cpp
+  compute/store_skip_err_test.cpp
 )
 
 add_executable(openkv_unit_tests ${OPENKV_TEST_SOURCES})

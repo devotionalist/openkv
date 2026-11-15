@@ -19,6 +19,7 @@
 
 #include "openkv/admin_acl.hpp"
 #include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_keepalive.hpp"
 #include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/protocol.hpp"
@@ -645,6 +646,7 @@ void StorageGrpcServer::start() {
   grpc::ServerBuilder builder;
   builder.SetMaxReceiveMessageSize(64 << 20);
   builder.SetMaxSendMessageSize(64 << 20);
+  openkv::apply_server_keepalive(&builder);
   builder.AddListeningPort(listen_addr_, grpc::InsecureServerCredentials());
   builder.RegisterService(impl_->store.get());
   builder.RegisterService(impl_->raft.get());

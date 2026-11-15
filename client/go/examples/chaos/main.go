@@ -50,6 +50,24 @@ func isConnDead(err error) bool {
 		strings.Contains(s, "Unavailable")
 }
 
+// 短暂选主 / 换副本可恢复的错误：同一 op 内重试，按「服务是否可用」计，不把一次 RPC 抖动算成不可用。
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isConnDead(err) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "not_leader") ||
+		strings.Contains(s, "retries_exhausted") ||
+		strings.Contains(s, "DeadlineExceeded") ||
+		strings.Contains(s, "deadline exceeded") ||
+		strings.Contains(s, "apply_timeout") ||
+		strings.Contains(s, "Unavailable") ||
+		strings.Contains(s, "Aborted")
+}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:19000", "compute gateway")
 	duration := flag.Duration("duration", 30*time.Second, "run duration; 0 = until SIGINT/SIGTERM")
@@ -87,27 +105,33 @@ func main() {
 
 	var okPut, failPut, okGet, failGet atomic.Uint64
 
+	// 成功率：有采样才算；0 次采样 = 0%（不可用），禁止把「全挂死未计数」当成 100%。
+	pct := func(ok, fail uint64) float64 {
+		t := ok + fail
+		if t == 0 {
+			return 0
+		}
+		return 100.0 * float64(ok) / float64(t)
+	}
+
 	ticker := time.NewTicker(*reportEvery)
 	defer ticker.Stop()
 	go func() {
-		var lastOk, lastFail uint64
+		var lastPutOk, lastPutFail, lastGetOk, lastGetFail uint64
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				op := okPut.Load() + okGet.Load()
-				fp := failPut.Load() + failGet.Load()
-				dOk := op - lastOk
-				dFail := fp - lastFail
-				lastOk, lastFail = op, fp
-				total := dOk + dFail
-				rate := 100.0
-				if total > 0 {
-					rate = 100.0 * float64(dOk) / float64(total)
-				}
-				fmt.Printf("[chaos] window ok=%d fail=%d success=%.1f%%  total_ok=%d total_fail=%d workers=%d\n",
-					dOk, dFail, rate, op, fp, *workers)
+				po, pf := okPut.Load(), failPut.Load()
+				go_, gf := okGet.Load(), failGet.Load()
+				dPo, dPf := po-lastPutOk, pf-lastPutFail
+				dGo, dGf := go_-lastGetOk, gf-lastGetFail
+				lastPutOk, lastPutFail, lastGetOk, lastGetFail = po, pf, go_, gf
+				dOk, dFail := dPo+dGo, dPf+dGf
+				fmt.Printf("[chaos] window ok=%d fail=%d success=%.1f%% write_success=%.1f%% read_success=%.1f%%  put_ok=%d put_fail=%d get_ok=%d get_fail=%d workers=%d\n",
+					dOk, dFail, pct(dOk, dFail), pct(dPo, dPf), pct(dGo, dGf),
+					po, pf, go_, gf, *workers)
 			}
 		}
 	}()
@@ -165,36 +189,60 @@ func main() {
 				doWrite := rng.Float64() < *writeRatio
 
 				opCtx, c := context.WithTimeout(ctx, *opTimeout)
-				if doWrite {
-					val := fmt.Sprintf("v-w%d-%d", workerID, i)
-					if _, err := cli.Put(opCtx, []byte(key), []byte(val)); err != nil {
-						failPut.Add(1)
-						// 仅在明显断连时重拨，避免打爆本机 ephemeral port
-						if isConnDead(err) {
-							cli.Close()
-							cli = nil
+				const maxTry = 4
+				var lastErr error
+				ok := false
+				for try := 0; try < maxTry; try++ {
+					if cli == nil {
+						c2, err := kv.Dial(opCtx, *addr, kv.WithTimeout(*opTimeout))
+						if err != nil {
+							lastErr = err
+							time.Sleep(50 * time.Millisecond)
+							continue
 						}
+						cli = c2
+					}
+					if doWrite {
+						val := fmt.Sprintf("v-w%d-%d", workerID, i)
+						_, lastErr = cli.Put(opCtx, []byte(key), []byte(val))
+					} else if *staleRead {
+						_, _, _, lastErr = cli.GetOpt(opCtx, []byte(key), false)
 					} else {
+						_, _, _, lastErr = cli.Get(opCtx, []byte(key))
+					}
+					if lastErr == nil {
+						ok = true
+						break
+					}
+					if isConnDead(lastErr) {
+						cli.Close()
+						cli = nil
+					}
+					if !isRetryable(lastErr) || opCtx.Err() != nil {
+						break
+					}
+					time.Sleep(time.Duration(30*(try+1)) * time.Millisecond)
+				}
+				c()
+				if ok {
+					if doWrite {
 						okPut.Add(1)
-					}
-				} else {
-					var err error
-					if *staleRead {
-						_, _, _, err = cli.GetOpt(opCtx, []byte(key), false)
-					} else {
-						_, _, _, err = cli.Get(opCtx, []byte(key))
-					}
-					if err != nil {
-						failGet.Add(1)
-						if isConnDead(err) {
-							cli.Close()
-							cli = nil
-						}
 					} else {
 						okGet.Add(1)
 					}
+				} else if ctx.Err() != nil && *duration == 0 {
+					// 持续负载被 SIGTERM 打断：收尾噪声不算失败
+				} else {
+					// 含固定时长窗口到点仍未返回：算失败（否则多数派丢失时写全挂死会虚报 write_success=100%）
+					if lastErr != nil {
+						log.Printf("worker-%d op fail after retries: %v", workerID, lastErr)
+					}
+					if doWrite {
+						failPut.Add(1)
+					} else {
+						failGet.Add(1)
+					}
 				}
-				c()
 				i++
 				time.Sleep(interval)
 			}
@@ -202,12 +250,14 @@ func main() {
 	}
 	wg.Wait()
 
-	fmt.Printf("[chaos] DONE put_ok=%d put_fail=%d get_ok=%d get_fail=%d\n",
-		okPut.Load(), failPut.Load(), okGet.Load(), failGet.Load())
-	total := okPut.Load() + failPut.Load() + okGet.Load() + failGet.Load()
-	ok := okPut.Load() + okGet.Load()
+	po, pf := okPut.Load(), failPut.Load()
+	go_, gf := okGet.Load(), failGet.Load()
+	fmt.Printf("[chaos] DONE put_ok=%d put_fail=%d get_ok=%d get_fail=%d\n", po, pf, go_, gf)
+	total := po + pf + go_ + gf
 	if total == 0 {
 		os.Exit(2)
 	}
-	fmt.Printf("[chaos] overall_success=%.2f%%\n", 100.0*float64(ok)/float64(total))
+	// overall 兼容旧脚本；写/读分开才是故障可用性判定口径。
+	fmt.Printf("[chaos] overall_success=%.2f%% write_success=%.2f%% read_success=%.2f%%\n",
+		pct(po+go_, pf+gf), pct(po, pf), pct(go_, gf))
 }

@@ -29,7 +29,7 @@ CMAKE_FLAGS ?= -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCM
 .PHONY: all configure build test gtest run-meta run-storage run-compute proto go-mod clean \
 	cluster-up cluster-down cluster-test e2e memcheck asan fault-drill integ-workload release-gate \
 	admin admin-run admin-frontend \
-	it-web it-region it-txn it-disk-fault it-partition integ-extra fault-drill-extra
+	it-web it-region it-txn it-disk-fault it-partition it-net-jitter integ-extra fault-drill-extra
 
 # 默认：编译 + 跑全部单元测试
 all: build test
@@ -98,12 +98,14 @@ it-region:
 it-txn:
 	bash scripts/it-txn.sh
 
-# 周跑：磁盘只读 / 分区近似（破坏性更强，不默认进 release-gate）
+# 周跑：磁盘只读 / 分区近似 / 节点间网络抖动（破坏性更强，不默认进 release-gate）
 it-disk-fault:
 	bash scripts/it-disk-fault.sh
 it-partition:
 	bash scripts/it-partition.sh
-integ-extra: it-disk-fault it-partition
+it-net-jitter:
+	bash scripts/it-net-jitter.sh
+integ-extra: it-disk-fault it-partition it-net-jitter
 fault-drill-extra: fault-drill integ-extra
 
 # 独立 Web 管控模块（HTTP :19100）；前端 TypeScript → static/

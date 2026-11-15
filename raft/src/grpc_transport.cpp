@@ -18,7 +18,9 @@
 #include "openkv/raft/grpc_transport.hpp"
 
 #include "openkv/codec.hpp"
+#include "openkv/grpc_keepalive.hpp"
 #include "openkv/logging.hpp"
+#include "openkv/raft/raft_fault_inject.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -28,6 +30,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <random>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -118,15 +121,14 @@ struct GrpcRaftTransport::Impl {
   std::atomic<bool> stop{true};
   std::vector<std::thread> workers_;
   size_t snap_chunk_bytes_{kDefaultSnapChunk};
+  RaftOutboundFault fault_{};  // 启动时 from_env；默认全关
 
   std::shared_ptr<::storage::v1::RaftService::Stub> stub_for(const std::string& addr) {
     std::lock_guard<std::mutex> lock(mu_);
     auto& s = stubs_[addr];
     if (!s) {
-      grpc::ChannelArguments args;
-      args.SetMaxReceiveMessageSize(kGrpcMsgBytes);
-      args.SetMaxSendMessageSize(kGrpcMsgBytes);
-      auto ch = grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args);
+      // 与 Gateway 同一套 keepalive：副本被杀后 AE/心跳尽快失败，别卡满 deadline。
+      auto ch = openkv::grpc_insecure_channel(addr, static_cast<int>(kGrpcMsgBytes));
       s = ::storage::v1::RaftService::NewStub(ch);
     }
     return s;
@@ -264,6 +266,21 @@ struct GrpcRaftTransport::Impl {
       }
       addr = pit->second;
     }
+
+    // 演练注入：先延迟再丢包（默认全关，enabled() 短路）。
+    if (fault_.enabled()) {
+      if (const int d = fault_.delay_ms_for(job.type); d > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(d));
+      }
+      thread_local std::mt19937 rng{std::random_device{}()};
+      std::uniform_int_distribution<int> roll(0, 99);
+      if (fault_.should_drop(job.type, roll(rng))) {
+        dropped_.fetch_add(1, std::memory_order_relaxed);
+        if (needs_fail_callback(job.type)) node->on_rpc_transport_fail(job.peer_id);
+        return;
+      }
+    }
+
     auto stub = stub_for(addr);
     if (!stub) {
       if (needs_fail_callback(job.type)) node->on_rpc_transport_fail(job.peer_id);
@@ -473,9 +490,16 @@ TransportSend GrpcRaftTransport::bind(uint32_t shard_id) {
 
 void GrpcRaftTransport::start() {
   if (!impl_->stop.exchange(false)) return;
+  impl_->fault_ = RaftOutboundFault::from_env();
   constexpr int kWorkers = 4;
   for (int i = 0; i < kWorkers; ++i) {
     impl_->workers_.emplace_back([this] { impl_->worker_loop(); });
+  }
+  if (impl_->fault_.enabled()) {
+    SKV_WARN << "GrpcRaftTransport fault inject ON drop_ae=" << impl_->fault_.drop_ae_pct
+             << "% delay_ae=" << impl_->fault_.delay_ae_ms
+             << "ms drop_raft=" << impl_->fault_.drop_raft_pct
+             << "% delay_raft=" << impl_->fault_.delay_raft_ms << "ms";
   }
   SKV_INFO << "GrpcRaftTransport started workers=" << kWorkers;
 }

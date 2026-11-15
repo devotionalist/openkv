@@ -24,6 +24,7 @@
 #include "openkv/admin_acl.hpp"
 #include "openkv/codec.hpp"
 #include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_keepalive.hpp"
 #include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/peer_counter.hpp"
@@ -797,6 +798,7 @@ void MetaGrpcServer::start() {
   grpc::ServerBuilder builder;
   builder.SetMaxReceiveMessageSize(64 << 20);
   builder.SetMaxSendMessageSize(64 << 20);
+  openkv::apply_server_keepalive(&builder);
   builder.AddListeningPort(listen_addr_, grpc::InsecureServerCredentials());
   builder.RegisterService(impl_->svc.get());
   builder.RegisterService(impl_->raft.get());

@@ -94,6 +94,7 @@ sequenceDiagram
 
   KV->>RN: propose(data)
   RN->>Log: append（仅内存）
+  Note over RN: external_io：本拍入队 AE（不等 tick）
   KV->>St: request_ready(region)
   Note over St: ready_coalesce_n / ms 攒批
   St->>St: drive_ready → kWake
@@ -104,6 +105,8 @@ sequenceDiagram
   St->>RN: persist_ready(Ready)
   RN->>Eng: build_engine_batch + consume(sync)
   Note over Eng: persist_sync=data → Raft WAL fsync
+  St-->>St: transport_fn 发 AE
+  Note over RN: AE 回包 → commit 进 Ready → ready_notify → mark_hot
   St->>BS: send_apply(ApplyMsg)
   BS->>FSM: ApplyBatchFn / ApplyFn
   FSM->>RN: report_applied(index)
@@ -118,7 +121,10 @@ sequenceDiagram
 | 攒批 | `raft/src/raftstore/store.cpp` · `request_ready` / `coalesce_loop` |
 | 批末 Ready | `Store::on_raft_batch` → `process_ready` |
 | 落盘 | `raft/src/raft_node.cpp` · `persist_ready` |
+| AE 回包唤醒 | `RaftNode::set_ready_notify` → `Store::mark_hot`（勿只等 tick） |
 | Apply 回告 | `RaftNode::report_applied` |
+
+**写慢排查：** put/rawput p50 数百 ms～秒级且 `apply_timeout` → 先查（1）keepalive 是否 1s 误杀慢盘 AE；（2）AE 回包后是否 `ready_notify`/`mark_hot`；（3）GW2 是否占了 stats 口 `19001`。
 
 ---
 
