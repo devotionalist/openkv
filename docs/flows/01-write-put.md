@@ -66,7 +66,7 @@ sequenceDiagram
   participant RN as RaftNode
   participant ST as Store/BatchSystem
   participant PW as PersistWorker
-  participant Eng as RocksRaftEngine
+  participant Eng as DbRaftEngine
   participant F as Follower
   participant AW as Apply worker
   participant PQ as ProposalQueue

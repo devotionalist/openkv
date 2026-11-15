@@ -7,7 +7,7 @@
 **目标**
 
 - 单库同时提供协议状态机与本机 Multi-Raft 调度，避免「协议库 / store 库」分裂导致双份依赖。
-- 持久化通过 `RaftEngine` 抽象；生产 Storage 使用 `storage::RocksRaftEngine`，Meta / 单测使用 `FileRaftEngine`。
+- 持久化通过 `RaftEngine` 抽象；生产 Storage 使用 `raft::DbRaftEngine`，Meta / 单测使用 `FileRaftEngine`。
 - Ready → persist → apply → report 的职责可追踪到具体类型与线程池。
 
 **非目标**
@@ -30,7 +30,7 @@
 │  协议：RaftNode / RawNode · Ready · RaftLog（内存）            │
 ├─────────────────────────────────────────────────────────────┤
 │  持久化：RaftEngine（接口）                                    │
-│         ├─ RocksRaftEngine（生产，在 storage/）                 │
+│         ├─ DbRaftEngine（生产，本库 engine/）                 │
 │         └─ FileRaftEngine（Meta / UT，本库）                   │
 └─────────────────────────────────────────────────────────────┘
 ```

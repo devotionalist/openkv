@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// @file rocks_raft_engine_test.cpp
-// RocksRaftEngine：WriteBatch 原子写 state+log。
+// @file db_raft_engine_test.cpp
+// DbRaftEngine：WriteBatch 原子写 state+log（当前后端 RocksDB）。
 
-#include "openkv/storage/rocks_raft_engine.hpp"
+#include "openkv/raft/engine/db_raft_engine.hpp"
 
 #include <gtest/gtest.h>
 
@@ -23,16 +23,16 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
+using openkv::raft::DbRaftEngine;
 using openkv::raft::LogEntry;
 using openkv::raft::RaftLocalState;
 using openkv::raft::SyncMode;
-using openkv::storage::RocksRaftEngine;
 
-TEST(RocksRaftEngineTest, ConsumeAndFetch) {
-  auto dir = fs::temp_directory_path() / ("skv_rocks_raft_" + std::to_string(::getpid()));
+TEST(DbRaftEngineTest, ConsumeAndFetch) {
+  auto dir = fs::temp_directory_path() / ("skv_db_raft_" + std::to_string(::getpid()));
   fs::remove_all(dir);
   {
-    RocksRaftEngine eng(dir.string(), SyncMode::kNone);
+    DbRaftEngine eng(dir.string(), SyncMode::kNone);
     auto batch = eng.make_log_batch();
     batch->append(3, {{2, 10, "hello"}, {2, 11, "world"}});
     RaftLocalState st;
@@ -54,7 +54,7 @@ TEST(RocksRaftEngineTest, ConsumeAndFetch) {
     EXPECT_EQ(eng.fetch_entries_to(3, 10, 12, SIZE_MAX, &ents), 2u);
   }
   {
-    RocksRaftEngine eng(dir.string(), SyncMode::kNone);
+    DbRaftEngine eng(dir.string(), SyncMode::kNone);
     auto got = eng.get_raft_state(3);
     ASSERT_TRUE(got);
     EXPECT_EQ(got->last_index, 11u);

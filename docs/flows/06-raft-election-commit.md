@@ -64,7 +64,7 @@ flowchart TB
   RKV --> ST
   ST --> MB --> BS --> PE --> RN
   RN --> RD
-  RD -->|persist| Eng[RocksRaftEngine]
+  RD -->|persist| Eng[DbRaftEngine]
   RD -->|messages| GT
   RD -->|committed| Apply[Apply worker → KV/Meta FSM]
   GT -->|gRPC| Peer2[其它 Storage/Meta]
@@ -223,7 +223,7 @@ sequenceDiagram
 | 组数 | Multi-Raft：每 Region 一组（`shard_id`） | 单组 Meta Raft |
 | 协议 | 同一套 `RaftNode` + `RaftService` | 同左 |
 | 日志 `data` | KV Command / ConfChange | `MetaCommand`（路由、TSO、节点态…） |
-| 持久化 | `RocksRaftEngine`（生产） | `FileRaftEngine` / 配置目录 |
+| 持久化 | `DbRaftEngine`（生产） | `FileRaftEngine` / 配置目录 |
 
 字段级拓扑：[RAFT_DATA_TOPOLOGY](../topology/RAFT_DATA_TOPOLOGY.md)。源码调用图：[35-raft-module-call-flows](35-raft-module-call-flows.md)。
 

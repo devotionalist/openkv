@@ -113,8 +113,8 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
                                           opts_.election_timeout_ms / 50);
   election_timeout_ticks_ = std::max(5, dist(rng));
   for (const auto& p : opts_.peers) {
-    next_index_[p.id] = 1;
-    match_index_[p.id] = 0;
+    progress_.next_index_[p.id] = 1;
+    progress_.match_index_[p.id] = 0;
   }
   if (opts_.persist_batch_n == 0) opts_.persist_batch_n = 1;
   group_id_ = opts_.raft_group_id != 0 ? opts_.raft_group_id : opts_.shard_id;
@@ -153,14 +153,14 @@ void RaftNode::load_from_disk() {
            << " last_index=" << log_.last_index();
 }
 
-// external_io：只标记 HardState 脏并写入 ready_hs_（真正落盘在 PersistWorker）。
+// external_io：只标记 HardState 脏并写入 ready_io_.ready_hs_（真正落盘在 PersistWorker）。
 // 嵌入模式：置 persist_dirty_，按 batch 刷 RaftEngine。
 void RaftNode::persist_locked() {
   if (opts_.external_io) {
-    ready_hs_dirty_ = true;
-    ready_hs_.term = term_;
-    ready_hs_.vote = voted_for_;
-    ready_hs_.commit = commit_index_;
+    ready_io_.ready_hs_dirty_ = true;
+    ready_io_.ready_hs_.term = term_;
+    ready_io_.ready_hs_.vote = voted_for_;
+    ready_io_.ready_hs_.commit = commit_index_;
     return;
   }
   persist_dirty_ = true;
@@ -278,8 +278,8 @@ SoftState RaftNode::soft_state() const {
     bool any = false;
     for (const auto& p : opts_.peers) {
       if (p.id == opts_.self_id || p.learner) continue;
-      auto it = match_index_.find(p.id);
-      uint64_t m = it == match_index_.end() ? 0 : it->second;
+      auto it = progress_.match_index_.find(p.id);
+      uint64_t m = it == progress_.match_index_.end() ? 0 : it->second;
       // 从未建连成功的 peer（match=0 且 quiet 已爆）不拖 lag，避免僵尸副本误导运维
       auto qit = peer_quiet_ticks_.find(p.id);
       if (m == 0 && qit != peer_quiet_ticks_.end() &&
@@ -331,8 +331,8 @@ uint64_t RaftNode::match_index_of(const std::string& peer_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   if (role_ != Role::kLeader) return 0;
   if (peer_id == opts_.self_id) return commit_index_;
-  auto it = match_index_.find(peer_id);
-  return it == match_index_.end() ? 0 : it->second;
+  auto it = progress_.match_index_.find(peer_id);
+  return it == progress_.match_index_.end() ? 0 : it->second;
 }
 
 uint64_t RaftNode::last_index() const {
@@ -433,10 +433,10 @@ bool RaftNode::read_index(uint64_t* read_commit, uint32_t timeout_ms) {
 }
 
 void RaftNode::dec_inflight(const std::string& peer_id) {
-  auto it = inflight_.find(peer_id);
-  if (it != inflight_.end() && it->second > 0) --it->second;
-  snap_inflight_.erase(peer_id);
-  probe_inflight_.erase(peer_id);
+  auto it = progress_.inflight_.find(peer_id);
+  if (it != progress_.inflight_.end() && it->second > 0) --it->second;
+  progress_.snap_inflight_.erase(peer_id);
+  progress_.probe_inflight_.erase(peer_id);
 }
 
 void RaftNode::on_rpc_transport_fail(const std::string& peer_id) {
@@ -445,7 +445,7 @@ void RaftNode::on_rpc_transport_fail(const std::string& peer_id) {
 }
 
 bool RaftNode::try_inc_inflight(const std::string& peer_id) {
-  auto& n = inflight_[peer_id];
+  auto& n = progress_.inflight_[peer_id];
   if (n >= opts_.max_inflight_msgs) return false;
   ++n;
   return true;
@@ -474,13 +474,13 @@ void RaftNode::maybe_check_quorum() {
         continue;
       }
       // 快照在途 / 管道满发不出：不算「对端无响应」
-      if (snap_inflight_.count(id) || peer_send_blocked_.count(id)) {
+      if (progress_.snap_inflight_.count(id) || progress_.peer_send_blocked_.count(id)) {
         ++active;
         continue;
       }
       auto it = peer_quiet_ticks_.find(id);
       // 探针在途且 quiet 仍低：保护慢网；quiet 已爆说明发出后长期无 ACK → 失联
-      if (probe_inflight_.count(id) &&
+      if (progress_.probe_inflight_.count(id) &&
           (it == peer_quiet_ticks_.end() || it->second < quiet_limit)) {
         ++active;
         continue;
@@ -525,10 +525,10 @@ bool RaftNode::quorate_at(const std::vector<std::string>& voters, uint64_t index
   for (const auto& id : voters) { // 遍历所有投票者
     uint64_t m = 0;
     if (id == opts_.self_id) { // 如果是自己
-      m = match_index_.count(opts_.self_id) ? match_index_.at(opts_.self_id) : log_.last_index();
+      m = progress_.match_index_.count(opts_.self_id) ? progress_.match_index_.at(opts_.self_id) : log_.last_index();
     } else {
-      auto it = match_index_.find(id);
-      m = it == match_index_.end() ? 0 : it->second;
+      auto it = progress_.match_index_.find(id);
+      m = it == progress_.match_index_.end() ? 0 : it->second;
     }
     if (m >= index) ++ok; // 如果匹配索引大于等于当前索引，则满足法定人数
   }
@@ -571,29 +571,29 @@ void RaftNode::flush_transport() {
 
 bool RaftNode::has_ready() const {
   std::lock_guard<std::mutex> lock(mu_);
-  return ready_hs_dirty_ || !ready_unstable_.empty() || !ready_committed_.empty() ||
-         !outbound_.empty() || !ready_snaps_.empty();
+  return ready_io_.ready_hs_dirty_ || !ready_io_.ready_unstable_.empty() || !ready_io_.ready_committed_.empty() ||
+         !outbound_.empty() || !ready_io_.ready_snaps_.empty();
 }
 
 Ready RaftNode::take_ready() {
   std::lock_guard<std::mutex> lock(mu_);
   Ready rd;
-  if (ready_hs_dirty_) {
-    rd.hard_state = ready_hs_;
+  if (ready_io_.ready_hs_dirty_) {
+    rd.hard_state = ready_io_.ready_hs_;
     rd.must_sync = true;
-    ready_hs_dirty_ = false;
+    ready_io_.ready_hs_dirty_ = false;
   }
-  rd.entries = std::move(ready_unstable_);
-  ready_unstable_.clear();
-  rd.committed_entries = std::move(ready_committed_);
-  ready_committed_.clear();
+  rd.entries = std::move(ready_io_.ready_unstable_);
+  ready_io_.ready_unstable_.clear();
+  rd.committed_entries = std::move(ready_io_.ready_committed_);
+  ready_io_.ready_committed_.clear();
   for (auto& m : outbound_) {
     rd.messages.push_back(Message{std::move(m.peer_id), std::move(m.type), std::move(m.payload)});
   }
   outbound_.clear();
-  if (!ready_snaps_.empty()) {
-    rd.snapshot = ready_snaps_.front();
-    ready_snaps_.erase(ready_snaps_.begin());
+  if (!ready_io_.ready_snaps_.empty()) {
+    rd.snapshot = ready_io_.ready_snaps_.front();
+    ready_io_.ready_snaps_.erase(ready_io_.ready_snaps_.begin());
   }
   SoftState st;
   st.role = role_;
@@ -627,17 +627,17 @@ void RaftNode::persist_ready(const Ready& rd) {
     std::lock_guard<std::mutex> lock(mu_);
     if (!opts_.external_io || !engine_) return;
     // want_sync=这批值得刷；真正 fsync 还要看 persist_sync（none 时绝不 F_FULLFSYNC）。
-    const bool want_sync = rd.must_sync || ready_hs_dirty_ || !rd.entries.empty();
+    const bool want_sync = rd.must_sync || ready_io_.ready_hs_dirty_ || !rd.entries.empty();
     sync = want_sync && raft_log_sync(opts_.persist_sync);
     batch = build_engine_batch_locked(first, last);
-    ready_hs_dirty_ = false;
+    ready_io_.ready_hs_dirty_ = false;
     persist_dirty_ = false;
     persist_pending_ = 0;
   }
   if (!batch || batch->empty()) return;
   {
     std::lock_guard<std::mutex> io(persist_io_mu_);
-    engine_->consume(*batch, sync);  // RocksRaftEngine / FileRaftEngine
+    engine_->consume(*batch, sync);  // DbRaftEngine / FileRaftEngine
   }
   std::lock_guard<std::mutex> lock(mu_);
   commit_stable_locked(first, last);  // 推进 stable_*，下次只增量 append
@@ -687,10 +687,10 @@ void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<L
   stable_last_index_ = log_.last_index();
   role_ = Role::kFollower;
   leader_id_.clear();
-  ready_hs_dirty_ = false;
-  ready_unstable_.clear();
-  ready_committed_.clear();
-  ready_snaps_.clear();
+  ready_io_.ready_hs_dirty_ = false;
+  ready_io_.ready_unstable_.clear();
+  ready_io_.ready_committed_.clear();
+  ready_io_.ready_snaps_.clear();
   outbound_.clear();
 }
 
@@ -740,9 +740,9 @@ bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
 
     const uint64_t idx = log_.append(term_, std::move(data));
     if (opts_.external_io) {
-      if (auto e = log_.entry(idx)) ready_unstable_.push_back(*e);
+      if (auto e = log_.entry(idx)) ready_io_.ready_unstable_.push_back(*e);
     }
-    match_index_[opts_.self_id] = idx;
+    progress_.match_index_[opts_.self_id] = idx;
     if (assigned_index) *assigned_index = idx;
 
     persist_locked();
@@ -809,7 +809,7 @@ void RaftNode::tick() {
       }
       for (auto& [id, quiet] : peer_quiet_ticks_) {
         // 快照在途 / 本轮发不出 AE：不涨 quiet（否则本机管道拥塞会被当成网络分区）
-        if (snap_inflight_.count(id) || peer_send_blocked_.count(id)) continue;
+        if (progress_.snap_inflight_.count(id) || progress_.peer_send_blocked_.count(id)) continue;
         ++quiet;
       }
       maybe_check_quorum();
@@ -861,9 +861,9 @@ void RaftNode::maybe_auto_leave_joint() {
   encode_conf(leave, &payload);
   auto idx = log_.append(term_, std::move(payload));
   if (opts_.external_io) {
-    if (auto e = log_.entry(idx)) ready_unstable_.push_back(*e);
+    if (auto e = log_.entry(idx)) ready_io_.ready_unstable_.push_back(*e);
   }
-  match_index_[opts_.self_id] = idx;
+  progress_.match_index_[opts_.self_id] = idx;
   need_bcast_ = true;
   persist_locked();
   SKV_INFO << "shard=" << opts_.shard_id << " auto LeaveJoint proposed idx=" << idx;
@@ -882,8 +882,8 @@ void RaftNode::become_follower(uint64_t term, const std::string& leader) {
   leader_id_ = leader;
   election_elapsed_ = 0;
   leader_quorum_grace_ticks_ = 0;
-  inflight_.clear();
-  snap_inflight_.clear();
+  progress_.inflight_.clear();
+  progress_.snap_inflight_.clear();
 }
 
 void RaftNode::become_candidate() {
@@ -905,16 +905,16 @@ void RaftNode::become_leader() {
   leader_id_ = opts_.self_id;
   heartbeat_elapsed_ = 0;
   peer_quiet_ticks_.clear();
-  inflight_.clear();
-  snap_inflight_.clear();
-  probe_inflight_.clear();
-  peer_send_blocked_.clear();
+  progress_.inflight_.clear();
+  progress_.snap_inflight_.clear();
+  progress_.probe_inflight_.clear();
+  progress_.peer_send_blocked_.clear();
   for (const auto& p : opts_.peers) {
-    next_index_[p.id] = log_.last_index() + 1;
-    match_index_[p.id] = 0;
+    progress_.next_index_[p.id] = log_.last_index() + 1;
+    progress_.match_index_[p.id] = 0;
     if (!p.learner && p.id != opts_.self_id) peer_quiet_ticks_[p.id] = 0;
   }
-  match_index_[opts_.self_id] = log_.last_index();
+  progress_.match_index_[opts_.self_id] = log_.last_index();
   ++election_count_;
   // 至少撑过一轮选举超时，等心跳 ACK 回来再启用 check_quorum。
   leader_quorum_grace_ticks_ = election_timeout_ticks_ + 2;
@@ -981,17 +981,17 @@ void RaftNode::start_election() {
 
 // Leader：向各 peer 发心跳 / 探测 AE；落后太多则改发 InstallSnapshot。
 void RaftNode::broadcast_heartbeat() {
-  peer_send_blocked_.clear();
+  progress_.peer_send_blocked_.clear();
   for (const auto& p : opts_.peers) {
     if (p.id == opts_.self_id) continue;
     // peer 的 next 已落在 compact 窗口之前：只能靠快照追上
-    if (next_index_[p.id] < log_.first_index()) {
+    if (progress_.next_index_[p.id] < log_.first_index()) {
       if (!opts_.external_io && !snap_provider_) {
         SKV_WARN << "shard=" << opts_.shard_id << " peer=" << p.id
                  << " behind compact window but no snap_provider; skip InstallSnapshot";
         continue;
       }
-      if (snap_inflight_.count(p.id)) continue;
+      if (progress_.snap_inflight_.count(p.id)) continue;
       if (opts_.snapshot_min_interval_ms > 0) {
         const auto now = std::chrono::steady_clock::now();
         auto it = last_snap_sent_.find(p.id);
@@ -1002,10 +1002,10 @@ void RaftNode::broadcast_heartbeat() {
       }
 
       if (!try_inc_inflight(p.id)) {
-        peer_send_blocked_.insert(p.id);
+        progress_.peer_send_blocked_.insert(p.id);
         continue;
       }
-      snap_inflight_.insert(p.id);
+      progress_.snap_inflight_.insert(p.id);
       uint64_t last_idx = last_applied_ > 0 ? last_applied_ : (log_.first_index() - 1);
       uint64_t last_term = log_.snapshot_term();
       if (auto e = log_.entry(last_idx)) last_term = e->term;
@@ -1016,7 +1016,7 @@ void RaftNode::broadcast_heartbeat() {
         meta.term = last_term;
         meta.to = p.id;
         meta.conf_state = conf_csv;
-        ready_snaps_.push_back(meta);
+        ready_io_.ready_snaps_.push_back(meta);
         // 空 blob：外层 SnapWorker 填充后发送（附带 conf_state）
         std::ostringstream oss;
         oss << term_ << '|' << last_idx << '|' << last_term << '|';
@@ -1035,21 +1035,21 @@ void RaftNode::broadcast_heartbeat() {
       continue;
     }
 
-    uint64_t prev = next_index_[p.id] > 0 ? next_index_[p.id] - 1 : 0;
+    uint64_t prev = progress_.next_index_[p.id] > 0 ? progress_.next_index_[p.id] - 1 : 0;
     uint64_t prev_term = 0;
     if (prev == log_.first_index() - 1) {
       prev_term = log_.snapshot_term();
     } else if (auto e = log_.entry(prev)) {
       prev_term = e->term;
     }
-    auto ents = log_.entries_from(next_index_[p.id], opts_.max_ae_entries, opts_.max_ae_bytes);
+    auto ents = log_.entries_from(progress_.next_index_[p.id], opts_.max_ae_entries, opts_.max_ae_bytes);
     const bool probe = ents.empty();
     if (probe) {
       // 空心跳不占复制管道额度，避免落后 peer 的 snap/AE 堵死保活 → 误 check_quorum
-      if (probe_inflight_.count(p.id)) continue;
-      probe_inflight_.insert(p.id);
+      if (progress_.probe_inflight_.count(p.id)) continue;
+      progress_.probe_inflight_.insert(p.id);
     } else if (!try_inc_inflight(p.id)) {
-      peer_send_blocked_.insert(p.id);
+      progress_.peer_send_blocked_.insert(p.id);
       continue;
     }
     std::ostringstream oss;
@@ -1184,7 +1184,7 @@ void RaftNode::apply_conf_entry(const LogEntry& e) {
 //   apply_scheduled_  本函数已经「安排出去」的最大 index（塞进 Ready 或同步调了 on_apply）
 //   last_applied_     状态机真正做完的最大 index（external_io 下由 Store report_applied 再抬）
 //
-// external_io：普通条目只进 ready_committed_；ConfChange 仍在核内立刻改成员表。
+// external_io：普通条目只进 ready_io_.ready_committed_；ConfChange 仍在核内立刻改成员表。
 // 嵌入（Meta）：同步 on_apply，scheduled 与 applied 一起走。
 void RaftNode::apply_committed() {
   while (apply_scheduled_ < commit_index_) {
@@ -1210,7 +1210,7 @@ void RaftNode::apply_committed() {
 
     if (opts_.external_io) {
       if (is_conf) apply_conf_entry(*e);
-      ready_committed_.push_back(*e);
+      ready_io_.ready_committed_.push_back(*e);
       apply_scheduled_ = idx;
       if (is_conf) last_applied_ = idx;
       continue;
@@ -1388,7 +1388,7 @@ void RaftNode::on_append_entries(const std::string& from, uint64_t term, uint64_
   }
   if (opts_.external_io && !entries.empty()) {
     for (const auto& e : entries) {
-      if (auto got = log_.entry(e.index)) ready_unstable_.push_back(*got);
+      if (auto got = log_.entry(e.index)) ready_io_.ready_unstable_.push_back(*got);
     }
   }
   *success = true;
@@ -1439,8 +1439,8 @@ void RaftNode::on_append_entries_reply(const std::string& from, uint64_t term, b
     dec_inflight(from);
     if (success) {
       note_peer_progress(from);
-      match_index_[from] = match_index;
-      next_index_[from] = match_index + 1;
+      progress_.match_index_[from] = match_index;
+      progress_.next_index_[from] = match_index + 1;
       // 刷新 lease（多数派有进展）
       lease_expire_ = std::chrono::steady_clock::now() +
                       std::chrono::milliseconds(opts_.leader_lease_ms);
@@ -1449,14 +1449,14 @@ void RaftNode::on_append_entries_reply(const std::string& from, uint64_t term, b
       apply_committed();
       persist_locked();
       // 仅当该 peer 仍有未复制条目时继续追赶；已追平则交给周期性 heartbeat。
-      if (next_index_[from] <= log_.last_index()) {
+      if (progress_.next_index_[from] <= log_.last_index()) {
         need_bcast_ = true;
         maybe_broadcast();
       }
     } else {
       // 对端可达（仅日志不匹配）：计入活跃，避免 check_quorum 误 step-down
       note_peer_progress(from);
-      if (next_index_[from] > 0) --next_index_[from];
+      if (progress_.next_index_[from] > 0) --progress_.next_index_[from];
       broadcast_heartbeat();
       need_bcast_ = false;
     }
@@ -1569,8 +1569,8 @@ void RaftNode::on_install_snapshot_reply(const std::string& from, uint64_t term,
     }
     if (success) {
       note_peer_progress(from);
-      match_index_[from] = match_index;
-      next_index_[from] = match_index + 1;
+      progress_.match_index_[from] = match_index;
+      progress_.next_index_[from] = match_index + 1;
       SKV_INFO << "shard=" << opts_.shard_id << " InstallSnapshot reply ok from=" << from
                << " match=" << match_index;
       maybe_commit();
@@ -1580,7 +1580,7 @@ void RaftNode::on_install_snapshot_reply(const std::string& from, uint64_t term,
     } else {
       // 安装失败（对端 term/状态）：保持 next 在快照窗口，下轮继续发
       note_peer_progress(from);
-      next_index_[from] = 0;
+      progress_.next_index_[from] = 0;
       need_bcast_ = true;
     }
   }
@@ -1594,10 +1594,10 @@ void RaftNode::add_peer(const Peer& p) {
     if (!p.address.empty()) existing.address = p.address;
     // 重试 ADD_LEARNER：若仍未追上，重置为快照窗口并催复制
     if (role_ == Role::kLeader) {
-      auto mit = match_index_.find(p.id);
-      if (mit == match_index_.end() || mit->second == 0) {
-        next_index_[p.id] = 0;
-        match_index_[p.id] = 0;
+      auto mit = progress_.match_index_.find(p.id);
+      if (mit == progress_.match_index_.end() || mit->second == 0) {
+        progress_.next_index_[p.id] = 0;
+        progress_.match_index_[p.id] = 0;
         need_bcast_ = true;
       }
     }
@@ -1608,8 +1608,8 @@ void RaftNode::add_peer(const Peer& p) {
   }
   opts_.peers.push_back(p);
   // 新 peer 空日志：一律先走快照（next < first），避免 AE 探测过慢 / compact 窗口不匹配
-  next_index_[p.id] = 0;
-  match_index_[p.id] = 0;
+  progress_.next_index_[p.id] = 0;
+  progress_.match_index_[p.id] = 0;
   if (role_ == Role::kLeader) need_bcast_ = true;
   if (opts_.on_peer_addr && !p.address.empty()) {
     opts_.on_peer_addr(p.id, p.address);
@@ -1620,12 +1620,12 @@ void RaftNode::remove_peer(const std::string& id) {
   opts_.peers.erase(std::remove_if(opts_.peers.begin(), opts_.peers.end(),
                                    [&](const Peer& p) { return p.id == id; }),
                     opts_.peers.end());
-  next_index_.erase(id);
-  match_index_.erase(id);
-  inflight_.erase(id);
-  snap_inflight_.erase(id);
-  probe_inflight_.erase(id);
-  peer_send_blocked_.erase(id);
+  progress_.next_index_.erase(id);
+  progress_.match_index_.erase(id);
+  progress_.inflight_.erase(id);
+  progress_.snap_inflight_.erase(id);
+  progress_.probe_inflight_.erase(id);
+  progress_.peer_send_blocked_.erase(id);
   peer_quiet_ticks_.erase(id);
 }
 

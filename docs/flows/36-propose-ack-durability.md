@@ -38,7 +38,7 @@ sequenceDiagram
   participant RN as RaftNode
   participant ST as Store
   participant BS as BatchSystem
-  participant Eng as RocksRaftEngine
+  participant Eng as DbRaftEngine
   participant PQ as ProposalQueue
 
   C->>SF: Propose / ONEPC / RawPut
@@ -70,9 +70,9 @@ sequenceDiagram
 | 内存追加 | `raft/src/raft_node.cpp`：`RaftNode::propose` → `log_.append` |
 | 攒批唤醒 | `raft/src/raftstore/store.cpp`：`request_ready` → `drive_ready` |
 | 批末 Ready | 同文件：`on_raft_batch` → `process_ready` |
-| persist 接线 | `storage/src/storage_node.cpp`：`set_persist_fn` → `persist_ready` |
-| 组 batch + 写盘 | `raft/src/raft_node.cpp`：`build_engine_batch_locked` → `engine_->consume` |
-| 生产 Engine | `storage/src/rocks_raft_engine.cpp`：`RocksRaftEngine::consume` |
+| persist 接线 | `raft/src/raftstore/store.cpp`：默认 `get(rid)->persist_ready`（可 `set_persist_fn` 覆盖） |
+| 组 batch + 写盘 | `raft/src/core/raft_node.cpp`：`build_engine_batch_locked` → `engine_->consume` |
+| 生产 Engine | `raft/src/engine/db_raft_engine.cpp`：`DbRaftEngine::consume` |
 | 唤醒客户端 | `ProposalQueue::invoke` ← apply 路径 |
 
 ---

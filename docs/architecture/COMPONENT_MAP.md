@@ -42,7 +42,7 @@ Meta Raft ×3（路由 + TSO/GC + Scaler/Scheduler）
 | 元数据 | **Meta**（Raft×3） | 一体式控制面 |
 | 数据节点 | **StorageNode** | 单进程组装 Scheduler / RaftKV / Store / 引擎 |
 | KV 引擎 | `ShardEngineManager` → `data_dir/kv` | 单 Store 一份 DB；Region 靠 `KeyRange` |
-| Raft 日志 | `RaftEngine` + `RaftLogBatch` | Storage=`RocksRaftEngine`；Meta/UT=`FileRaftEngine` |
+| Raft 日志 | `RaftEngine` + `RaftLogBatch` | Storage=`DbRaftEngine`；Meta/UT=`FileRaftEngine` |
 
 ### 2.2 Storage 内部
 

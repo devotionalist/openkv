@@ -19,7 +19,7 @@ flowchart TB
   subgraph storage_layer["storage/"]
     SN[StorageNode]
     RKV[RaftKV]
-    RRE[RocksRaftEngine]
+    RRE[DbRaftEngine]
     RS[RaftService gRPC 入站]
   end
 
@@ -89,7 +89,7 @@ sequenceDiagram
   participant St as Store
   participant RT as Router/Mailbox
   participant BS as BatchSystem
-  participant Eng as RocksRaftEngine
+  participant Eng as DbRaftEngine
   participant FSM as KV Apply
 
   KV->>RN: propose(data)
@@ -180,7 +180,7 @@ flowchart TB
   B -->|相对 stable_* append/cut/state| C[RaftLogBatch]
   C --> D[RaftEngine::consume]
   D --> E[FileRaftEngine<br/>raft/ Meta·UT]
-  D --> F[RocksRaftEngine<br/>storage/ 生产]
+  D --> F[DbRaftEngine<br/>raft/engine 生产]
 ```
 
 `RaftLog` **没有**落盘 API；`raft_persist.cpp` 仅旧文本迁移。

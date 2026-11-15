@@ -562,25 +562,30 @@ void Store::process_ready(Peer& peer, bool pipeline) {
   auto* n = peer.raft_node();
   if (!n || !n->has_ready()) return;
 
+  // 落盘：自定义 persist_fn_ 优先；否则模块内默认 node->persist_ready（通用库闭环）。
+  auto do_persist = [this](uint32_t rid, raft::RaftNode* node, const raft::Ready& rd) {
+    if (persist_fn_) {
+      persist_fn_(rid, rd);
+    } else if (node) {
+      node->persist_ready(rd);
+    }
+  };
+
   if (pipeline && persist_pipeline_enabled()) {
     if (peer.persist_inflight()) return;  // 等 kPersistDone
     // 每次只提交一批 Ready 到 IO；完成后由 PersistDone 再发网/apply/advance。
     raft::Ready rd = n->take_ready();
     const uint32_t rid = peer.region_id();
-    if (!persist_fn_) {
-      dispatch_ready_after_persist(peer, rd);
-      // 无 persist 时继续抽干 Ready。
-      while (n->has_ready()) {
-        raft::Ready more = n->take_ready();
-        dispatch_ready_after_persist(peer, more);
-      }
-      return;
-    }
     auto rd_io = std::make_shared<raft::Ready>(rd);
     peer.set_pending_ready(std::move(rd));
     peer.set_persist_inflight(true);
     persist_->submit([this, rid, rd_io] {
-      if (persist_fn_) persist_fn_(rid, *rd_io);
+      // PersistWorker 线程：用 get(rid) 取节点，勿捕获 Peer&。
+      if (persist_fn_) {
+        persist_fn_(rid, *rd_io);
+      } else if (auto* node = get(rid)) {
+        node->persist_ready(*rd_io);
+      }
       router_->send_raft(rid, SignificantMsg{SignificantMsg::Type::kPersistDone, {}});
     });
     return;
@@ -589,7 +594,7 @@ void Store::process_ready(Peer& peer, bool pipeline) {
   // 同步路径：入站 RPC / persist_workers=0。
   while (n->has_ready()) {
     raft::Ready rd = n->take_ready();
-    if (persist_fn_) persist_fn_(peer.region_id(), rd);
+    do_persist(peer.region_id(), n, rd);
     dispatch_ready_after_persist(peer, rd);
   }
 }

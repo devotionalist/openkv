@@ -107,7 +107,7 @@ StorageNode::StorageNode(NodeConfig cfg) : cfg_(std::move(cfg)) {
   engines_->migrate_legacy_shards_if_needed();
   {
     const auto raft_path = (std::filesystem::path(cfg_.data_dir) / "raft").string();
-    raft_engine_ = std::make_shared<RocksRaftEngine>(raft_path, sync);
+    raft_engine_ = std::make_shared<raft::DbRaftEngine>(raft_path, sync);
   }
   // 默认开启自动分裂（region-split-keys / region-split-size≈96MiB）；
   // 环境变量设 0 可关。
@@ -2260,7 +2260,7 @@ void StorageNode::start() {
     opts.raft_group_id = shard_id;
     opts.persist_sync = raft::parse_sync_mode(cfg_.persist_sync);
     opts.compact_threshold = 128;
-    // 兼容旧 per-region 文本目录 → 导入 RocksRaftEngine
+    // 兼容旧 per-region 文本目录 → 导入 DbRaftEngine
     if (raft_engine_ && !raft_engine_->get_raft_state(shard_id)) {
       const auto legacy =
           (std::filesystem::path(cfg_.data_dir) / ("raft_region_" + std::to_string(shard_id)))
@@ -2273,7 +2273,7 @@ void StorageNode::start() {
         log.load(hs.first_index, hs.snapshot_term, ents);
         raft::save_group_to_engine(*raft_engine_, shard_id, hs, log,
                                    opts.persist_sync != raft::SyncMode::kNone);
-        SKV_INFO << "migrated legacy raft_region_" << shard_id << " -> RocksRaftEngine";
+        SKV_INFO << "migrated legacy raft_region_" << shard_id << " -> DbRaftEngine";
       }
     }
     opts.on_peer_addr = [this](const std::string& id, const std::string& addr) {
@@ -2345,9 +2345,7 @@ void StorageNode::start() {
       [this](uint32_t rid, uint64_t index, const std::string& data) { on_apply(rid, index, data); });
   multi_raft_->store().set_apply_batch_fn(
       [this](uint32_t rid, const std::vector<raft::LogEntry>& ents) { on_apply_entries(rid, ents); });
-  multi_raft_->store().set_persist_fn([this](uint32_t rid, const raft::Ready& rd) {
-    if (auto* n = multi_raft_->get(rid)) n->persist_ready(rd);
-  });
+  // 落盘走 Store 默认 persist_ready（模块内闭环）；此处只接发网/apply。
   multi_raft_->store().set_transport_fn(
       [this](uint32_t rid, const std::string& to, const std::string& type,
              const std::string& payload) {

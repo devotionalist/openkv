@@ -38,7 +38,7 @@ set(OPENKV_TEST_SOURCES
   raft/multi_raft_test.cpp
   raft/raft_persist_test.cpp
   raft/raft_engine_test.cpp
-  storage/rocks_raft_engine_test.cpp
+  raft/db_raft_engine_test.cpp
   raft/snap_stream_test.cpp
   raft/raft_joint_test.cpp
   raft/raft_read_index_test.cpp

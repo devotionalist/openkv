@@ -14,7 +14,7 @@
 
 // @file file_raft_engine.cpp
 // 实现：按 group 文件布局的 RaftEngine；纯追加 vs rewrite；state 原子替换。
-// 生产 Storage 请用 RocksRaftEngine；本实现面向 Meta / UT。
+// 生产 Storage 请用 DbRaftEngine；本实现面向 Meta / UT。
 
 #include "openkv/raft/file_raft_engine.hpp"
 

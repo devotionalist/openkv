@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// @file rocks_raft_engine.cpp
-// RocksDB 后端 RaftEngine（WriteBatch 原子写 state+log）。
+// @file db_raft_engine.cpp
+// 嵌入式 KV（当前后端 RocksDB）上的 RaftEngine（WriteBatch 原子写 state+log）。
 
-#include "openkv/storage/rocks_raft_engine.hpp"
+#include "openkv/raft/engine/db_raft_engine.hpp"
 
 #include "openkv/logging.hpp"
 
@@ -28,7 +28,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace openkv::storage {
+namespace openkv::raft {
 namespace fs = std::filesystem;
 
 namespace {
@@ -44,19 +44,19 @@ void put_be64(std::string* out, uint64_t v) {
 
 }  // namespace
 
-struct RocksRaftEngine::RocksHandle {
+struct DbRaftEngine::DbHandle {
   std::unique_ptr<rocksdb::DB> db;
   rocksdb::WriteOptions wo;
 };
 
-std::string RocksRaftEngine::state_key(uint64_t group_id) {
+std::string DbRaftEngine::state_key(uint64_t group_id) {
   std::string k;
   k.push_back('\x01');
   put_be64(&k, group_id);
   return k;
 }
 
-std::string RocksRaftEngine::log_key(uint64_t group_id, uint64_t index) {
+std::string DbRaftEngine::log_key(uint64_t group_id, uint64_t index) {
   std::string k;
   k.push_back('\x02');
   put_be64(&k, group_id);
@@ -64,26 +64,26 @@ std::string RocksRaftEngine::log_key(uint64_t group_id, uint64_t index) {
   return k;
 }
 
-std::string RocksRaftEngine::log_prefix(uint64_t group_id) {
+std::string DbRaftEngine::log_prefix(uint64_t group_id) {
   std::string k;
   k.push_back('\x02');
   put_be64(&k, group_id);
   return k;
 }
 
-class RocksLogBatch final : public raft::RaftLogBatch {
+class DbLogBatch final : public RaftLogBatch {
  public:
-  void append(uint64_t raft_group_id, std::vector<raft::LogEntry> entries) override {
+  void append(uint64_t raft_group_id, std::vector<LogEntry> entries) override {
     for (auto& e : entries) {
-      ops_.push_back(Op{Op::kPutLog, raft_group_id, e.index, raft::encode_log_entry(e), {}});
+      ops_.push_back(Op{Op::kPutLog, raft_group_id, e.index, encode_log_entry(e), {}});
     }
   }
   void cut_logs(uint64_t raft_group_id, uint64_t from, uint64_t to) override {
     if (to <= from) return;
     ops_.push_back(Op{Op::kCut, raft_group_id, from, {}, to});
   }
-  void put_raft_state(uint64_t raft_group_id, const raft::RaftLocalState& state) override {
-    ops_.push_back(Op{Op::kPutState, raft_group_id, 0, raft::encode_raft_local_state(state), {}});
+  void put_raft_state(uint64_t raft_group_id, const RaftLocalState& state) override {
+    ops_.push_back(Op{Op::kPutState, raft_group_id, 0, encode_raft_local_state(state), {}});
   }
   bool empty() const override { return ops_.empty(); }
 
@@ -97,7 +97,7 @@ class RocksLogBatch final : public raft::RaftLogBatch {
   std::vector<Op> ops_;
 };
 
-RocksRaftEngine::RocksRaftEngine(std::string db_path, raft::SyncMode sync)
+DbRaftEngine::DbRaftEngine(std::string db_path, SyncMode sync)
     : path_(std::move(db_path)), sync_(sync) {
   fs::create_directories(path_);
   rocksdb::Options options;
@@ -107,52 +107,52 @@ RocksRaftEngine::RocksRaftEngine(std::string db_path, raft::SyncMode sync)
   rocksdb::DB* raw = nullptr;
   auto st = rocksdb::DB::Open(options, path_, &raw);
   if (!st.ok()) {
-    throw std::runtime_error(std::string("RocksRaftEngine open failed: ") + st.ToString());
+    throw std::runtime_error(std::string("DbRaftEngine open failed: ") + st.ToString());
   }
-  rocks_ = std::make_unique<RocksHandle>();
-  rocks_->db.reset(raw);
+  db_ = std::make_unique<DbHandle>();
+  db_->db.reset(raw);
   set_sync_mode(sync_);
-  SKV_INFO << "rocks raft engine opened path=" << path_ << " sync=" << raft::sync_mode_name(sync_);
+  SKV_INFO << "db raft engine opened path=" << path_ << " sync=" << sync_mode_name(sync_);
 }
 
-RocksRaftEngine::~RocksRaftEngine() = default;
+DbRaftEngine::~DbRaftEngine() = default;
 
-void RocksRaftEngine::set_sync_mode(raft::SyncMode m) {
+void DbRaftEngine::set_sync_mode(SyncMode m) {
   std::lock_guard<std::mutex> lock(mu_);
   sync_ = m;
-  if (!rocks_) return;
-  rocks_->wo = rocksdb::WriteOptions();
-  rocks_->wo.sync = (m != raft::SyncMode::kNone);
-  rocks_->wo.disableWAL = false;
+  if (!db_) return;
+  db_->wo = rocksdb::WriteOptions();
+  db_->wo.sync = (m != SyncMode::kNone);
+  db_->wo.disableWAL = false;
 }
 
-std::unique_ptr<raft::RaftLogBatch> RocksRaftEngine::make_log_batch(size_t) {
-  return std::make_unique<RocksLogBatch>();
+std::unique_ptr<RaftLogBatch> DbRaftEngine::make_log_batch(size_t) {
+  return std::make_unique<DbLogBatch>();
 }
 
-size_t RocksRaftEngine::consume(raft::RaftLogBatch& batch, bool sync) {
+size_t DbRaftEngine::consume(RaftLogBatch& batch, bool sync) {
   // Raft 日志生产落盘点：Store → RaftNode::persist_ready → 此处 WriteBatch。
   // sync=true（persist_sync=data）时 RocksDB WAL fsync；与业务 KV 库分离。
-  auto* rb = dynamic_cast<RocksLogBatch*>(&batch);
-  if (!rb || rb->empty() || !rocks_) return 0;
+  auto* rb = dynamic_cast<DbLogBatch*>(&batch);
+  if (!rb || rb->empty() || !db_) return 0;
 
   rocksdb::WriteBatch wb;
   size_t bytes = 0;
   for (const auto& op : rb->ops_) {
     switch (op.kind) {
-      case RocksLogBatch::Op::kPutState: {
+      case DbLogBatch::Op::kPutState: {
         auto key = state_key(op.group);
         wb.Put(key, op.value);
         bytes += key.size() + op.value.size();
         break;
       }
-      case RocksLogBatch::Op::kPutLog: {
+      case DbLogBatch::Op::kPutLog: {
         auto key = log_key(op.group, op.index);
         wb.Put(key, op.value);
         bytes += key.size() + op.value.size();
         break;
       }
-      case RocksLogBatch::Op::kCut: {
+      case DbLogBatch::Op::kCut: {
         for (uint64_t i = op.index; i < op.cut_to; ++i) {
           wb.Delete(log_key(op.group, i));
           bytes += 16;
@@ -165,51 +165,51 @@ size_t RocksRaftEngine::consume(raft::RaftLogBatch& batch, bool sync) {
   rocksdb::WriteOptions wo;
   {
     std::lock_guard<std::mutex> lock(mu_);
-    wo = rocks_->wo;
+    wo = db_->wo;
   }
-  if (sync && sync_ == raft::SyncMode::kNone) {
+  if (sync && sync_ == SyncMode::kNone) {
     // 调用方要求 sync，即使引擎默认 none
     wo.sync = true;
   } else if (!sync) {
     wo.sync = false;
   }
 
-  auto st = rocks_->db->Write(wo, &wb);
+  auto st = db_->db->Write(wo, &wb);
   if (!st.ok()) {
-    SKV_WARN << "rocks raft consume failed: " << st.ToString();
+    SKV_WARN << "db raft consume failed: " << st.ToString();
     return 0;
   }
   rb->ops_.clear();
   return bytes;
 }
 
-std::optional<raft::RaftLocalState> RocksRaftEngine::get_raft_state(uint64_t raft_group_id) const {
-  if (!rocks_) return std::nullopt;
+std::optional<RaftLocalState> DbRaftEngine::get_raft_state(uint64_t raft_group_id) const {
+  if (!db_) return std::nullopt;
   std::string val;
-  auto st = rocks_->db->Get(rocksdb::ReadOptions(), state_key(raft_group_id), &val);
+  auto st = db_->db->Get(rocksdb::ReadOptions(), state_key(raft_group_id), &val);
   if (!st.ok()) return std::nullopt;
-  raft::RaftLocalState out;
-  if (!raft::decode_raft_local_state(val, &out)) return std::nullopt;
+  RaftLocalState out;
+  if (!decode_raft_local_state(val, &out)) return std::nullopt;
   return out;
 }
 
-std::optional<raft::LogEntry> RocksRaftEngine::get_entry(uint64_t raft_group_id,
+std::optional<LogEntry> DbRaftEngine::get_entry(uint64_t raft_group_id,
                                                         uint64_t index) const {
-  if (!rocks_) return std::nullopt;
+  if (!db_) return std::nullopt;
   std::string val;
-  auto st = rocks_->db->Get(rocksdb::ReadOptions(), log_key(raft_group_id, index), &val);
+  auto st = db_->db->Get(rocksdb::ReadOptions(), log_key(raft_group_id, index), &val);
   if (!st.ok()) return std::nullopt;
-  raft::LogEntry e;
-  if (!raft::decode_log_entry(val, &e)) return std::nullopt;
+  LogEntry e;
+  if (!decode_log_entry(val, &e)) return std::nullopt;
   return e;
 }
 
-size_t RocksRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end,
-                                         size_t max_size, std::vector<raft::LogEntry>* to) const {
-  if (!to || !rocks_ || end <= begin) return 0;
+size_t DbRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end,
+                                         size_t max_size, std::vector<LogEntry>* to) const {
+  if (!to || !db_ || end <= begin) return 0;
   std::string prefix = log_prefix(raft_group_id);
   std::string start = log_key(raft_group_id, begin);
-  std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions()));
+  std::unique_ptr<rocksdb::Iterator> it(db_->db->NewIterator(rocksdb::ReadOptions()));
   size_t n = 0;
   size_t bytes = 0;
   for (it->Seek(start); it->Valid(); it->Next()) {
@@ -224,8 +224,8 @@ size_t RocksRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin,
     for (int i = 0; i < 8; ++i) idx = (idx << 8) | static_cast<uint8_t>(k[1 + 8 + i]);
     if (idx >= end) break;
     if (idx < begin) continue;
-    raft::LogEntry e;
-    if (!raft::decode_log_entry(it->value().ToString(), &e)) continue;
+    LogEntry e;
+    if (!decode_log_entry(it->value().ToString(), &e)) continue;
     if (bytes + e.data.size() > max_size && n > 0) break;
     to->push_back(std::move(e));
     bytes += to->back().data.size();
@@ -234,18 +234,18 @@ size_t RocksRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin,
   return n;
 }
 
-size_t RocksRaftEngine::gc(uint64_t raft_group_id, uint64_t from, uint64_t to) {
+size_t DbRaftEngine::gc(uint64_t raft_group_id, uint64_t from, uint64_t to) {
   auto batch = make_log_batch();
   batch->cut_logs(raft_group_id, from, to);
-  return consume(*batch, sync_ != raft::SyncMode::kNone);
+  return consume(*batch, sync_ != SyncMode::kNone);
 }
 
-void RocksRaftEngine::clean(uint64_t raft_group_id) {
-  if (!rocks_) return;
+void DbRaftEngine::clean(uint64_t raft_group_id) {
+  if (!db_) return;
   rocksdb::WriteBatch wb;
   wb.Delete(state_key(raft_group_id));
   std::string prefix = log_prefix(raft_group_id);
-  std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions()));
+  std::unique_ptr<rocksdb::Iterator> it(db_->db->NewIterator(rocksdb::ReadOptions()));
   for (it->Seek(prefix); it->Valid(); it->Next()) {
     auto k = it->key();
     if (k.size() < prefix.size() ||
@@ -257,12 +257,12 @@ void RocksRaftEngine::clean(uint64_t raft_group_id) {
   rocksdb::WriteOptions wo;
   {
     std::lock_guard<std::mutex> lock(mu_);
-    wo = rocks_->wo;
+    wo = db_->wo;
   }
-  auto st = rocks_->db->Write(wo, &wb);
+  auto st = db_->db->Write(wo, &wb);
   if (!st.ok()) {
-    SKV_WARN << "rocks raft clean failed group=" << raft_group_id << " " << st.ToString();
+    SKV_WARN << "db raft clean failed group=" << raft_group_id << " " << st.ToString();
   }
 }
 
-}  // namespace openkv::storage
+}  // namespace openkv::raft

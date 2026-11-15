@@ -25,7 +25,7 @@
 #include "openkv/storage/kv_engine.hpp"
 #include "openkv/storage/proposal_queue.hpp"
 #include "openkv/storage/raftkv.hpp"
-#include "openkv/storage/rocks_raft_engine.hpp"
+#include "openkv/raft/engine/db_raft_engine.hpp"
 #include "openkv/storage/scheduler.hpp"
 #include "openkv/storage/coprocessor.hpp"
 #include "openkv/storage/watch_hub.hpp"
@@ -179,7 +179,7 @@ class StorageNode {
   NodeConfig cfg_;
   std::unique_ptr<ShardEngineManager> engines_;
   /// 共享 RaftEngine（data_dir/raft RocksDB）。
-  std::shared_ptr<RocksRaftEngine> raft_engine_;
+  std::shared_ptr<raft::DbRaftEngine> raft_engine_;
   std::unique_ptr<raft::MultiRaft> multi_raft_;
   std::unique_ptr<RaftKV> raftkv_;
   std::unique_ptr<Scheduler> scheduler_;
