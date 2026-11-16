@@ -21,7 +21,7 @@
 #include "openkv/logging.hpp"
 #include "openkv/raft/raft_log.hpp"
 #include "openkv/raft/raft_log_file.hpp"
-#include "openkv/raft/raft_persist.hpp"
+#include "openkv/raft/engine/sync_mode.hpp"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -419,20 +419,6 @@ void FileRaftEngine::clean(uint64_t raft_group_id) {
   if (ec) {
     SKV_WARN << "FileRaftEngine: clean failed group=" << raft_group_id << " ec=" << ec.message();
   }
-}
-
-bool FileRaftEngine::migrate_legacy_persist_dir(const std::string& legacy_dir,
-                                               uint64_t raft_group_id) {
-  RaftPersist legacy(legacy_dir, SyncMode::kNone);
-  PersistedHardState hs;
-  std::vector<LogEntry> ents;
-  if (!legacy.load(&hs, &ents)) return false;
-  RaftLog log;
-  log.load(hs.first_index, hs.snapshot_term, ents);
-  save_group_to_engine(*this, raft_group_id, hs, log, sync_ != SyncMode::kNone);
-  SKV_INFO << "FileRaftEngine: migrated legacy dir=" << legacy_dir << " group=" << raft_group_id
-           << " entries=" << ents.size();
-  return true;
 }
 
 }  // namespace openkv::raft

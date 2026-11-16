@@ -2,7 +2,7 @@
 
 **设计总览：** [DATA_HA.md](../architecture/DATA_HA.md) §3.2 · 演练：[FAULT_DRILL.md](../ops/FAULT_DRILL.md)  
 **场景：** Storage 宕机再启；或落后过久超出本地日志窗口。  
-**关键代码：** `RaftPersist` · `RaftNode::load_from_disk` / `recover_apply` · `RAFT_AE` / `RAFT_SNAP` · `KvEngine::{create,apply}_snapshot`
+**关键代码：** `RaftEngine`（File/Db）· `RaftNode::load_from_disk` / `recover_apply` · `RAFT_AE` / `RAFT_SNAP` · `KvEngine::{create,apply}_snapshot`
 
 启动装载见 [07-storage-startup](07-storage-startup.md)；选举见 [06-raft-election-commit](06-raft-election-commit.md)。
 
@@ -11,7 +11,7 @@ flowchart TD
   A[进程崩溃 / kill -9] --> B[重启 storage_node]
   B --> C[StorageNode::start]
   C --> D[每 shard 构造 RaftNode<br/>persist_dir=raft_shard_N]
-  D --> E[load_from_disk<br/>hard.state + log.entries]
+  D --> E[load_from_disk<br/>RaftEngine state + log]
   E --> F[恢复 term / voted_for<br/>commit / last_applied / log]
   F --> G[recover_apply<br/>补齐 last_applied → commit]
   G --> H[KvEngine 打开既有 RocksDB]
@@ -35,10 +35,10 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  HS[hard.state<br/>term voted commit<br/>applied first snap_term] --> LN[RaftNode 内存状态]
-  LE[log.entries] --> LN
+  HS[RaftLocalState<br/>term voted commit<br/>applied first snap_term] --> LN[RaftNode 内存状态]
+  LE[Engine 日志 entries] --> LN
   LN --> RA[recover_apply<br/>仅 apply 缺口]
-  RA --> RD[RocksDB 已有数据<br/>put 幂等可重放]
+  RA --> RD[业务 KV 已有数据<br/>put 幂等可重放]
 ```
 
 ## 何时走 Snapshot

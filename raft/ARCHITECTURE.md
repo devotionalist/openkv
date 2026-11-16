@@ -27,7 +27,8 @@
 │  调度：raftstore::Store · Router · BatchSystem · Peer         │
 │        （按 Region mailbox + Raft/Apply 双池）                 │
 ├─────────────────────────────────────────────────────────────┤
-│  协议：RaftNode / RawNode · Ready · RaftLog（内存）            │
+│  协议：RaftNode + Election/Membership/Replication/LogPersist  │
+│         · Apply/LinearRead/ReadyPump · Progress/ReadyIo       │
 ├─────────────────────────────────────────────────────────────┤
 │  持久化：RaftEngine（接口）                                    │
 │         ├─ DbRaftEngine（生产，本库 engine/）                 │
@@ -88,15 +89,13 @@
 
 编解码独立在 `raft_log_file`（文件容器）与 `raft_engine`（单条 RLE / RLS）。**禁止**在 append 路径再次写入带魔数的「整文件 blob」。
 
-## 6. 遗留路径
+## 6. 耐久类型（非引擎）
 
-- `RaftPersist`：旧文本 `hard.state` / `log.entries`，仅迁移与兼容单测。
-- `FileRaftEngine::migrate_legacy_persist_dir`：导入后一律走 Engine。
-
-新代码不得再写 `RaftPersist::save` 作为主路径。
+- `SyncMode` / `PersistedHardState`：定义在 `engine/sync_mode.hpp`（旧 `raft_persist.hpp` 仅转发）。
+- 落盘实现只有 `FileRaftEngine` 与 `DbRaftEngine`；已删除旧文本 `hard.state` / `log.entries` 读写与迁移。
 
 ## 7. 验收
 
-- 单元：`RaftEngineTest.*`（含纯追加、cut/gc、CRC）。
+- 单元：`RaftEngineTest.*`（含纯追加、cut/gc、CRC）；`RaftPersistTest.*`（File 引擎重启恢复，名称历史遗留）。
 - 集成：现有 `raftstore` / `RaftNode` 用例不回归。
-- 架构：本文件与 `README.md` 文件索引一致；热路径注释不引用外部产品名对照。
+- 架构：本文件与 `README.md` 文件索引一致；`engine/` 下无 `RaftPersist` 类。

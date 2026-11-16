@@ -25,10 +25,17 @@ Propose → Store::request_ready → BatchSystem
 
 | 类型 | 作用 |
 |------|------|
-| `RaftNode` | 单 Group 门面（选举/复制/成员变更协调） |
+| `RaftNode` | 单 Group 门面（编排复制/Ready/落盘） |
+| `Election` | 选主：角色切换、PreVote/Vote、CheckQuorum |
+| `Membership` | 成员表 / Joint / ConfChange / 多数派 |
+| `Replication` | 心跳/AE、抬 commit、InstallSnapshot |
+| `LogPersist` | 组 batch、刷 RaftEngine、Ready persist |
+| `Apply` | 已提交条目推进状态机、compact、本地 FSM 快照、report/wait |
+| `LinearRead` | Leader lease + ReadIndex 多数派 ACK |
+| `ReadyPump` | 出站攒批/flush、has/take Ready、唤醒 Store |
 | `ProgressTracker` | Leader 复制进度 next/match/inflight |
-| `ReadyIo` | Ready 缓冲 |
-| `RawNode` / `MultiRaft` / `Ready` / `types` | 门面与类型 |
+| `ReadyIo` | Ready 缓冲字段 |
+| `MultiRaft` / `Ready` / `types` | 多组门面与类型 |
 
 ### `log/` — 内存日志与文件编解码
 
@@ -39,7 +46,7 @@ Propose → Store::request_ready → BatchSystem
 | `RaftEngine` | WAL 抽象 |
 | `FileRaftEngine` | 目录文件实现 |
 | `DbRaftEngine` | 嵌入式 KV 多 Group 实现（当前 RocksDB） |
-| `SyncMode` / `RaftPersist` | 耐久级别；旧文本迁移 |
+| `SyncMode` / `PersistedHardState` | 耐久级别与必须落盘的元状态（`sync_mode.hpp`） |
 
 ### `net/` — 出站传输（`GrpcRaftTransport`，仍绑 OpenKV storage.v1；后续可再拆）
 

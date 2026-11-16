@@ -53,9 +53,6 @@ class FileRaftEngine final : public RaftEngine {
   SyncMode sync_mode() const override { return sync_; }
   void set_sync_mode(SyncMode m) override { sync_ = m; }
 
-  /// 导入旧版 RaftPersist 目录（hard.state / log.entries）到指定 group。
-  bool migrate_legacy_persist_dir(const std::string& legacy_dir, uint64_t raft_group_id = 0);
-
  private:
   friend class FileLogBatch;
 

@@ -81,7 +81,7 @@
 | 模块 | 文件数 | 用例数 | 关注点 |
 |------|--------|--------|--------|
 | common | 6 | 19 | 哈希、Range、配置、Admin ACL、meta_rpc、grpc 关机宽限 |
-| raft | 11 | 34 | 日志、选主、Joint、快照流、RawNode、raftstore |
+| raft | 11 | 34 | 日志、选主、Joint、快照流、Ready 外提、raftstore |
 | storage | 12 | 47 | KvEngine/快照区间、MVCC（TxnScan/TxnTtl）、StoreFacade、Admin Raft、Watch |
 | meta | 4 | 29 | ClusterState、Scaler（含排队/取消）、Scheduler、Meta HA FSM |
 | compute | 2 | 8 | Router Locate、Proxy 重试 |
@@ -113,11 +113,11 @@
 | RaftNodeTest | SingleNodeElectionAndPropose, ProposeRejectedWhenFollower, ConfChangeAddLearner, PreVoteDoesNotBumpTerm, CheckQuorumStepsDownIsolatedLeader, VoteAndAppendBetweenPeers, ExternalIoAeReplyNotifiesReady, PersistReadyNoneIgnoresMustSync | `raft_node_test.cpp` |
 | RaftFaultInjectTest | DefaultDisabled, DropAeOnly, DropRaftCoversAll, DelayTakesMaxOfAeAndRaft, FromEnvReadsAndClamps | `raft_fault_inject_test.cpp` |
 | RaftJointTest | PromoteUsesEnterThenLeaveJoint, RejectConfWhileJointPending, ProposeAppliesSync | `raft_joint_test.cpp` |
-| RaftPersistTest | SaveAndRecoverApplied, InstallSnapshotCompactsAndApplies | `raft_persist_test.cpp` |
+| RaftPersistTest | SaveAndRecoverApplied, InstallSnapshotCompactsAndApplies（FileRaftEngine 重启恢复；套件名历史遗留） | `raft_persist_test.cpp` |
 | RaftEngineTest | FileLogBatchRoundTrip, EntryCrcRoundTrip, FilePureAppend, FileConflictRewrite, CutAndGc | `raft_engine_test.cpp` |
 | SnapStreamTest | HexRoundTrip, AssembleChunks, EmptySnapshot, RejectOutOfOrder | `snap_stream_test.cpp` |
 | RaftReadIndexTest / RaftFrameTest | LeaseReadOnSingleNode, SoftStateMetrics, EncodeDecodeRoundTrip | `raft_read_index_test.cpp` |
-| RawNodeTest | SingleNodeElectAndPropose, BootstrapThenPropose, ThreeNodeVoteAndProposeReady | `raw_node_test.cpp` |
+| RaftNodeReadyTest | SingleNodeElectAndPropose, BootstrapThenPropose, ThreeNodeVoteAndProposeReady | `raft_node_ready_test.cpp` |
 | MultiRaftTest | GetOrCreateAndLeaders | `multi_raft_test.cpp` |
 | RaftstoreTest | StoreTickElectsLeader, HibernateSkipsTickUntilWake, DriveReadyCoalescesPersist, RequestReadyCoalescesByCount, ApplyQosFlag | `raftstore_test.cpp` |
 | BatchSystemTest / ScheduleQueueTest | ScheduleDrainsWithoutScan, DedupAndPop | `batch_system_test.cpp` |

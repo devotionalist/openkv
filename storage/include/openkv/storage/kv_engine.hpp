@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "openkv/raft/raft_persist.hpp"
+#include "openkv/raft/engine/sync_mode.hpp"
 #include "openkv/region.hpp"
 
 #include <cstdint>

@@ -278,7 +278,7 @@ flowchart TB
   RN --> RL["RaftLog + LogEntry[]"]
   RN --> HS["HardState 字段<br/>term / voted_for / commit"]
   RN --> PI["peer 进度<br/>next_index / match_index"]
-  RN -.-> RP["RaftPersist 目录<br/>hard.state + log.entries"]
+  RN -.-> RP["RaftEngine<br/>File / Db"]
 ```
 
 ---

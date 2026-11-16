@@ -13,89 +13,18 @@
 // limitations under the License.
 
 // @file raft_node.cpp
-// 实现：复制/选举/Joint/快照；persist_locked、build_engine_batch、persist_ready。
-// Ready 路径 fsync 在 persist_io_mu_ 下、不持协议 mu_，便于 group commit。
+// 门面编排：propose/tick；Ready→ReadyPump，apply→Apply，线性读→LinearRead，
+// 复制→Replication，落盘→LogPersist。
 
 #include "openkv/raft/raft_node.hpp"
-#include "openkv/codec.hpp"
 
 #include "openkv/logging.hpp"
 
 #include <algorithm>
-#include <chrono>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <random>
 #include <sstream>
 
 namespace openkv::raft {
-namespace {
-
-using ::openkv::to_hex;
-
-// 快照 blob 前缀：SKVC1\n<conf_csv>\n<kv>。conf 与 ADMIN_ENSURE 同形（id@addr[*N],...）。
-constexpr std::string_view kSnapConfMagic = "SKVC1\n";
-
-std::string encode_peers_csv(const std::vector<Peer>& peers) {
-  std::ostringstream oss;
-  for (size_t i = 0; i < peers.size(); ++i) {
-    if (i) oss << ',';
-    oss << peers[i].id << '@' << peers[i].address;
-    if (peers[i].learner) oss << "*N";
-  }
-  return oss.str();
-}
-
-std::string wrap_snap_conf(const std::string& conf_csv, std::string kv) {
-  if (conf_csv.empty()) return kv;
-  return std::string(kSnapConfMagic) + conf_csv + "\n" + std::move(kv);
-}
-
-bool parse_peers_csv(std::string_view csv, std::vector<Peer>* out) {
-  if (!out) return false;
-  out->clear();
-  size_t i = 0;
-  while (i < csv.size()) {
-    size_t j = csv.find(',', i);
-    if (j == std::string_view::npos) j = csv.size();
-    auto item = csv.substr(i, j - i);
-    i = j + 1;
-    if (item.empty()) continue;
-    bool learner = false;
-    if (item.size() >= 2 && item.substr(item.size() - 2) == "*N") {
-      learner = true;
-      item.remove_suffix(2);
-    }
-    const auto at = item.find('@');
-    if (at == std::string_view::npos || at == 0) continue;
-    Peer p;
-    p.id = std::string(item.substr(0, at));
-    p.address = std::string(item.substr(at + 1));
-    p.learner = learner;
-    out->push_back(std::move(p));
-  }
-  return !out->empty();
-}
-
-// 若带 SKVC1 前缀则剥出 conf 与 kv；否则整段当 kv。
-void peel_snap_conf(std::string_view data, std::vector<Peer>* conf, std::string_view* kv) {
-  if (conf) conf->clear();
-  if (!data.starts_with(kSnapConfMagic)) {
-    if (kv) *kv = data;
-    return;
-  }
-  const auto rest = data.substr(kSnapConfMagic.size());
-  const auto nl = rest.find('\n');
-  if (nl == std::string_view::npos) {
-    if (kv) *kv = data;
-    return;
-  }
-  if (conf) parse_peers_csv(rest.substr(0, nl), conf);
-  if (kv) *kv = rest.substr(nl + 1);
-}
-
-}  // namespace
 
 RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
                    SnapshotProvider snap_provider, SnapshotApplier snap_applier)
@@ -103,7 +32,14 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
       on_apply_(std::move(on_apply)),
       send_(std::move(send)),
       snap_provider_(std::move(snap_provider)),
-      snap_applier_(std::move(snap_applier)) {
+      snap_applier_(std::move(snap_applier)),
+      election_(*this),
+      membership_(*this),
+      replication_(*this),
+      log_persist_(*this),
+      apply_(*this),
+      linear_read_(*this),
+      ready_pump_(*this) {
   if (opts_.max_inflight_msgs == 0) opts_.max_inflight_msgs = 1;
   if (opts_.max_ae_entries == 0) opts_.max_ae_entries = 64;
   if (opts_.max_ae_bytes == 0) opts_.max_ae_bytes = 256 * 1024;
@@ -111,7 +47,7 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
   std::mt19937 rng{std::random_device{}()};
   std::uniform_int_distribution<int> dist(opts_.election_timeout_ms / 100,
                                           opts_.election_timeout_ms / 50);
-  election_timeout_ticks_ = std::max(5, dist(rng));
+  election_.election_timeout_ticks_ = std::max(5, dist(rng));
   for (const auto& p : opts_.peers) {
     progress_.next_index_[p.id] = 1;
     progress_.match_index_[p.id] = 0;
@@ -122,15 +58,11 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
     engine_ = opts_.raft_engine;
   } else if (!opts_.persist_dir.empty()) {
     owned_file_engine_ = std::make_shared<FileRaftEngine>(opts_.persist_dir, opts_.persist_sync);
-    // 兼容旧 hard.state/log.entries
-    if (!owned_file_engine_->get_raft_state(group_id_)) {
-      owned_file_engine_->migrate_legacy_persist_dir(opts_.persist_dir, group_id_);
-    }
     engine_ = owned_file_engine_;
   }
   if (engine_) load_from_disk();
   // compact 后日志窗口不含历史：必须先恢复本地 FSM 快照再 recover_apply。
-  restore_local_fsm_snapshot();
+  apply_.restore_local_fsm_snapshot();
 }
 
 void RaftNode::load_from_disk() {
@@ -144,8 +76,8 @@ void RaftNode::load_from_disk() {
   last_applied_ = hs.last_applied;
   apply_scheduled_ = hs.last_applied;
   log_.load(hs.first_index, hs.snapshot_term, std::move(entries));
-  stable_first_index_ = log_.first_index();
-  stable_last_index_ = log_.last_index();
+  log_persist_.stable_first_index_ = log_.first_index();
+  log_persist_.stable_last_index_ = log_.last_index();
   role_ = Role::kFollower;
   leader_id_.clear();
   SKV_INFO << "shard=" << opts_.shard_id << " group=" << group_id_ << " recovered term=" << term_
@@ -153,126 +85,17 @@ void RaftNode::load_from_disk() {
            << " last_index=" << log_.last_index();
 }
 
-// external_io：只标记 HardState 脏并写入 ready_io_.ready_hs_（真正落盘在 PersistWorker）。
-// 嵌入模式：置 persist_dirty_，按 batch 刷 RaftEngine。
-void RaftNode::persist_locked() {
-  if (opts_.external_io) {
-    ready_io_.ready_hs_dirty_ = true;
-    ready_io_.ready_hs_.term = term_;
-    ready_io_.ready_hs_.vote = voted_for_;
-    ready_io_.ready_hs_.commit = commit_index_;
-    return;
-  }
-  persist_dirty_ = true;
-  ++persist_pending_;
-  persist_maybe_flush(false);
-}
-
-// 嵌入模式才在这里真正写 RaftEngine。生产 external_io 路径由 Store PersistWorker
-// 根据 Ready 落盘，协议核不能在这里抢着刷，否则和 Ready 管线重复/乱序。
-// force=false 时攒满 persist_batch_n 次脏标记再刷，减 fsync 次数。
-void RaftNode::persist_maybe_flush(bool force) {
-  if (opts_.external_io) return;  // 落盘归 PersistWorker，这里不碰盘
-  if (!engine_) return;           // 没引擎可写
-  if (!persist_dirty_) return;    // 没脏，没事做
-  if (!force && persist_pending_ < opts_.persist_batch_n) return;  // 未到批阈值
-  const bool sync = raft_log_sync(opts_.persist_sync);
-  engine_flush_locked(sync);
-  persist_dirty_ = false;
-  persist_pending_ = 0;
-}
-
-std::unique_ptr<RaftLogBatch> RaftNode::build_engine_batch_locked(uint64_t& out_first,
-                                                                 uint64_t& out_last) {
-  if (!engine_) return nullptr;
-  out_first = log_.first_index();
-  out_last = log_.last_index();
-  const uint64_t first = out_first;
-  const uint64_t last = out_last;
-
-  auto batch = engine_->make_log_batch();
-
-  // compact：first 前移 → 删盘上旧前缀
-  if (stable_first_index_ != 0 && first > stable_first_index_) {
-    batch->cut_logs(group_id_, stable_first_index_, first);
-  }
-
-  // 冲突截断：内存 last < 已稳定 last → 删尾部
-  if (stable_last_index_ != 0 && last < stable_last_index_) {
-    batch->cut_logs(group_id_, last + 1, stable_last_index_ + 1);
-  }
-
-  // 追加 (stable_last, last]；冷启动 stable=0 则写 [first, last]
-  uint64_t from = 0;
-  if (stable_last_index_ == 0) {
-    from = first;
-  } else if (last > stable_last_index_) {
-    from = std::max(stable_last_index_ + 1, first);
-  }
-  if (from != 0 && last >= from) {
-    // 与盘上重叠（同 index 重写）时先 cut 再 append
-    if (stable_last_index_ != 0 && from <= stable_last_index_) {
-      batch->cut_logs(group_id_, from, stable_last_index_ + 1);
-    }
-    std::vector<LogEntry> delta;
-    delta.reserve(static_cast<size_t>(last - from + 1));
-    for (uint64_t i = from; i <= last; ++i) {
-      if (auto e = log_.entry(i)) delta.push_back(*e);
-    }
-    if (!delta.empty()) batch->append(group_id_, std::move(delta));
-  }
-
-  PersistedHardState hs;
-  hs.term = term_;
-  hs.voted_for = voted_for_;
-  hs.commit_index = commit_index_;
-  hs.last_applied = last_applied_;
-  hs.first_index = first;
-  hs.snapshot_term = log_.snapshot_term();
-  batch->put_raft_state(group_id_, RaftLocalState::from_persisted(hs, last));
-  return batch;
-}
-
-void RaftNode::commit_stable_locked(uint64_t first, uint64_t last) {
-  if (last > stable_last_index_) {
-    stable_last_index_ = last;
-    stable_first_index_ = first;
-  } else if (last == stable_last_index_ && first > stable_first_index_) {
-    stable_first_index_ = first;
-  }
-}
-
-void RaftNode::engine_flush_locked(bool sync) {
-  // 非 external_io：在持 mu_ 时直接刷盘（Meta 嵌入）。Store 路径走 persist_ready。
-  if (!engine_) return;
-  uint64_t first = 0;
-  uint64_t last = 0;
-  auto batch = build_engine_batch_locked(first, last);
-  if (!batch || batch->empty()) return;
-  engine_->consume(*batch, sync);
-  commit_stable_locked(first, last);
-}
-
 void RaftNode::recover_apply() {
   // on_apply 里再进 recover_apply 会重入 mu_ / 自等 last_applied → 直接跳过。
   if (in_on_apply_.load(std::memory_order_relaxed)) return;
   std::lock_guard<std::mutex> lock(mu_);
-  apply_committed();
+  apply_.apply_committed();
   persist_locked();
 }
 
 SoftState RaftNode::soft_state() const {
   std::lock_guard<std::mutex> lock(mu_);
-  SoftState st;
-  st.role = role_;
-  st.leader_id = leader_id_;
-  st.term = term_;
-  st.commit_index = commit_index_;
-  st.last_applied = last_applied_;
-  st.election_count = election_count_;
-  st.snapshot_send_count = snapshot_send_count_;
-  st.in_joint = in_joint_;
-  st.conf_change_busy = in_joint_ || auto_leave_pending_;
+  SoftState st = ready_pump_.soft_state_locked();
   if (role_ == Role::kLeader) {
     uint64_t min_match = log_.last_index();
     bool any = false;
@@ -281,9 +104,9 @@ SoftState RaftNode::soft_state() const {
       auto it = progress_.match_index_.find(p.id);
       uint64_t m = it == progress_.match_index_.end() ? 0 : it->second;
       // 从未建连成功的 peer（match=0 且 quiet 已爆）不拖 lag，避免僵尸副本误导运维
-      auto qit = peer_quiet_ticks_.find(p.id);
-      if (m == 0 && qit != peer_quiet_ticks_.end() &&
-          qit->second >= election_timeout_ticks_ * 2) {
+      auto qit = election_.peer_quiet_ticks_.find(p.id);
+      if (m == 0 && qit != election_.peer_quiet_ticks_.end() &&
+          qit->second >= election_.election_timeout_ticks_ * 2) {
         continue;
       }
       any = true;
@@ -303,12 +126,12 @@ bool RaftNode::is_leader() const {
 
 bool RaftNode::in_joint() const {
   std::lock_guard<std::mutex> lock(mu_);
-  return in_joint_;
+  return membership_.in_joint_;
 }
 
 bool RaftNode::conf_change_busy() const {
   std::lock_guard<std::mutex> lock(mu_);
-  return in_joint_ || auto_leave_pending_;
+  return membership_.in_joint_ || membership_.auto_leave_pending_;
 }
 
 std::string RaftNode::leader_address() const {
@@ -343,7 +166,7 @@ uint64_t RaftNode::last_index() const {
 bool RaftNode::abdicate() {
   std::lock_guard<std::mutex> lock(mu_);
   if (role_ != Role::kLeader) return false;
-  become_follower(term_, {});
+  election_.become_follower(term_, {});
   persist_locked();
   return true;
 }
@@ -353,15 +176,15 @@ bool RaftNode::force_election() {
     std::lock_guard<std::mutex> lock(mu_);
     if (self_is_learner()) return false;
     if (role_ == Role::kLeader) return true;
-    election_elapsed_ = 0;
-    in_pre_vote_ = false;
-    pre_votes_.clear();
-    become_candidate();
-    start_election();
+    election_.election_elapsed_ = 0;
+    election_.in_pre_vote_ = false;
+    election_.pre_votes_.clear();
+    election_.become_candidate();
+    election_.start_election();
     persist_locked();
     mark_activity();
   }
-  flush_transport();
+  ready_pump_.flush_transport();
   return true;
 }
 
@@ -374,305 +197,13 @@ bool RaftNode::consume_activity_flag() {
 
 void RaftNode::mark_activity() { activity_flag_ = true; }
 
-void RaftNode::note_peer_progress(const std::string& peer_id) {
-  peer_quiet_ticks_[peer_id] = 0;
-}
-
-bool RaftNode::lease_valid_locked() const {
-  if (!opts_.enable_lease_read || opts_.leader_lease_ms == 0) return false;
-  if (role_ != Role::kLeader) return false;
-  return std::chrono::steady_clock::now() < lease_expire_;
-}
-
-void RaftNode::note_read_index_ack(const std::string& peer_id) {
-  if (pending_read_gen_ == 0) return;
-  read_index_acks_.insert(peer_id);
-  // self 计入
-  read_index_acks_.insert(opts_.self_id);
-  uint32_t need = in_joint_ ? std::max(majority_of(joint_old_voters_), majority_of(joint_new_voters_))
-                            : majority_of(voter_ids());
-  if (read_index_acks_.size() >= need) {
-    pending_read_gen_ = 0;
-    read_cv_.notify_all();
-  }
-}
-
 bool RaftNode::read_index(uint64_t* read_commit, uint32_t timeout_ms) {
-  if (!read_commit) return false;
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    if (role_ != Role::kLeader) return false;
-    *read_commit = commit_index_;
-    if (majority() <= 1 || lease_valid_locked()) {
-      return true;
-    }
-    pending_read_commit_ = commit_index_;
-    pending_read_gen_ = ++read_index_gen_;
-    read_index_acks_.clear();
-    read_index_acks_.insert(opts_.self_id);
-    broadcast_heartbeat();
-    need_bcast_ = false;
-  }
-  flush_transport();
-  {
-    std::unique_lock<std::mutex> lock(mu_);
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (pending_read_gen_ != 0) {
-      if (read_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
-        pending_read_gen_ = 0;
-        return false;
-      }
-    }
-    if (role_ != Role::kLeader) return false;
-    *read_commit = pending_read_commit_;
-    lease_expire_ = std::chrono::steady_clock::now() +
-                    std::chrono::milliseconds(opts_.leader_lease_ms);
-  }
-  return true;
-}
-
-void RaftNode::dec_inflight(const std::string& peer_id) {
-  auto it = progress_.inflight_.find(peer_id);
-  if (it != progress_.inflight_.end() && it->second > 0) --it->second;
-  progress_.snap_inflight_.erase(peer_id);
-  progress_.probe_inflight_.erase(peer_id);
-}
-
-void RaftNode::on_rpc_transport_fail(const std::string& peer_id) {
-  std::lock_guard<std::mutex> lock(mu_);
-  dec_inflight(peer_id);
-}
-
-bool RaftNode::try_inc_inflight(const std::string& peer_id) {
-  auto& n = progress_.inflight_[peer_id];
-  if (n >= opts_.max_inflight_msgs) return false;
-  ++n;
-  return true;
-}
-
-// Leader：多数派太久没回话就让位（Joint 期间不 step-down，否则 LeaveJoint 永远交不了）。
-void RaftNode::maybe_check_quorum() {
-  if (!opts_.check_quorum || role_ != Role::kLeader) return;
-  // Joint 内必须撑到 LeaveJoint 双多数提交；step-down 会清 match、反复 propose LeaveJoint
-  // 却永远 commit 不了（it-scale-live REMOVE 后卡 joint 根因）。
-  if (in_joint_) return;
-  // 新 Leader：先发心跳并等待 ACK，避免刚上任就被误判让位（TCP 排队时尤甚）。
-  if (leader_quorum_grace_ticks_ > 0) { // 如果领导者选举窗口时间大于0，则减少窗口时间
-    --leader_quorum_grace_ticks_;
-    return;
-  }
-  const auto voters = voter_ids(); // 获取所有投票者
-  if (majority_of(voters) <= 1) return; // 如果投票者数量小于等于1，则返回
-  // 宽松窗口：3×election_timeout（本机也常因单 worker 快照头阻塞误判）。
-  const int quiet_limit = election_timeout_ticks_ * 3; // 设置安静窗口时间
-  auto active_in = [&](const std::vector<std::string>& vs) -> uint32_t {
-    uint32_t active = 0;
-    for (const auto& id : vs) { // 遍历所有投票者
-      if (id == opts_.self_id) { // 如果是自己
-        ++active;
-        continue;
-      }
-      // 快照在途 / 管道满发不出：不算「对端无响应」
-      if (progress_.snap_inflight_.count(id) || progress_.peer_send_blocked_.count(id)) {
-        ++active;
-        continue;
-      }
-      auto it = peer_quiet_ticks_.find(id);
-      // 探针在途且 quiet 仍低：保护慢网；quiet 已爆说明发出后长期无 ACK → 失联
-      if (progress_.probe_inflight_.count(id) &&
-          (it == peer_quiet_ticks_.end() || it->second < quiet_limit)) {
-        ++active;
-        continue;
-      }
-      // 尚未建 quiet 槽（刚 Promote 的 voter）视为活跃，避免误判 step-down
-      if (it == peer_quiet_ticks_.end() || it->second < quiet_limit) ++active;
-    }
-    return active;
-  };
-  const bool ok = active_in(voters) >= majority_of(voters);
-  if (!ok) {
-    SKV_WARN << "shard=" << opts_.shard_id << " check_quorum step down term=" << term_;
-    become_follower(term_, {});
-    persist_locked();
-    mark_activity();
-  }
-}
-
-std::vector<std::string> RaftNode::voter_ids() const {
-  std::vector<std::string> out;
-  for (const auto& p : opts_.peers) {
-    if (!p.learner) out.push_back(p.id);
-  }
-  return out;
-}
-
-uint32_t RaftNode::majority_of(const std::vector<std::string>& voters) const {
-  size_t n = voters.empty() ? 1 : voters.size();
-  return static_cast<uint32_t>(n / 2 + 1);
-}
-
-uint32_t RaftNode::majority() const {
-  if (in_joint_) {
-    return std::max(majority_of(joint_old_voters_), majority_of(joint_new_voters_));
-  }
-  return majority_of(voter_ids());
-}
-
-// 指定投票人里，是否已有多数派 match >= index。
-bool RaftNode::quorate_at(const std::vector<std::string>& voters, uint64_t index) const {
-  uint32_t ok = 0;
-  for (const auto& id : voters) { // 遍历所有投票者
-    uint64_t m = 0;
-    if (id == opts_.self_id) { // 如果是自己
-      m = progress_.match_index_.count(opts_.self_id) ? progress_.match_index_.at(opts_.self_id) : log_.last_index();
-    } else {
-      auto it = progress_.match_index_.find(id);
-      m = it == progress_.match_index_.end() ? 0 : it->second;
-    }
-    if (m >= index) ++ok; // 如果匹配索引大于等于当前索引，则满足法定人数
-  }
-  return ok >= majority_of(voters); // 如果满足法定人数，则返回true
-}
-
-// 选票是否已达多数同意（含自己）。
-bool RaftNode::votes_won(const std::unordered_map<std::string, bool>& votes) const {
-  auto count_yes = [&](const std::vector<std::string>& vs) { // 统计投票者中投票为true的数量
-    uint32_t yes = 0;
-    for (const auto& id : vs) {
-      auto it = votes.find(id);
-      if (it != votes.end() && it->second) ++yes;
-    }
-    return yes;
-  };
-  if (!in_joint_) {
-    return count_yes(voter_ids()) >= majority_of(voter_ids());
-  }
-  return count_yes(joint_old_voters_) >= majority_of(joint_old_voters_) &&
-         count_yes(joint_new_voters_) >= majority_of(joint_new_voters_);
-}
-
-// 攒一条出站消息，等 flush_transport 再真正发出。
-void RaftNode::enqueue(std::string peer_id, std::string type, std::string payload) {
-  outbound_.push_back(Outbound{std::move(peer_id), std::move(type), std::move(payload)});
-}
-
-void RaftNode::flush_transport() {
-  if (opts_.external_io) return;  // 消息留在 outbound_，由 take_ready 外提
-  std::vector<Outbound> batch;
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    batch.swap(outbound_);
-  }
-  for (auto& m : batch) {
-    if (send_) send_(m.peer_id, m.type, m.payload);
-  }
-}
-
-bool RaftNode::has_ready() const {
-  std::lock_guard<std::mutex> lock(mu_);
-  return ready_io_.ready_hs_dirty_ || !ready_io_.ready_unstable_.empty() || !ready_io_.ready_committed_.empty() ||
-         !outbound_.empty() || !ready_io_.ready_snaps_.empty();
-}
-
-Ready RaftNode::take_ready() {
-  std::lock_guard<std::mutex> lock(mu_);
-  Ready rd;
-  if (ready_io_.ready_hs_dirty_) {
-    rd.hard_state = ready_io_.ready_hs_;
-    rd.must_sync = true;
-    ready_io_.ready_hs_dirty_ = false;
-  }
-  rd.entries = std::move(ready_io_.ready_unstable_);
-  ready_io_.ready_unstable_.clear();
-  rd.committed_entries = std::move(ready_io_.ready_committed_);
-  ready_io_.ready_committed_.clear();
-  for (auto& m : outbound_) {
-    rd.messages.push_back(Message{std::move(m.peer_id), std::move(m.type), std::move(m.payload)});
-  }
-  outbound_.clear();
-  if (!ready_io_.ready_snaps_.empty()) {
-    rd.snapshot = ready_io_.ready_snaps_.front();
-    ready_io_.ready_snaps_.erase(ready_io_.ready_snaps_.begin());
-  }
-  SoftState st;
-  st.role = role_;
-  st.leader_id = leader_id_;
-  st.term = term_;
-  st.commit_index = commit_index_;
-  st.last_applied = last_applied_;
-  st.election_count = election_count_;
-  st.snapshot_send_count = snapshot_send_count_;
-  st.in_joint = in_joint_;
-  st.conf_change_busy = in_joint_ || auto_leave_pending_;
-  rd.soft_state = st;
-  return rd;
-}
-
-void RaftNode::advance(const Ready& rd) {
-  std::lock_guard<std::mutex> lock(mu_);
-  if (!opts_.external_io) return;
-  // 普通条目 last_applied 由 report_applied（ApplyFsm）推进，避免 propose 误以为已落 KV。
-  (void)rd;
-}
-
-void RaftNode::persist_ready(const Ready& rd) {
-  // Store persist_fn 入口：把 Ready 对应的 unstable 日志/HardState 写入 RaftEngine。
-  // 持 mu_ 只组 batch；consume/fsync 在 persist_io_mu_ 下、不占协议锁，便于与 propose 重叠。
-  std::unique_ptr<RaftLogBatch> batch;
-  bool sync = false;
-  uint64_t first = 0;
-  uint64_t last = 0;
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    if (!opts_.external_io || !engine_) return;
-    // want_sync=这批值得刷；真正 fsync 还要看 persist_sync（none 时绝不 F_FULLFSYNC）。
-    const bool want_sync = rd.must_sync || ready_io_.ready_hs_dirty_ || !rd.entries.empty();
-    sync = want_sync && raft_log_sync(opts_.persist_sync);
-    batch = build_engine_batch_locked(first, last);
-    ready_io_.ready_hs_dirty_ = false;
-    persist_dirty_ = false;
-    persist_pending_ = 0;
-  }
-  if (!batch || batch->empty()) return;
-  {
-    std::lock_guard<std::mutex> io(persist_io_mu_);
-    engine_->consume(*batch, sync);  // DbRaftEngine / FileRaftEngine
-  }
-  std::lock_guard<std::mutex> lock(mu_);
-  commit_stable_locked(first, last);  // 推进 stable_*，下次只增量 append
-}
-
-void RaftNode::report_applied(uint64_t index) {
-  // Apply worker 完成 KV 写入后回告；推进 last_applied 并可能触发 log compact。
-  std::lock_guard<std::mutex> lock(mu_);
-  if (!opts_.external_io) return;
-  if (index > last_applied_) last_applied_ = index;
-  applied_cv_.notify_all();
-  maybe_compact();
-  persist_locked();
+  return linear_read_.read_index(read_commit, timeout_ms);
 }
 
 bool RaftNode::wait_applied(uint64_t index, uint32_t timeout_ms,
                             const std::function<void()>& tick) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  for (;;) {
-    {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (last_applied_ >= index) return true;
-    }
-    if (std::chrono::steady_clock::now() >= deadline) {
-      std::lock_guard<std::mutex> lock(mu_);
-      return last_applied_ >= index;
-    }
-    if (tick) tick();
-    std::unique_lock<std::mutex> lock(mu_);
-    if (last_applied_ >= index) return true;
-    const auto slice = std::min(deadline, std::chrono::steady_clock::now() +
-                                              std::chrono::milliseconds(2));
-    applied_cv_.wait_until(lock, slice);
-  }
+  return apply_.wait_applied(index, timeout_ms, tick);
 }
 
 void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<LogEntry>& entries) {
@@ -683,53 +214,12 @@ void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<L
   last_applied_ = hs.last_applied;
   apply_scheduled_ = hs.last_applied;
   log_.load(hs.first_index, hs.snapshot_term, std::vector<LogEntry>(entries));
-  stable_first_index_ = log_.first_index();
-  stable_last_index_ = log_.last_index();
+  log_persist_.stable_first_index_ = log_.first_index();
+  log_persist_.stable_last_index_ = log_.last_index();
   role_ = Role::kFollower;
   leader_id_.clear();
-  ready_io_.ready_hs_dirty_ = false;
-  ready_io_.ready_unstable_.clear();
-  ready_io_.ready_committed_.clear();
-  ready_io_.ready_snaps_.clear();
-  outbound_.clear();
-}
-
-bool RaftNode::encode_conf(const ConfChange& cc, std::string* out) const {
-  out->clear();
-  out->push_back(static_cast<char>(0xFF));
-  if (cc.type == ConfChange::kEnterJoint) {
-    out->push_back(static_cast<char>(ConfChange::kEnterJoint));
-    out->push_back(static_cast<char>(cc.joint_change));
-  } else {
-    out->push_back(static_cast<char>(cc.type));
-  }
-  out->append(cc.peer.id);
-  out->push_back('\0');
-  out->append(cc.peer.address);
-  return true;
-}
-
-bool RaftNode::decode_conf(std::string_view data, ConfChange* cc) {
-  if (data.size() < 3 || static_cast<unsigned char>(data[0]) != 0xFF) return false;
-  auto type = static_cast<ConfChange::Type>(data[1]);
-  size_t id_off = 2;
-  if (type == ConfChange::kEnterJoint) {
-    if (data.size() < 4) return false;
-    cc->type = ConfChange::kEnterJoint;
-    cc->joint_change = static_cast<ConfChange::Type>(data[2]);
-    id_off = 3;
-  } else {
-    cc->type = type;
-    cc->joint_change = type;
-  }
-  auto nul = data.find('\0', id_off);
-  if (nul == std::string_view::npos) return false;
-  cc->peer.id = std::string(data.substr(id_off, nul - id_off));
-  cc->peer.address = std::string(data.substr(nul + 1));
-  cc->peer.learner = (cc->type == ConfChange::kAddLearner ||
-                      (cc->type == ConfChange::kEnterJoint &&
-                       cc->joint_change == ConfChange::kAddLearner));
-  return true;
+  ready_io_.clear_batch();
+  ready_pump_.outbound_.clear();
 }
 
 // 提业务日志：true 只表示已 append 拿到 index，不等于已落盘/提交/apply。详见头文件。
@@ -746,17 +236,17 @@ bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
     if (assigned_index) *assigned_index = idx;
 
     persist_locked();
-    need_bcast_ = true;
+    replication_.need_bcast_ = true;
     // external_io 出站只走 Ready：本拍必须入队 AE，不能等 tick。
     // 嵌入路径才吃 coalesce_replication。
-    if (opts_.external_io || !opts_.coalesce_replication || majority() <= 1) {
-      maybe_broadcast();
+    if (opts_.external_io || !opts_.coalesce_replication || membership_.majority() <= 1) {
+      replication_.maybe_broadcast();
     }
-    maybe_commit();
-    apply_committed();
+    replication_.maybe_commit();
+    apply_.apply_committed();
     persist_locked();
   }
-  flush_transport();
+  ready_pump_.flush_transport();
   return true;
 }
 
@@ -764,869 +254,144 @@ bool RaftNode::propose_conf_change(const ConfChange& cc) {
   ConfChange out = cc;
   if (cc.type == ConfChange::kPromoteLearner || cc.type == ConfChange::kRemoveNode) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (in_joint_ || auto_leave_pending_) return false;
+    if (membership_.in_joint_ || membership_.auto_leave_pending_) return false;
     out.type = ConfChange::kEnterJoint;
     out.joint_change = cc.type;
   } else if (cc.type == ConfChange::kEnterJoint || cc.type == ConfChange::kLeaveJoint) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (cc.type == ConfChange::kEnterJoint && (in_joint_ || auto_leave_pending_)) return false;
+    if (cc.type == ConfChange::kEnterJoint &&
+        (membership_.in_joint_ || membership_.auto_leave_pending_)) {
+      return false;
+    }
   }
   std::string payload;
-  if (!encode_conf(out, &payload)) return false;
+  if (!membership_.encode_conf(out, &payload)) return false;
   return propose(std::move(payload));
 }
 
-void RaftNode::maybe_broadcast() {
-  // 仅 Leader 且显式标记 need_bcast_ 时发送；避免「空 AE 成功 → 再广播」正反馈打满 transport。
-  if (role_ != Role::kLeader || !need_bcast_) return;
-  broadcast_heartbeat();
-  need_bcast_ = false;
-}
-
-void RaftNode::set_ready_notify(std::function<void()> cb) { ready_notify_ = std::move(cb); }
-
-void RaftNode::maybe_notify_ready() {
-  // 回包线程：Ready 有货就立刻唤醒 Store，别干等 tick。
-  if (!opts_.external_io || !ready_notify_) return;
-  if (has_ready()) ready_notify_();
-}
-
-// 周期时钟：Leader 发心跳/查多数派；Follower 超时则选主。见头文件注释。
+// 周期时钟：Leader 发心跳/查多数派；Follower 超时则选主。
 void RaftNode::tick() {
   {
     std::lock_guard<std::mutex> lock(mu_);
     // 先 apply（ConfChange 加 peer / auto_leave），再心跳，避免新 learner 空等一整拍
-    apply_committed();
+    apply_.apply_committed();
     if (role_ == Role::kLeader) {
-      maybe_auto_leave_joint();
-      ++heartbeat_elapsed_;
+      membership_.maybe_auto_leave_joint();
+      ++election_.heartbeat_elapsed_;
       const bool hb =
-          heartbeat_elapsed_ * 100 >= static_cast<int>(opts_.heartbeat_ms);
-      if (hb || need_bcast_) {
-        if (hb) heartbeat_elapsed_ = 0;
-        broadcast_heartbeat();
-        need_bcast_ = false;
+          election_.heartbeat_elapsed_ * 100 >= static_cast<int>(opts_.heartbeat_ms);
+      if (hb || replication_.need_bcast_) {
+        if (hb) election_.heartbeat_elapsed_ = 0;
+        replication_.broadcast_heartbeat();
+        replication_.need_bcast_ = false;
       }
-      for (auto& [id, quiet] : peer_quiet_ticks_) {
+      for (auto& [id, quiet] : election_.peer_quiet_ticks_) {
         // 快照在途 / 本轮发不出 AE：不涨 quiet（否则本机管道拥塞会被当成网络分区）
         if (progress_.snap_inflight_.count(id) || progress_.peer_send_blocked_.count(id)) continue;
         ++quiet;
       }
-      maybe_check_quorum();
+      election_.maybe_check_quorum();
     } else if (!self_is_learner()) {
-      ++election_elapsed_; // 增加选举时间
-      if (election_elapsed_ >= election_timeout_ticks_) { // 如果选举时间大于等于选举超时时间
-        election_elapsed_ = 0; // 重置选举时间
+      ++election_.election_elapsed_;
+      if (election_.election_elapsed_ >= election_.election_timeout_ticks_) {
+        election_.election_elapsed_ = 0;
         // 超时后必须丢掉陈旧 leader_id。否则 on_request_pre_vote 因
         //「仍有 leader 且 elapsed 刚清零」互拒 PreVote，选主永久卡死（it-scale-live）。
-        leader_id_.clear(); // 清空领导者ID
-        if (opts_.enable_pre_vote) { // 如果启用预投票
-          start_pre_vote(); // 启动预投票
+        leader_id_.clear();
+        if (opts_.enable_pre_vote) {
+          election_.start_pre_vote();
         } else {
-          become_candidate(); // 成为候选者
-          start_election(); // 启动选举
+          election_.become_candidate();
+          election_.start_election();
         }
-        persist_locked(); // 持久化
-        mark_activity(); // 标记活动
+        persist_locked();
+        mark_activity();
       }
     }
-    persist_maybe_flush(true);  // tick 边界强制 group flush
+    log_persist_.persist_maybe_flush(true);  // tick 边界强制 group flush
   }
-  flush_transport();
+  ready_pump_.flush_transport();
 }
 
-// Joint 已稳定且 auto_leave：自动 propose LeaveJoint，收成单一配置。
-void RaftNode::maybe_auto_leave_joint() {
-  if (!auto_leave_pending_ || !in_joint_ || role_ != Role::kLeader) return;
-  // 已有本任期未提交的 LeaveJoint：只等双多数提交，勿重复 append（换主后旧任期条目需新任期条目才能提交）。
-  for (uint64_t i = commit_index_ + 1; i <= log_.last_index(); ++i) { // 从下一个要提交的日志索引开始，遍历到最后一个日志索引
-    auto e = log_.entry(i); // 获取日志条目
-    if (!e || e->term != term_) continue;
-    ConfChange cc;
-    if (decode_conf(e->data, &cc) && cc.type == ConfChange::kLeaveJoint) {
-      leave_joint_inflight_ = true;
-      need_bcast_ = true;
-      return;
-    }
-  }
-  if (leave_joint_inflight_) {
-    // 仅有旧任期 LeaveJoint：允许再 propose 一条本任期条目以推进 commit。
-    leave_joint_inflight_ = false;
-  }
-  leave_joint_inflight_ = true;
-  // auto_leave_pending_ 保留到 LeaveJoint apply，换主时可重新武装。
-  ConfChange leave;
-  leave.type = ConfChange::kLeaveJoint;
-  std::string payload;
-  encode_conf(leave, &payload);
-  auto idx = log_.append(term_, std::move(payload));
-  if (opts_.external_io) {
-    if (auto e = log_.entry(idx)) ready_io_.ready_unstable_.push_back(*e);
-  }
-  progress_.match_index_[opts_.self_id] = idx;
-  need_bcast_ = true;
-  persist_locked();
-  SKV_INFO << "shard=" << opts_.shard_id << " auto LeaveJoint proposed idx=" << idx;
-}
-
-void RaftNode::become_follower(uint64_t term, const std::string& leader) {
-  role_ = Role::kFollower;
-  in_pre_vote_ = false;
-  pre_votes_.clear();
-  if (term > term_) {
-    term_ = term;
-    voted_for_.clear();
-  } else {
-    term_ = term;
-  }
-  leader_id_ = leader;
-  election_elapsed_ = 0;
-  leader_quorum_grace_ticks_ = 0;
-  progress_.inflight_.clear();
-  progress_.snap_inflight_.clear();
-}
-
-void RaftNode::become_candidate() {
-  role_ = Role::kCandidate;
-  in_pre_vote_ = false;
-  pre_votes_.clear();
-  ++term_;
-  voted_for_ = opts_.self_id;
-  leader_id_.clear();
-  votes_.clear();
-  votes_[opts_.self_id] = true;
-  mark_activity();
-}
-
-void RaftNode::become_leader() {
-  role_ = Role::kLeader;
-  in_pre_vote_ = false;
-  pre_votes_.clear();
-  leader_id_ = opts_.self_id;
-  heartbeat_elapsed_ = 0;
-  peer_quiet_ticks_.clear();
-  progress_.inflight_.clear();
-  progress_.snap_inflight_.clear();
-  progress_.probe_inflight_.clear();
-  progress_.peer_send_blocked_.clear();
-  for (const auto& p : opts_.peers) {
-    progress_.next_index_[p.id] = log_.last_index() + 1;
-    progress_.match_index_[p.id] = 0;
-    if (!p.learner && p.id != opts_.self_id) peer_quiet_ticks_[p.id] = 0;
-  }
-  progress_.match_index_[opts_.self_id] = log_.last_index();
-  ++election_count_;
-  // 至少撑过一轮选举超时，等心跳 ACK 回来再启用 check_quorum。
-  leader_quorum_grace_ticks_ = election_timeout_ticks_ + 2;
-  lease_expire_ = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(opts_.leader_lease_ms);
-  // ConfChange 中途换主：Follower apply EnterJoint 时不会置 auto_leave；新 Leader 必须重武装。
-  if (in_joint_) {
-    auto_leave_pending_ = true;
-    leave_joint_inflight_ = false;
-    // Joint 退出前拉长 grace，给 LeaveJoint 复制窗口（即便 check_quorum 在 joint 内已跳过）。
-    leader_quorum_grace_ticks_ = election_timeout_ticks_ * 4 + 2;
-    SKV_INFO << "shard=" << opts_.shard_id << " become leader in_joint → re-arm LeaveJoint";
-  }
-  SKV_INFO << "shard=" << opts_.shard_id << " become leader term=" << term_
-           << " last_index=" << log_.last_index();
-  mark_activity();
-  broadcast_heartbeat();
-  need_bcast_ = false;
-  if (in_joint_) {
-    maybe_auto_leave_joint();
-    if (need_bcast_) {
-      broadcast_heartbeat();
-      need_bcast_ = false;
-    }
-  }
-}
-
-void RaftNode::step_down_if_stale(uint64_t term) {
-  if (term > term_) become_follower(term);
-}
-
-// 发起 PreVote（不抬 term）；多数同意后再正式选举。
-void RaftNode::start_pre_vote() {
-  in_pre_vote_ = true;
-  pre_votes_.clear();
-  pre_votes_[opts_.self_id] = true;
-  const uint64_t future_term = term_ + 1;
-  SKV_INFO << "shard=" << opts_.shard_id << " start pre-vote future_term=" << future_term;
-  mark_activity();
-  for (const auto& p : opts_.peers) {
-    if (p.id == opts_.self_id || p.learner) continue;
-    std::string payload = std::to_string(future_term) + "|" + std::to_string(log_.last_index()) +
-                          "|" + std::to_string(log_.last_term());
-    enqueue(p.id, "RequestPreVote", std::move(payload));
-  }
-
-  if (votes_won(pre_votes_)) {// 如果预投票获胜，则成为候选者并开始选举
-    become_candidate();// 成为候选者
-    start_election();// 开始选举
-  }
-}
-
-void RaftNode::start_election() {
-  SKV_INFO << "shard=" << opts_.shard_id << " start election term=" << term_;
-  mark_activity();
-  for (const auto& p : opts_.peers) {
-    if (p.id == opts_.self_id || p.learner) continue;
-    std::string payload = std::to_string(term_) + "|" + std::to_string(log_.last_index()) + "|" +
-                          std::to_string(log_.last_term());
-    enqueue(p.id, "RequestVote", std::move(payload));
-  }
-  if (votes_won(votes_)) become_leader();
-}
-
-// Leader：向各 peer 发心跳 / 探测 AE；落后太多则改发 InstallSnapshot。
-void RaftNode::broadcast_heartbeat() {
-  progress_.peer_send_blocked_.clear();
-  for (const auto& p : opts_.peers) {
-    if (p.id == opts_.self_id) continue;
-    // peer 的 next 已落在 compact 窗口之前：只能靠快照追上
-    if (progress_.next_index_[p.id] < log_.first_index()) {
-      if (!opts_.external_io && !snap_provider_) {
-        SKV_WARN << "shard=" << opts_.shard_id << " peer=" << p.id
-                 << " behind compact window but no snap_provider; skip InstallSnapshot";
-        continue;
-      }
-      if (progress_.snap_inflight_.count(p.id)) continue;
-      if (opts_.snapshot_min_interval_ms > 0) {
-        const auto now = std::chrono::steady_clock::now();
-        auto it = last_snap_sent_.find(p.id);
-        if (it != last_snap_sent_.end() &&
-            now - it->second < std::chrono::milliseconds(opts_.snapshot_min_interval_ms)) {
-          continue;
-        }
-      }
-
-      if (!try_inc_inflight(p.id)) {
-        progress_.peer_send_blocked_.insert(p.id);
-        continue;
-      }
-      progress_.snap_inflight_.insert(p.id);
-      uint64_t last_idx = last_applied_ > 0 ? last_applied_ : (log_.first_index() - 1);
-      uint64_t last_term = log_.snapshot_term();
-      if (auto e = log_.entry(last_idx)) last_term = e->term;
-      const std::string conf_csv = encode_peers_csv(opts_.peers);
-      if (opts_.external_io) {
-        SnapshotMeta meta;
-        meta.index = last_idx;
-        meta.term = last_term;
-        meta.to = p.id;
-        meta.conf_state = conf_csv;
-        ready_io_.ready_snaps_.push_back(meta);
-        // 空 blob：外层 SnapWorker 填充后发送（附带 conf_state）
-        std::ostringstream oss;
-        oss << term_ << '|' << last_idx << '|' << last_term << '|';
-        enqueue(p.id, "InstallSnapshot", oss.str());
-      } else {
-        std::string data = wrap_snap_conf(conf_csv, snap_provider_(&last_idx, &last_term));
-        std::ostringstream oss;
-        oss << term_ << '|' << last_idx << '|' << last_term << '|' << to_hex(data);
-        enqueue(p.id, "InstallSnapshot", oss.str());
-        SKV_INFO << "shard=" << opts_.shard_id << " send snapshot to=" << p.id
-                 << " last_idx=" << last_idx << " bytes=" << data.size()
-                 << " conf_peers=" << opts_.peers.size();
-      }
-      last_snap_sent_[p.id] = std::chrono::steady_clock::now();
-      ++snapshot_send_count_;
-      continue;
-    }
-
-    uint64_t prev = progress_.next_index_[p.id] > 0 ? progress_.next_index_[p.id] - 1 : 0;
-    uint64_t prev_term = 0;
-    if (prev == log_.first_index() - 1) {
-      prev_term = log_.snapshot_term();
-    } else if (auto e = log_.entry(prev)) {
-      prev_term = e->term;
-    }
-    auto ents = log_.entries_from(progress_.next_index_[p.id], opts_.max_ae_entries, opts_.max_ae_bytes);
-    const bool probe = ents.empty();
-    if (probe) {
-      // 空心跳不占复制管道额度，避免落后 peer 的 snap/AE 堵死保活 → 误 check_quorum
-      if (progress_.probe_inflight_.count(p.id)) continue;
-      progress_.probe_inflight_.insert(p.id);
-    } else if (!try_inc_inflight(p.id)) {
-      progress_.peer_send_blocked_.insert(p.id);
-      continue;
-    }
-    std::ostringstream oss;
-    oss << term_ << '|' << prev << '|' << prev_term << '|' << commit_index_ << '|' << ents.size();
-    for (const auto& e : ents) {
-      oss << '|' << e.term << '|' << e.index << '|' << to_hex(e.data);
-    }
-    enqueue(p.id, "AppendEntries", oss.str());
-  }
-}
-
-
-// 按各 peer match_index 抬 commit；Joint 时要新旧两套都多数派同意，且只能提交本任期条目。
-void RaftNode::maybe_commit() {
-  if (role_ != Role::kLeader) return;
-  uint64_t lo = commit_index_ + 1;
-  uint64_t hi = log_.last_index();
-  uint64_t best = commit_index_;
-  for (uint64_t cand = hi; cand >= lo; --cand) {
-    bool ok;
-    if (in_joint_) {
-      ok = quorate_at(joint_old_voters_, cand) && quorate_at(joint_new_voters_, cand);
-    } else {
-      ok = quorate_at(voter_ids(), cand);
-    }
-    if (!ok) continue;
-    if (auto e = log_.entry(cand); e && e->term == term_) {
-      best = cand;
-      break;
-    }
-  }
-  if (best > commit_index_) commit_index_ = best;
-}
-
-// 应用一条 ConfChange：改成员表 / 进或离 Joint。
-void RaftNode::apply_conf_entry(const LogEntry& e) {
-  ConfChange cc;
-  if (!decode_conf(e.data, &cc)) return;
-  if (cc.type == ConfChange::kLeaveJoint) {
-    if (in_joint_) {
-      // 丢掉不在 C_new 中的 voter
-      std::unordered_set<std::string> keep(joint_new_voters_.begin(), joint_new_voters_.end());
-      for (const auto& p : opts_.peers) {
-        if (!p.learner && !keep.count(p.id)) {
-          // defer erase
-        }
-      }
-      opts_.peers.erase(std::remove_if(opts_.peers.begin(), opts_.peers.end(),
-                                       [&](const Peer& p) {
-                                         if (p.learner) return false;
-                                         return !keep.count(p.id);
-                                       }),
-                        opts_.peers.end());
-      in_joint_ = false;
-      joint_old_voters_.clear();
-      joint_new_voters_.clear();
-      auto_leave_pending_ = false;
-      leave_joint_inflight_ = false;
-      SKV_INFO << "shard=" << opts_.shard_id << " left joint config voters="
-               << voter_ids().size();
-    } else {
-      leave_joint_inflight_ = false;
-      auto_leave_pending_ = false;
-    }
-    return;
-  }
-
-  if (cc.type == ConfChange::kEnterJoint) {  // 进入联合配置（新旧双多数）
-    joint_old_voters_ = voter_ids();
-    ConfChange inner;
-    inner.type = cc.joint_change;
-    inner.peer = cc.peer;
-    if (inner.type == ConfChange::kPromoteLearner) {
-      for (auto& p : opts_.peers) {
-        if (p.id == inner.peer.id) {
-          p.learner = false;
-          if (role_ == Role::kLeader && p.id != opts_.self_id) {
-            peer_quiet_ticks_[p.id] = 0;
-          }
-        }
-      }
-    } else if (inner.type == ConfChange::kRemoveNode) {
-      // 仍留在 peers，LeaveJoint 时删除；先从 new 中去掉
-    } else if (inner.type == ConfChange::kAddNode || inner.type == ConfChange::kAddLearner) {
-      Peer peer = inner.peer;
-      peer.learner = (inner.type == ConfChange::kAddLearner);
-      add_peer(peer);
-    }
-    joint_new_voters_.clear();
-    for (const auto& p : opts_.peers) {
-      if (p.learner) continue;
-      if (inner.type == ConfChange::kRemoveNode && p.id == inner.peer.id) continue;
-      joint_new_voters_.push_back(p.id);
-    }
-    if (inner.type == ConfChange::kPromoteLearner) {
-      bool found = false;
-      for (const auto& id : joint_new_voters_) {
-        if (id == inner.peer.id) found = true;
-      }
-      if (!found) joint_new_voters_.push_back(inner.peer.id);
-    }
-    in_joint_ = true;
-    if (role_ == Role::kLeader) auto_leave_pending_ = true;
-    SKV_INFO << "shard=" << opts_.shard_id << " enter joint old=" << joint_old_voters_.size()
-             << " new=" << joint_new_voters_.size();
-    return;
-  }
-
-  // 单步（learner 增删 / 兼容旧 AddNode）
-  Peer peer = cc.peer;
-  peer.learner = (cc.type == ConfChange::kAddLearner);
-  if (cc.type == ConfChange::kAddNode || cc.type == ConfChange::kAddLearner) {
-    add_peer(peer);
-  } else if (cc.type == ConfChange::kRemoveNode) {
-    remove_peer(peer.id);
-  } else if (cc.type == ConfChange::kPromoteLearner) {
-    for (auto& p : opts_.peers) {
-      if (p.id == peer.id) {
-        p.learner = false;
-        if (role_ == Role::kLeader && p.id != opts_.self_id) {
-          peer_quiet_ticks_[p.id] = 0;
-        }
-      }
-    }
-  }
-}
-
-// 把「已提交但还没交给状态机」的日志往前推一截。
-//
-// 三个水位别混：
-//   commit_index_     多数派已确认，可以安全执行
-//   apply_scheduled_  本函数已经「安排出去」的最大 index（塞进 Ready 或同步调了 on_apply）
-//   last_applied_     状态机真正做完的最大 index（external_io 下由 Store report_applied 再抬）
-//
-// external_io：普通条目只进 ready_io_.ready_committed_；ConfChange 仍在核内立刻改成员表。
-// 嵌入（Meta）：同步 on_apply，scheduled 与 applied 一起走。
-void RaftNode::apply_committed() {
-  while (apply_scheduled_ < commit_index_) {
-    const uint64_t idx = apply_scheduled_ + 1;
-
-    // 日志已被 compact/快照裁掉：内容已在快照里，抬水位跳过空洞即可。
-    if (idx < log_.first_index()) {
-      apply_scheduled_ = idx;
-      if (idx > last_applied_) last_applied_ = idx;
-      continue;
-    }
-
-    auto e = log_.entry(idx);
-    if (!e) {
-      // 内存缺口：先记 scheduled，避免死循环卡在同一 idx。
-      apply_scheduled_ = idx;
-      continue;
-    }
-
-    // 约定：payload 首字节 0xFF = ConfChange，其余 = 普通业务日志。
-    const bool is_conf =
-        !e->data.empty() && static_cast<unsigned char>(e->data[0]) == 0xFF;
-
-    if (opts_.external_io) {
-      if (is_conf) apply_conf_entry(*e);
-      ready_io_.ready_committed_.push_back(*e);
-      apply_scheduled_ = idx;
-      if (is_conf) last_applied_ = idx;
-      continue;
-    }
-
-    // Meta 这条路：锁还没放，当场把这条日志「做掉」。
-    // 改成员（加/删节点）→ 在 Raft 里改配置；普通业务 → 交给 Meta 的 on_apply。
-    // in_on_apply_：贴个「正在回调」牌子，免得回调里又调 recover_apply 把同一把锁再锁一次卡死。
-    if (is_conf) {
-      apply_conf_entry(*e);
-    } else if (on_apply_) {
-      in_on_apply_.store(true, std::memory_order_relaxed);
-      try {
-        on_apply_(idx, e->data);
-      } catch (...) {
-        in_on_apply_.store(false, std::memory_order_relaxed);
-        throw;
-      }
-      in_on_apply_.store(false, std::memory_order_relaxed);
-    }
-    apply_scheduled_ = idx;// 更新应用索引
-    last_applied_ = idx;// 更新已应用索引
-    // 每 apply 满 32 条，把 Meta 状态机拍一张本地快照落到盘上。
-    // 不靠它也能在 compact 时拍；但 compact 门槛很高时，中间宕机会没有近期快照。
-    if (snap_provider_ && (idx % 32 == 0)) save_local_fsm_snapshot_locked();
-  }
-
-  if (!opts_.external_io) maybe_compact();
-}
-
-std::string RaftNode::local_fsm_snap_path() const {
-  if (opts_.persist_dir.empty()) return {};
-  return (std::filesystem::path(opts_.persist_dir) / ("fsm_" + std::to_string(group_id_) + ".snap"))
-      .string();
-}
-
-void RaftNode::save_local_fsm_snapshot_locked() {
-  if (!snap_provider_) return;
-  const auto path = local_fsm_snap_path();
-  if (path.empty()) return;
-  uint64_t li = last_applied_;
-  uint64_t lt = log_.snapshot_term();
-  if (auto e = log_.entry(last_applied_)) lt = e->term;
-  // provider 可改写 li/lt；Meta 侧通常忽略并返回 serialize()。
-  std::string blob = snap_provider_(&li, &lt);
-  try {
-    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
-    const auto tmp = path + ".tmp";
-    {
-      std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-      if (!out) {
-        SKV_WARN << "shard=" << opts_.shard_id << " fsm snap open failed path=" << tmp;
-        return;
-      }
-      // magic(4) | last_idx u64 LE | last_term u64 LE | blob
-      out.write("FSN1", 4);
-      out.write(reinterpret_cast<const char*>(&li), sizeof(li));
-      out.write(reinterpret_cast<const char*>(&lt), sizeof(lt));
-      out.write(blob.data(), static_cast<std::streamsize>(blob.size()));
-      out.flush();
-      if (!out) {
-        SKV_WARN << "shard=" << opts_.shard_id << " fsm snap write failed";
-        return;
-      }
-    }
-    std::filesystem::rename(tmp, path);
-    SKV_INFO << "shard=" << opts_.shard_id << " fsm snap saved idx=" << li << " term=" << lt
-             << " bytes=" << blob.size();
-  } catch (const std::exception& e) {
-    SKV_WARN << "shard=" << opts_.shard_id << " fsm snap save: " << e.what();
-  }
-}
-
-void RaftNode::restore_local_fsm_snapshot() {
-  const auto path = local_fsm_snap_path();
-  if (snap_applier_ && !path.empty() && std::filesystem::exists(path)) {
-    try {
-      std::ifstream in(path, std::ios::binary);
-      if (in) {
-        char magic[4] = {};
-        uint64_t li = 0, lt = 0;
-        in.read(magic, 4);
-        in.read(reinterpret_cast<char*>(&li), sizeof(li));
-        in.read(reinterpret_cast<char*>(&lt), sizeof(lt));
-        if (in && std::memcmp(magic, "FSN1", 4) == 0) {
-          std::string blob((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-          if (snap_applier_(li, lt, blob)) {
-            SKV_INFO << "shard=" << opts_.shard_id << " fsm snap restored idx=" << li
-                     << " term=" << lt << " bytes=" << blob.size()
-                     << " first=" << log_.first_index();
-            return;
-          }
-          SKV_WARN << "shard=" << opts_.shard_id << " fsm snap_applier failed idx=" << li;
-        } else {
-          SKV_WARN << "shard=" << opts_.shard_id << " fsm snap bad header";
-        }
-      }
-    } catch (const std::exception& e) {
-      SKV_WARN << "shard=" << opts_.shard_id << " fsm snap restore: " << e.what();
-    }
-  }
-  // 无快照文件（升级场景）：若日志窗口仍覆盖已 apply 区间，重放进 FSM。
-  if (!on_apply_ || last_applied_ == 0) return;
-  const uint64_t first = log_.first_index();
-  if (last_applied_ < first) {
-    SKV_WARN << "shard=" << opts_.shard_id
-             << " fsm snap missing and log compacted past applied; state may be bootstrap-only"
-             << " applied=" << last_applied_ << " first=" << first;
-    return;
-  }
-  SKV_INFO << "shard=" << opts_.shard_id << " fsm snap missing; replaying log " << first << ".."
-           << last_applied_;
-  for (uint64_t i = first; i <= last_applied_; ++i) {
-    auto e = log_.entry(i);
-    if (!e) continue;
-    const bool is_conf =
-        !e->data.empty() && static_cast<unsigned char>(e->data[0]) == 0xFF;
-    if (is_conf) {
-      apply_conf_entry(*e);
-      continue;
-    }
-    in_on_apply_.store(true, std::memory_order_relaxed);
-    try {
-      on_apply_(i, e->data);
-    } catch (...) {
-      in_on_apply_.store(false, std::memory_order_relaxed);
-      throw;
-    }
-    in_on_apply_.store(false, std::memory_order_relaxed);
-  }
-  // 重放后立刻落一份，后续重启走快照路径。
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    save_local_fsm_snapshot_locked();
-  }
-}
-
-void RaftNode::maybe_compact() {
-  if (opts_.compact_threshold == 0) return;
-  if (!snap_provider_) return;
-  const uint64_t first = log_.first_index();
-  if (last_applied_ < first) return;
-  // 按「已 apply 仍占内存的前缀」判断，勿用 log_.size()（含未 apply 尾部），
-  // 否则高写入时每条 report_applied 都会空转 compact + INFO 刷屏，并放大堆压力。
-  const uint64_t applied_in_log = last_applied_ - first + 1;
-  if (applied_in_log <= opts_.compact_threshold) return;
-  const uint64_t old_first = first;
-  // 先落 FSM，再砍日志——否则重启无法重建状态机。
-  save_local_fsm_snapshot_locked();
-  uint64_t term = log_.snapshot_term();
-  if (auto e = log_.entry(last_applied_)) term = e->term;
-  log_.compact_to(last_applied_, term);
-  // 前缀删除交给 engine_flush_locked 的 cut；避免与 flush 双删竞态。
-  persist_locked();
-  if (log_.first_index() != old_first) {
-    SKV_DEBUG << "shard=" << opts_.shard_id << " compacted to index=" << last_applied_
-              << " first=" << log_.first_index();
-  }
-}
+void RaftNode::persist_ready(const Ready& rd) { log_persist_.persist_ready(rd); }
 
 void RaftNode::on_append_entries(const std::string& from, uint64_t term, uint64_t prev_idx,
                                  uint64_t prev_term, const std::vector<LogEntry>& entries,
                                  uint64_t leader_commit, bool* success, uint64_t* match_index) {
   std::lock_guard<std::mutex> lock(mu_);
-  *success = false;
-  *match_index = 0;
-  if (term < term_) return;
-  step_down_if_stale(term);
-  become_follower(term_, from);
-  election_elapsed_ = 0;
-  in_pre_vote_ = false;
-  if (!log_.append_entries(prev_idx, prev_term, entries)) {
-    persist_locked();
-    return;
-  }
-  if (opts_.external_io && !entries.empty()) {
-    for (const auto& e : entries) {
-      if (auto got = log_.entry(e.index)) ready_io_.ready_unstable_.push_back(*got);
-    }
-  }
-  *success = true;
-  *match_index = prev_idx + entries.size();
-  if (leader_commit > commit_index_) {
-    commit_index_ = std::min(leader_commit, log_.last_index());
-  }
-  apply_committed();
-  persist_locked();
-}
-
-void RaftNode::on_request_vote(const std::string& from, uint64_t term, uint64_t last_idx,
-                               uint64_t last_term, bool* granted) {
-  std::lock_guard<std::mutex> lock(mu_);
-  *granted = false;
-  if (term < term_) return;
-  step_down_if_stale(term);
-  bool up_to_date = (last_term > log_.last_term()) ||
-                    (last_term == log_.last_term() && last_idx >= log_.last_index());
-  if ((voted_for_.empty() || voted_for_ == from) && up_to_date) {
-    voted_for_ = from;
-    *granted = true;
-    election_elapsed_ = 0;
-    persist_locked();
-  }
-}
-
-void RaftNode::on_request_pre_vote(const std::string& from, uint64_t term, uint64_t last_idx,
-                                   uint64_t last_term, bool* granted) {
-  std::lock_guard<std::mutex> lock(mu_);
-  *granted = false;
-  (void)from;
-  if (term < term_) return;
-  if (!leader_id_.empty() && election_elapsed_ < election_timeout_ticks_) {
-    return;
-  }
-  bool up_to_date = (last_term > log_.last_term()) ||
-                    (last_term == log_.last_term() && last_idx >= log_.last_index());
-  *granted = up_to_date;
+  replication_.on_append_entries(from, term, prev_idx, prev_term, entries, leader_commit, success,
+                                 match_index);
 }
 
 void RaftNode::on_append_entries_reply(const std::string& from, uint64_t term, bool success,
                                        uint64_t match_index) {
   {
     std::lock_guard<std::mutex> lock(mu_);
-    step_down_if_stale(term);
-    if (role_ != Role::kLeader || term != term_) return;
-    dec_inflight(from);
-    if (success) {
-      note_peer_progress(from);
-      progress_.match_index_[from] = match_index;
-      progress_.next_index_[from] = match_index + 1;
-      // 刷新 lease（多数派有进展）
-      lease_expire_ = std::chrono::steady_clock::now() +
-                      std::chrono::milliseconds(opts_.leader_lease_ms);
-      note_read_index_ack(from);
-      maybe_commit();
-      apply_committed();
-      persist_locked();
-      // 仅当该 peer 仍有未复制条目时继续追赶；已追平则交给周期性 heartbeat。
-      if (progress_.next_index_[from] <= log_.last_index()) {
-        need_bcast_ = true;
-        maybe_broadcast();
-      }
-    } else {
-      // 对端可达（仅日志不匹配）：计入活跃，避免 check_quorum 误 step-down
-      note_peer_progress(from);
-      if (progress_.next_index_[from] > 0) --progress_.next_index_[from];
-      broadcast_heartbeat();
-      need_bcast_ = false;
-    }
+    replication_.on_append_entries_reply_locked(from, term, success, match_index);
   }
-  flush_transport();
-  maybe_notify_ready();
-}
-
-void RaftNode::on_request_vote_reply(const std::string& from, uint64_t term, bool granted) {
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    step_down_if_stale(term);
-    if (role_ != Role::kCandidate || term != term_) return;
-    votes_[from] = granted;
-    if (votes_won(votes_)) {
-      become_leader();
-      persist_locked();
-    }
-  }
-  flush_transport();
-  maybe_notify_ready();
-}
-
-void RaftNode::on_request_pre_vote_reply(const std::string& from, uint64_t term, bool granted) {
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    if (!in_pre_vote_) return;
-    if (term > term_) {
-      become_follower(term);
-      persist_locked();
-      return;
-    }
-    pre_votes_[from] = granted;
-    if (votes_won(pre_votes_)) {
-      SKV_INFO << "shard=" << opts_.shard_id << " pre-vote won; starting real election";
-      become_candidate();
-      start_election();
-      persist_locked();
-    }
-  }
-  flush_transport();
-  maybe_notify_ready();
+  ready_pump_.flush_transport();
+  ready_pump_.maybe_notify_ready();
 }
 
 void RaftNode::on_install_snapshot(const std::string& from, uint64_t term, uint64_t last_index,
                                    uint64_t last_term, std::string_view data, bool* success) {
   std::lock_guard<std::mutex> lock(mu_);
-  *success = false;
-  if (term < term_) {
-    // 空日志 learner：允许用快照对齐（term 落后常见于入队延迟），并采纳对方 term
-    if (!(self_is_learner() && log_.last_index() + 1 <= log_.first_index() &&
-          last_index >= log_.first_index())) {
-      SKV_WARN << "shard=" << opts_.shard_id << " reject snapshot term=" << term
-               << " local_term=" << term_ << " from=" << from << " last_idx=" << last_index;
-      return;
-    }
-    term_ = term;
-    voted_for_.clear();
-  }
-  step_down_if_stale(term);
-  become_follower(term_, from);
-  election_elapsed_ = 0;
-
-  std::vector<Peer> snap_conf;
-  std::string_view kv = data;
-  peel_snap_conf(data, &snap_conf, &kv);
-
-  if (snap_applier_) {
-    if (!snap_applier_(last_index, last_term, kv)) {
-      SKV_WARN << "shard=" << opts_.shard_id << " snap_applier failed from=" << from
-               << " last_idx=" << last_index << " bytes=" << kv.size();
-      return;
-    }
-  } else if (!kv.empty() && !opts_.external_io) {
-    SKV_WARN << "shard=" << opts_.shard_id << " InstallSnapshot with data but no snap_applier";
-    return;
-  }
-  // 恢复成员表：快照窗口内的 ConfChange 不会再 apply，必须靠 ConfState。
-  if (!snap_conf.empty()) {
-    opts_.peers = std::move(snap_conf);
-    for (const auto& p : opts_.peers) {
-      if (opts_.on_peer_addr && !p.address.empty()) opts_.on_peer_addr(p.id, p.address);
-    }
-    SKV_INFO << "shard=" << opts_.shard_id << " snapshot restored conf peers="
-             << opts_.peers.size();
-  }
-  // external_io：外层已安装状态机；此处只对齐日志窗口。
-  log_.compact_to(last_index, last_term);
-  if (commit_index_ < last_index) commit_index_ = last_index;
-  last_applied_ = last_index;
-  apply_scheduled_ = last_index;
-  persist_locked();
-  *success = true;
-  SKV_INFO << "shard=" << opts_.shard_id << " installed snapshot last_idx=" << last_index
-           << " bytes=" << kv.size();
+  replication_.on_install_snapshot(from, term, last_index, last_term, data, success);
 }
 
 void RaftNode::on_install_snapshot_reply(const std::string& from, uint64_t term, bool success,
                                          uint64_t match_index) {
   {
     std::lock_guard<std::mutex> lock(mu_);
-    // 无论 term/角色是否匹配，先清 snap_inflight，避免追平永久卡住。
-    dec_inflight(from);
-    step_down_if_stale(term);
-    if (role_ != Role::kLeader || term != term_) {
-      SKV_WARN << "shard=" << opts_.shard_id << " InstallSnapshot reply ignored from=" << from
-               << " success=" << success << " match=" << match_index << " reply_term=" << term
-               << " self_term=" << term_ << " role=" << static_cast<int>(role_);
-      return;
-    }
-    if (success) {
-      note_peer_progress(from);
-      progress_.match_index_[from] = match_index;
-      progress_.next_index_[from] = match_index + 1;
-      SKV_INFO << "shard=" << opts_.shard_id << " InstallSnapshot reply ok from=" << from
-               << " match=" << match_index;
-      maybe_commit();
-      apply_committed();
-      persist_locked();
-      need_bcast_ = true;
-    } else {
-      // 安装失败（对端 term/状态）：保持 next 在快照窗口，下轮继续发
-      note_peer_progress(from);
-      progress_.next_index_[from] = 0;
-      need_bcast_ = true;
-    }
+    replication_.on_install_snapshot_reply_locked(from, term, success, match_index);
   }
-  flush_transport();
-  maybe_notify_ready();
+  ready_pump_.flush_transport();
+  ready_pump_.maybe_notify_ready();
+}
+
+void RaftNode::on_rpc_transport_fail(const std::string& peer_id) {
+  std::lock_guard<std::mutex> lock(mu_);
+  replication_.dec_inflight(peer_id);
+}
+
+void RaftNode::on_request_vote(const std::string& from, uint64_t term, uint64_t last_idx,
+                               uint64_t last_term, bool* granted) {
+  std::lock_guard<std::mutex> lock(mu_);
+  election_.on_request_vote(from, term, last_idx, last_term, granted);
+}
+
+void RaftNode::on_request_pre_vote(const std::string& from, uint64_t term, uint64_t last_idx,
+                                   uint64_t last_term, bool* granted) {
+  std::lock_guard<std::mutex> lock(mu_);
+  election_.on_request_pre_vote(from, term, last_idx, last_term, granted);
+}
+
+void RaftNode::on_request_vote_reply(const std::string& from, uint64_t term, bool granted) {
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    election_.on_request_vote_reply(from, term, granted);
+  }
+  ready_pump_.flush_transport();
+  ready_pump_.maybe_notify_ready();
+}
+
+void RaftNode::on_request_pre_vote_reply(const std::string& from, uint64_t term, bool granted) {
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    election_.on_request_pre_vote_reply(from, term, granted);
+  }
+  ready_pump_.flush_transport();
+  ready_pump_.maybe_notify_ready();
 }
 
 void RaftNode::add_peer(const Peer& p) {
-  for (auto& existing : opts_.peers) {
-    if (existing.id != p.id) continue;
-    if (!p.address.empty()) existing.address = p.address;
-    // 重试 ADD_LEARNER：若仍未追上，重置为快照窗口并催复制
-    if (role_ == Role::kLeader) {
-      auto mit = progress_.match_index_.find(p.id);
-      if (mit == progress_.match_index_.end() || mit->second == 0) {
-        progress_.next_index_[p.id] = 0;
-        progress_.match_index_[p.id] = 0;
-        need_bcast_ = true;
-      }
-    }
-    if (opts_.on_peer_addr && !p.address.empty()) {
-      opts_.on_peer_addr(p.id, p.address);
-    }
-    return;
-  }
-  opts_.peers.push_back(p);
-  // 新 peer 空日志：一律先走快照（next < first），避免 AE 探测过慢 / compact 窗口不匹配
-  progress_.next_index_[p.id] = 0;
-  progress_.match_index_[p.id] = 0;
-  if (role_ == Role::kLeader) need_bcast_ = true;
-  if (opts_.on_peer_addr && !p.address.empty()) {
-    opts_.on_peer_addr(p.id, p.address);
-  }
+  std::lock_guard<std::mutex> lock(mu_);
+  membership_.add_peer(p);
 }
 
 void RaftNode::remove_peer(const std::string& id) {
-  opts_.peers.erase(std::remove_if(opts_.peers.begin(), opts_.peers.end(),
-                                   [&](const Peer& p) { return p.id == id; }),
-                    opts_.peers.end());
-  progress_.next_index_.erase(id);
-  progress_.match_index_.erase(id);
-  progress_.inflight_.erase(id);
-  progress_.snap_inflight_.erase(id);
-  progress_.probe_inflight_.erase(id);
-  progress_.peer_send_blocked_.erase(id);
-  peer_quiet_ticks_.erase(id);
+  std::lock_guard<std::mutex> lock(mu_);
+  membership_.remove_peer(id);
 }
 
 }  // namespace openkv::raft

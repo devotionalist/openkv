@@ -146,7 +146,7 @@ Inflight 类名：`storage/include/openkv/storage/inflight_gate.hpp`。
 | `no_region` | 无 peer |
 | `bad_vote` / `bad_ae` / `bad_snap` | 帧 arity |
 | `ae_trunc` / `ae_bad_hex` / `snap_bad_hex` | 载荷 |
-| `step` | `RawNode::Step` 异常 |
+| `step` | 入站消息步进异常 |
 | `unknown_raft_type` | 类型非法 |
 
 业务客户端一般看不到；属 Store↔Store。

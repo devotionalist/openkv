@@ -27,7 +27,7 @@
 #include "storage/v1/storage.pb.h"
 #include "openkv/raft/file_raft_engine.hpp"
 #include "openkv/raft/raft_engine.hpp"
-#include "openkv/raft/raft_persist.hpp"
+#include "openkv/raft/engine/sync_mode.hpp"
 #include "openkv/raftstore/msg.hpp"
 #include "openkv/storage/mvcc.hpp"
 #include "openkv/storage/store_service.hpp"
@@ -713,19 +713,6 @@ std::string StorageNode::admin_ensure_region(uint32_t region_id,
       if (raft_engine_) {
         raft_engine_->clean(region_id);
         SKV_INFO << "ENSURE wiped raft engine group=" << region_id;
-      }
-      const auto persist_dir =
-          (std::filesystem::path(cfg_.data_dir) / ("raft_region_" + std::to_string(region_id)))
-              .string();
-      std::error_code ec;
-      if (std::filesystem::exists(persist_dir, ec)) {
-        std::filesystem::remove_all(persist_dir, ec);
-        if (ec) {
-          SKV_WARN << "ENSURE wipe persist failed region=" << region_id
-                   << " err=" << ec.message();
-        } else {
-          SKV_INFO << "ENSURE wiped legacy persist region=" << region_id;
-        }
       }
     }
     // 同机兄弟 Region 可能仍占共享引擎：先占位 map，避免 factory get_or_create 二次 open
@@ -2260,22 +2247,6 @@ void StorageNode::start() {
     opts.raft_group_id = shard_id;
     opts.persist_sync = raft::parse_sync_mode(cfg_.persist_sync);
     opts.compact_threshold = 128;
-    // 兼容旧 per-region 文本目录 → 导入 DbRaftEngine
-    if (raft_engine_ && !raft_engine_->get_raft_state(shard_id)) {
-      const auto legacy =
-          (std::filesystem::path(cfg_.data_dir) / ("raft_region_" + std::to_string(shard_id)))
-              .string();
-      raft::PersistedHardState hs;
-      std::vector<raft::LogEntry> ents;
-      raft::RaftPersist old(legacy, raft::SyncMode::kNone);
-      if (old.load(&hs, &ents)) {
-        raft::RaftLog log;
-        log.load(hs.first_index, hs.snapshot_term, ents);
-        raft::save_group_to_engine(*raft_engine_, shard_id, hs, log,
-                                   opts.persist_sync != raft::SyncMode::kNone);
-        SKV_INFO << "migrated legacy raft_region_" << shard_id << " -> DbRaftEngine";
-      }
-    }
     opts.on_peer_addr = [this](const std::string& id, const std::string& addr) {
       transport_.set_peer(id, addr);
     };

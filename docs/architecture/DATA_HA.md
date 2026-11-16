@@ -176,7 +176,7 @@ flowchart LR
 |------|-------------|
 | Raft 核心 | `raft/` · `RaftNode` · `GrpcRaftTransport` |
 | Multi-Raft / Apply | `storage/` · `MultiRaft` · raftstore Ready 路径 |
-| 持久化 / 快照 | `RaftPersist` · `KvEngine::{create,apply}_snapshot` · SnapWorker |
+| 持久化 / 快照 | `RaftEngine`（File/Db）· `KvEngine::{create,apply}_snapshot` · SnapWorker |
 | Meta | `meta/` · `MetaNode` · `MetaFsm` · `ClusterState` · RegionScheduler |
 | 入口重试 | C++ Gateway `with_store_async`：`store_skip_err` 换副本 + `not_leader` redirect（先 clear 再 remember） |
 

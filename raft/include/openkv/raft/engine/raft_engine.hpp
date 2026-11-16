@@ -17,11 +17,12 @@
 // 架构：写路径 append/cut/put_raft_state 进 Batch，一次 consume 原子落盘；读路径供恢复。
 // 协作：RaftNode::engine_flush_locked / persist_ready 调用；实现有 FileRaftEngine、
 //       DbRaftEngine；save_group_to_engine 用于整组迁移。
-// 注意：SyncMode 定义在 raft_persist.hpp；kData=Raft sync、KV apply 异步。
+// 注意：SyncMode 定义在 sync_mode.hpp；kData=Raft sync、KV apply 异步。
 
 #pragma once
 
-#include "openkv/raft/raft_persist.hpp"
+#include "openkv/raft/engine/sync_mode.hpp"
+#include "openkv/raft/raft_log.hpp"
 #include "openkv/raft/types.hpp"
 
 #include <cstdint>

@@ -12,15 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// @file raw_node_test.cpp
-// RawNode 纯内存 Ready 循环：无盘、无网。
+// @file raft_node_ready_test.cpp
+// RaftNode(external_io) 纯内存 Ready 循环：无盘、无网，外层手动 drain。
 
-#include "openkv/raft/raw_node.hpp"
 #include "openkv/raft/raft_node.hpp"
 
 #include <gtest/gtest.h>
 
-#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -29,11 +27,11 @@ namespace {
 using openkv::raft::LogEntry;
 using openkv::raft::Peer;
 using openkv::raft::PersistedHardState;
-using openkv::raft::RawNode;
+using openkv::raft::RaftNode;
 using openkv::raft::Ready;
 
-RawNode make_single(const std::string& id = "n1") {
-  RawNode::Options o;
+RaftNode make_external(const std::string& id = "n1") {
+  RaftNode::Options o;
   o.shard_id = 1;
   o.self_id = id;
   o.peers = {Peer{id, "127.0.0.1:1", false}};
@@ -41,22 +39,22 @@ RawNode make_single(const std::string& id = "n1") {
   o.heartbeat_ms = 50;
   o.enable_pre_vote = false;
   o.check_quorum = false;
-  return RawNode(std::move(o));
+  o.external_io = true;
+  return RaftNode(std::move(o), nullptr, nullptr);
 }
 
-void drain_ready(RawNode& n) {
+void drain_ready(RaftNode& n) {
   while (n.has_ready()) {
-    Ready rd = n.ready();
-    // ApplyFsm 语义：外层 apply 后再 report_applied；单测内联模拟。
+    Ready rd = n.take_ready();
     for (const auto& e : rd.committed_entries) {
-      if (auto* rn = n.raft_node()) rn->report_applied(e.index);
+      n.report_applied(e.index);
     }
     n.advance(rd);
   }
 }
 
-TEST(RawNodeTest, SingleNodeElectAndPropose) {
-  auto n = make_single();
+TEST(RaftNodeReadyTest, SingleNodeElectAndPropose) {
+  auto n = make_external();
   for (int i = 0; i < 40 && !n.is_leader(); ++i) {
     n.tick();
     drain_ready(n);
@@ -66,7 +64,7 @@ TEST(RawNodeTest, SingleNodeElectAndPropose) {
   ASSERT_TRUE(n.propose("hello", &idx));
   ASSERT_GT(idx, 0u);
   ASSERT_TRUE(n.has_ready());
-  Ready rd = n.ready();
+  Ready rd = n.take_ready();
   ASSERT_FALSE(rd.entries.empty());
   bool saw = false;
   for (const auto& e : rd.committed_entries) {
@@ -77,14 +75,14 @@ TEST(RawNodeTest, SingleNodeElectAndPropose) {
     EXPECT_GE(rd.hard_state->commit, idx);
   }
   for (const auto& e : rd.committed_entries) {
-    if (auto* rn = n.raft_node()) rn->report_applied(e.index);
+    n.report_applied(e.index);
   }
   n.advance(rd);
   EXPECT_GE(n.soft_state().last_applied, idx);
 }
 
-TEST(RawNodeTest, BootstrapThenPropose) {
-  auto n = make_single();
+TEST(RaftNodeReadyTest, BootstrapThenPropose) {
+  auto n = make_external();
   std::vector<LogEntry> ents;
   ents.push_back(LogEntry{1, 1, "seed"});
   PersistedHardState hs;
@@ -94,8 +92,7 @@ TEST(RawNodeTest, BootstrapThenPropose) {
   hs.last_applied = 1;
   hs.first_index = 1;
   hs.snapshot_term = 0;
-  ASSERT_NE(n.raft_node(), nullptr);
-  n.raft_node()->load_hard_state(hs, ents);
+  n.load_hard_state(hs, ents);
   for (int i = 0; i < 40 && !n.is_leader(); ++i) {
     n.tick();
     drain_ready(n);
@@ -106,8 +103,8 @@ TEST(RawNodeTest, BootstrapThenPropose) {
   EXPECT_GE(n.last_index(), 2u);
 }
 
-TEST(RawNodeTest, ThreeNodeVoteAndProposeReady) {
-  RawNode::Options oa;
+TEST(RaftNodeReadyTest, ThreeNodeVoteAndProposeReady) {
+  RaftNode::Options oa;
   oa.shard_id = 7;
   oa.self_id = "a";
   oa.peers = {Peer{"a", "", false}, Peer{"b", "", false}, Peer{"c", "", false}};
@@ -115,14 +112,15 @@ TEST(RawNodeTest, ThreeNodeVoteAndProposeReady) {
   oa.heartbeat_ms = 40;
   oa.enable_pre_vote = false;
   oa.check_quorum = false;
-  RawNode a(oa);
+  oa.external_io = true;
+  RaftNode a(oa, nullptr, nullptr);
 
-  RawNode::Options ob = oa;
+  RaftNode::Options ob = oa;
   ob.self_id = "b";
-  RawNode b(std::move(ob));
-  RawNode::Options oc = oa;
+  RaftNode b(std::move(ob), nullptr, nullptr);
+  RaftNode::Options oc = oa;
   oc.self_id = "c";
-  RawNode c(std::move(oc));
+  RaftNode c(std::move(oc), nullptr, nullptr);
 
   ASSERT_TRUE(a.force_election());
   for (int round = 0; round < 30 && !a.is_leader(); ++round) {
@@ -130,19 +128,19 @@ TEST(RawNodeTest, ThreeNodeVoteAndProposeReady) {
       a.tick();
       continue;
     }
-    Ready rd = a.ready();
+    Ready rd = a.take_ready();
     for (const auto& m : rd.messages) {
       if (m.type != "RequestVote") continue;
-      RawNode* dst = m.to == "b" ? &b : (m.to == "c" ? &c : nullptr);
+      RaftNode* dst = m.to == "b" ? &b : (m.to == "c" ? &c : nullptr);
       if (!dst) continue;
       unsigned long long term = 0, li = 0, lt = 0;
       if (sscanf(m.payload.c_str(), "%llu|%llu|%llu", &term, &li, &lt) != 3) continue;
       bool granted = false;
-      dst->step_request_vote("a", static_cast<uint64_t>(term), static_cast<uint64_t>(li),
-                            static_cast<uint64_t>(lt), &granted);
-      a.step_request_vote_reply(m.to, static_cast<uint64_t>(term), granted);
+      dst->on_request_vote("a", static_cast<uint64_t>(term), static_cast<uint64_t>(li),
+                          static_cast<uint64_t>(lt), &granted);
+      a.on_request_vote_reply(m.to, static_cast<uint64_t>(term), granted);
       if (dst->has_ready()) {
-        Ready r2 = dst->ready();
+        Ready r2 = dst->take_ready();
         dst->advance(r2);
       }
     }
@@ -151,7 +149,7 @@ TEST(RawNodeTest, ThreeNodeVoteAndProposeReady) {
   ASSERT_TRUE(a.is_leader());
   ASSERT_TRUE(a.propose("kv"));
   ASSERT_TRUE(a.has_ready());
-  Ready rd = a.ready();
+  Ready rd = a.take_ready();
   EXPECT_FALSE(rd.entries.empty());
   EXPECT_FALSE(rd.messages.empty());  // AE to b/c
   a.advance(rd);

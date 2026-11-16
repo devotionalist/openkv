@@ -83,7 +83,7 @@
 - [x] P4 冷 Region 内存卸载（`Peer::mark_unloaded` + `Store.unload_after_ms`）
 - [x] P5 Apply/Snap 队列深度 QoS（`BatchSystem::max_*_queue_depth`）
 
-**验收**：`openkv_unit_tests`（含 `RaftReadIndex*` / `RaftFrame*` / `RawNode*` / `Raftstore*`）全绿。
+**验收**：`openkv_unit_tests`（含 `RaftReadIndex*` / `RaftFrame*` / `RaftNodeReady*` / `Raftstore*`）全绿。
 
 ---
 
@@ -93,7 +93,7 @@
 
 | 模块 | 本仓库 |
 |------|--------|
-| RawNode / Ready | `RawNode` + `Ready`（`external_io`） |
+| Ready 外提 | `RaftNode` + `Ready`（`external_io`） |
 | Peer / Apply | `raftstore::Peer` + `Store` 双 mailbox |
 | BatchSystem | `raftstore::BatchSystem` |
 | 单 Store RocksDB | `ShardEngineManager` → **`data_dir/kv` 一份引擎**；Region 靠 `KeyRange` |
@@ -160,7 +160,7 @@ payload 暂为原行协议正文；响应同帧封装。服务端自动识别 ma
 
 ## 6. 与「换库」的关系
 
-生产级 Multi-Raft 的护城河在 **运行时调度、批处理、存储/网络一体**。协议层同构 raft-rs `RawNode` API，**不**引入 Rust FFI；运行时 raftstore（BatchSystem / 双 FSM / Hibernate / SnapWorker）。
+生产级 Multi-Raft 的护城河在 **运行时调度、批处理、存储/网络一体**。协议层是自研 `RaftNode` + Ready 外提，**不**引入外部 FFI；运行时 raftstore（BatchSystem / 双 FSM / Hibernate / SnapWorker）。
 
 ---
 

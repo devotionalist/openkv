@@ -40,7 +40,7 @@ flowchart TB
   end
 
   subgraph protocol["openkv::raft 协议核"]
-    RN[RaftNode / RawNode]
+    RN[RaftNode]
     RL[RaftLog 内存]
     RD[Ready]
     FE[FileRaftEngine]
@@ -183,7 +183,7 @@ flowchart TB
   D --> F[DbRaftEngine<br/>raft/engine 生产]
 ```
 
-`RaftLog` **没有**落盘 API；`raft_persist.cpp` 仅旧文本迁移。
+`RaftLog` **没有**落盘 API；耐久只经 `RaftEngine::consume`。
 
 File 引擎布局与追加契约见 [ARCHITECTURE.md §5](../../raft/ARCHITECTURE.md)：
 

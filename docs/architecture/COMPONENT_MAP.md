@@ -28,7 +28,7 @@ Meta Raft ×3（路由 + TSO/GC + Scaler/Scheduler）
 | 存算边界 | **强制** Gateway → Storage；Gateway 无本地数据 |
 | 控制面 | Meta 一体：路由 + TSO/GC + Scaler/Scheduler |
 | 数据面协议 | 全链路强制 gRPC（无行协议双栈） |
-| Raft 库 | 自研 `RaftNode` / `RawNode`（无 FFI） |
+| Raft 库 | 自研 `RaftNode`（无 FFI） |
 
 ---
 
@@ -52,7 +52,7 @@ Meta Raft ×3（路由 + TSO/GC + Scaler/Scheduler）
 | 写入口 | `storage/raftkv.hpp` | propose / 读；经 Store Ready 外提 |
 | Peer / Apply | `raftstore::Peer` + `Store` 双 mailbox | 双 FSM 形 |
 | 批处理 | `raftstore::BatchSystem` | 跨 Region Apply 展平 + `write_batch` |
-| Ready | `RawNode` + `external_io` | Storage **仅** raftstore Ready 外提 |
+| Ready | `RaftNode` + `external_io` | Storage **仅** raftstore Ready 外提 |
 | 快照 | `SnapWorker` | 同 Region 合并 / 失败重试 / Stats |
 | 元数据 | `raftstore::StoreMeta` | epoch / range / leader |
 | 休眠 | `hibernate_after_ms`（默认 5000） | 冷 tick |

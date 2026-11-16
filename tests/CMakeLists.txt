@@ -42,7 +42,7 @@ set(OPENKV_TEST_SOURCES
   raft/snap_stream_test.cpp
   raft/raft_joint_test.cpp
   raft/raft_read_index_test.cpp
-  raft/raw_node_test.cpp
+  raft/raft_node_ready_test.cpp
   raft/raftstore_test.cpp
   raft/batch_system_test.cpp
   raft/raft_fault_inject_test.cpp

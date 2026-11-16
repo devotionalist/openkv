@@ -128,6 +128,7 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | 架构硬化 | [19-architecture-hardening.md](19-architecture-hardening.md) | CV 等 apply、latch 持到 apply、approx split、Meta CV |
 | 写路径批处理 | [23-write-path-batching.md](23-write-path-batching.md) | Ready group commit、apply WriteBatch、多 Region |
 | 耐久：Raft vs KV | [24-persist-raft-vs-kv.md](24-persist-raft-vs-kv.md) | 默认 data=Raft sync / KV 异步 |
+| RaftNode 协作类 | [39-raft-node-collaborators.md](39-raft-node-collaborators.md) | Election…Apply / LinearRead / ReadyPump |
 | 写路径三刀 | [25-write-path-knives.md](25-write-path-knives.md) | Ready 攒批、二进制 ONEPC、workers 8/8 |
 | Raftstore schedule | [26-raftstore-schedule-pipeline.md](26-raftstore-schedule-pipeline.md) | schedule 唤醒 + drain-until-empty |
 | 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、ONEPC WriteBatch、BatchSystem CV |

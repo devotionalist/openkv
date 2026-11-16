@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file raft_persist_test.cpp
-// Raft 持久化装载与宕机恢复（单节点）。
+// Raft 持久化装载与宕机恢复（单节点；经 FileRaftEngine，套件名历史遗留）。
 
 #include "openkv/raft/raft_node.hpp"
 
