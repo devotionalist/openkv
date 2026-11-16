@@ -29,7 +29,8 @@ CMAKE_FLAGS ?= -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCM
 .PHONY: all configure build test gtest run-meta run-storage run-compute proto go-mod clean \
 	cluster-up cluster-down cluster-test e2e memcheck asan fault-drill integ-workload release-gate \
 	admin admin-run admin-frontend \
-	it-web it-region it-txn it-disk-fault it-partition it-net-jitter integ-extra fault-drill-extra
+	it-web it-region it-txn it-disk-fault it-partition it-net-jitter integ-extra fault-drill-extra \
+	raft-fault-local
 
 # 默认：编译 + 跑全部单元测试
 all: build test
@@ -107,6 +108,10 @@ it-net-jitter:
 	bash scripts/it-net-jitter.sh
 integ-extra: it-disk-fault it-partition it-net-jitter
 fault-drill-extra: fault-drill integ-extra
+
+# Raft 模块本机故障矩阵（内存多节点，不启 OpenKV）
+raft-fault-local:
+	bash scripts/raft-fault-local.sh
 
 # 独立 Web 管控模块（HTTP :19100）；前端 TypeScript → static/
 admin-frontend:

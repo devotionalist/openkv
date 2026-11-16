@@ -112,6 +112,7 @@
 | RaftLogTest | AppendAndQuery, AppendEntriesConflictTruncate, AppendEntriesRejectBadPrev, CompactTo, EntriesFromLimit | `raft_log_test.cpp` |
 | RaftNodeTest | SingleNodeElectionAndPropose, ProposeRejectedWhenFollower, ConfChangeAddLearner, PreVoteDoesNotBumpTerm, CheckQuorumStepsDownIsolatedLeader, VoteAndAppendBetweenPeers, ExternalIoAeReplyNotifiesReady, PersistReadyNoneIgnoresMustSync | `raft_node_test.cpp` |
 | RaftFaultInjectTest | DefaultDisabled, DropAeOnly, DropRaftCoversAll, DelayTakesMaxOfAeAndRaft, FromEnvReadsAndClamps | `raft_fault_inject_test.cpp` |
+| RaftFaultScenario | A–H + X1–X15 意外/多轮混沌（见 [40](../flows/40-raft-module-fault-tests.md)） | `make raft-fault-local`；`bash scripts/raft-fault-local.sh 5` |
 | RaftJointTest | PromoteUsesEnterThenLeaveJoint, RejectConfWhileJointPending, ProposeAppliesSync | `raft_joint_test.cpp` |
 | RaftPersistTest | SaveAndRecoverApplied, InstallSnapshotCompactsAndApplies（FileRaftEngine 重启恢复；套件名历史遗留） | `raft_persist_test.cpp` |
 | RaftEngineTest | FileLogBatchRoundTrip, EntryCrcRoundTrip, FilePureAppend, FileConflictRewrite, CutAndGc | `raft_engine_test.cpp` |

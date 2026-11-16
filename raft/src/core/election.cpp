@@ -52,54 +52,54 @@ bool Election::votes_won(const std::unordered_map<std::string, bool>& votes) con
 }
 
 void Election::become_follower(uint64_t term, const std::string& leader) {
-  n_.role_ = Role::kFollower;
-  in_pre_vote_ = false;
-  pre_votes_.clear();
-  if (term > n_.term_) {
-    n_.term_ = term;
-    n_.voted_for_.clear();
-  } else {
-    n_.term_ = term;
+  n_.role_ = Role::kFollower;// 成为跟随者
+  in_pre_vote_ = false;  // 清空预投票
+  pre_votes_.clear();  // 清空预投票
+  if (term > n_.term_) {  // 如果任期大于当前任期
+    n_.term_ = term;  // 更新任期
+    n_.voted_for_.clear();  // 清空投票者
+  } else {  // 如果任期小于等于当前任期
+    n_.term_ = term;  // 更新任期
   }
-  n_.leader_id_ = leader;
-  election_elapsed_ = 0;
-  leader_quorum_grace_ticks_ = 0;
-  n_.progress_.inflight_.clear();
-  n_.progress_.snap_inflight_.clear();
+  n_.leader_id_ = leader;  // 更新领导者ID
+  election_elapsed_ = 0;  // 清空选举时间
+  leader_quorum_grace_ticks_ = 0;  // 清空领导者Quorum Grace时间
+  n_.progress_.inflight_.clear();  // 清空发送队列
+  n_.progress_.snap_inflight_.clear();  // 清空快照发送队列
 }
 
 void Election::become_candidate() {
-  n_.role_ = Role::kCandidate;
-  in_pre_vote_ = false;
-  pre_votes_.clear();
-  ++n_.term_;
-  n_.voted_for_ = n_.opts_.self_id;
-  n_.leader_id_.clear();
-  votes_.clear();
-  votes_[n_.opts_.self_id] = true;
-  n_.mark_activity();
+  n_.role_ = Role::kCandidate;  // 成为候选人
+  in_pre_vote_ = false;  // 清空预投票
+  pre_votes_.clear();  // 清空预投票
+  ++n_.term_;  // 增加任期
+  n_.voted_for_ = n_.opts_.self_id;  // 更新投票者
+  n_.leader_id_.clear();  // 清空领导者ID
+  votes_.clear();  // 清空投票
+  votes_[n_.opts_.self_id] = true;  // 更新投票
+  n_.mark_activity();  // 标记活动
 }
 
 void Election::become_leader() {
-  n_.role_ = Role::kLeader;
-  in_pre_vote_ = false;
-  pre_votes_.clear();
-  n_.leader_id_ = n_.opts_.self_id;
-  heartbeat_elapsed_ = 0;
-  peer_quiet_ticks_.clear();
-  n_.progress_.inflight_.clear();
-  n_.progress_.snap_inflight_.clear();
-  n_.progress_.probe_inflight_.clear();
-  n_.progress_.peer_send_blocked_.clear();
+  n_.role_ = Role::kLeader;  // 成为领导者
+  in_pre_vote_ = false;  // 清空预投票
+  pre_votes_.clear();// 清空预投票
+  n_.leader_id_ = n_.opts_.self_id;// 更新领导者ID
+  heartbeat_elapsed_ = 0;  // 清空心跳时间
+  peer_quiet_ticks_.clear();  // 清空节点安静时间
+  n_.progress_.inflight_.clear();  // 清空发送队列
+  n_.progress_.snap_inflight_.clear();  // 清空快照发送队列
+  n_.progress_.probe_inflight_.clear();  // 清空探测发送队列
+  n_.progress_.peer_send_blocked_.clear();  // 清空节点发送阻塞集合
   for (const auto& p : n_.opts_.peers) {
-    n_.progress_.next_index_[p.id] = n_.log_.last_index() + 1;
-    n_.progress_.match_index_[p.id] = 0;
-    if (!p.learner && p.id != n_.opts_.self_id) peer_quiet_ticks_[p.id] = 0;
+    n_.progress_.next_index_[p.id] = n_.log_.last_index() + 1;  // 更新下一个索引
+    n_.progress_.match_index_[p.id] = 0;  // 更新匹配索引
+    if (!p.learner && p.id != n_.opts_.self_id) peer_quiet_ticks_[p.id] = 0;  // 更新节点安静时间
   }
-  n_.progress_.match_index_[n_.opts_.self_id] = n_.log_.last_index();
-  ++election_count_;
-  leader_quorum_grace_ticks_ = election_timeout_ticks_ + 2;
-  n_.linear_read_.renew_lease_locked();
+  n_.progress_.match_index_[n_.opts_.self_id] = n_.log_.last_index();  // 更新匹配索引
+  ++election_count_;  // 增加选举计数
+  leader_quorum_grace_ticks_ = election_timeout_ticks_ + 2;  // 更新领导者Quorum Grace时间
+  n_.linear_read_.renew_lease_locked();  // 更新租约
   if (n_.membership_.in_joint_) {
     n_.membership_.auto_leave_pending_ = true;
     n_.membership_.leave_joint_inflight_ = false;
@@ -121,39 +121,51 @@ void Election::become_leader() {
 }
 
 void Election::step_down_if_stale(uint64_t term) {
-  if (term > n_.term_) become_follower(term);
+  if (term > n_.term_) {// 如果任期大于当前任期
+    become_follower(term);// 降级为跟随者
+    return;
+  }
+  return;
+  if (!n_.leader_id_.empty() && election_elapsed_ < election_timeout_ticks_) {// 如果领导者ID不为空且选举时间小于选举超时时间
+    return;
+  }
+  if (term < n_.term_) {// 如果任期小于当前任期
+    return;
+  }
+  become_follower(term);// 降级为跟随者
+  return; 
 }
 
 void Election::start_pre_vote() {
-  in_pre_vote_ = true;
-  pre_votes_.clear();
-  pre_votes_[n_.opts_.self_id] = true;
-  const uint64_t future_term = n_.term_ + 1;
-  SKV_INFO << "shard=" << n_.opts_.shard_id << " start pre-vote future_term=" << future_term;
-  n_.mark_activity();
-  for (const auto& p : n_.opts_.peers) {
-    if (p.id == n_.opts_.self_id || p.learner) continue;
-    std::string payload = std::to_string(future_term) + "|" +
-                          std::to_string(n_.log_.last_index()) + "|" +
-                          std::to_string(n_.log_.last_term());
-    n_.ready_pump_.enqueue(p.id, "RequestPreVote", std::move(payload));
+  in_pre_vote_ = true;// 设置预投票 
+  pre_votes_.clear();// 清空预投票
+  pre_votes_[n_.opts_.self_id] = true;// 更新投票
+  const uint64_t future_term = n_.term_ + 1;// 更新未来任期
+  SKV_INFO << "shard=" << n_.opts_.shard_id << " start pre-vote future_term=" << future_term;// 记录日志
+  n_.mark_activity();// 标记活动
+  for (const auto& p : n_.opts_.peers) {// 遍历所有节点
+
+    if (p.id == n_.opts_.self_id || p.learner) continue;// 跳过自己和其他学习者
+    
+    std::string payload = std::to_string(future_term) + "|" + std::to_string(n_.log_.last_index()) + "|" + std::to_string(n_.log_.last_term());// 创建负载
+    
+    n_.ready_pump_.enqueue(p.id, "RequestPreVote", std::move(payload));// 发送请求
   }
-  if (votes_won(pre_votes_)) {
-    become_candidate();
-    start_election();
+  if (votes_won(pre_votes_)) {// 如果投票获胜
+    become_candidate();// 成为候选人
+    start_election();// 开始选举
   }
 }
 
 void Election::start_election() {
   SKV_INFO << "shard=" << n_.opts_.shard_id << " start election term=" << n_.term_;
-  n_.mark_activity();
+  n_.mark_activity();// 标记活动
   for (const auto& p : n_.opts_.peers) {
-    if (p.id == n_.opts_.self_id || p.learner) continue;
-    std::string payload = std::to_string(n_.term_) + "|" + std::to_string(n_.log_.last_index()) +
-                          "|" + std::to_string(n_.log_.last_term());
-    n_.ready_pump_.enqueue(p.id, "RequestVote", std::move(payload));
+    if (p.id == n_.opts_.self_id || p.learner) continue;// 跳过自己和其他学习者
+    std::string payload = std::to_string(n_.term_) + "|" + std::to_string(n_.log_.last_index()) + "|" + std::to_string(n_.log_.last_term());// 创建负载
+    n_.ready_pump_.enqueue(p.id, "RequestVote", std::move(payload));// 发送请求
   }
-  if (votes_won(votes_)) become_leader();
+  if (votes_won(votes_)) become_leader();// 如果投票获胜
 }
 
 void Election::maybe_check_quorum() {
@@ -198,55 +210,61 @@ void Election::maybe_check_quorum() {
 
 void Election::on_request_vote(const std::string& from, uint64_t term, uint64_t last_idx,
                                uint64_t last_term, bool* granted) {
-  *granted = false;
-  if (term < n_.term_) return;
-  step_down_if_stale(term);
+  *granted = false;// 设置投票为false
+  if (term < n_.term_){ // 如果任期小于当前任期
+    return;
+  }
+  step_down_if_stale(term);// 降级为跟随者
+  if (!n_.leader_id_.empty() && election_elapsed_ < election_timeout_ticks_) {// 如果领导者ID不为空且选举时间小于选举超时时间
+    return;
+  }
   bool up_to_date = (last_term > n_.log_.last_term()) ||
-                    (last_term == n_.log_.last_term() && last_idx >= n_.log_.last_index());
-  if ((n_.voted_for_.empty() || n_.voted_for_ == from) && up_to_date) {
-    n_.voted_for_ = from;
-    *granted = true;
-    election_elapsed_ = 0;
-    n_.persist_locked();
+                    (last_term == n_.log_.last_term() && last_idx >= n_.log_.last_index());// 是否最新
+  if ((n_.voted_for_.empty() || n_.voted_for_ == from) && up_to_date) {// 如果投票者为空或者投票者等于from且最新
+    n_.voted_for_ = from;// 更新投票者
+    *granted = true;// 设置投票为true
+    election_elapsed_ = 0;// 清空选举时间
+    n_.persist_locked();// 持久化 
   }
 }
 
 void Election::on_request_pre_vote(const std::string& from, uint64_t term, uint64_t last_idx,
                                    uint64_t last_term, bool* granted) {
-  *granted = false;
+  *granted = false;// 设置投票为false 
   (void)from;
-  if (term < n_.term_) return;
-  if (!n_.leader_id_.empty() && election_elapsed_ < election_timeout_ticks_) {
+  if (term < n_.term_) return; // 如果任期小于当前任期
+  if (!n_.leader_id_.empty() && election_elapsed_ < election_timeout_ticks_) {// 如果领导者ID不为空且选举时间小于选举超时时间
     return;
   }
-  bool up_to_date = (last_term > n_.log_.last_term()) ||
-                    (last_term == n_.log_.last_term() && last_idx >= n_.log_.last_index());
+  bool up_to_date = (last_term > n_.log_.last_term()) || (last_term == n_.log_.last_term() && last_idx >= n_.log_.last_index());// 是否最新
   *granted = up_to_date;
 }
 
 void Election::on_request_vote_reply(const std::string& from, uint64_t term, bool granted) {
-  step_down_if_stale(term);
-  if (n_.role_ != Role::kCandidate || term != n_.term_) return;
-  votes_[from] = granted;
-  if (votes_won(votes_)) {
-    become_leader();
-    n_.persist_locked();
+  step_down_if_stale(term);// 降级为跟随者
+  if (n_.role_ != Role::kCandidate || term != n_.term_) return;// 如果角色不是候选者或者任期不等于当前任期
+
+  votes_[from] = granted;// 更新投票
+
+  if (votes_won(votes_)) {// 如果投票获胜
+    become_leader();// 成为领导者
+    n_.persist_locked();// 持久化
   }
 }
 
 void Election::on_request_pre_vote_reply(const std::string& from, uint64_t term, bool granted) {
-  if (!in_pre_vote_) return;
-  if (term > n_.term_) {
-    become_follower(term);
-    n_.persist_locked();
+  if (!in_pre_vote_) return;// 如果不在预投票
+  if (term > n_.term_) {// 如果任期大于当前任期
+    become_follower(term);// 降级为跟随者
+    n_.persist_locked();// 持久化
     return;
   }
-  pre_votes_[from] = granted;
-  if (votes_won(pre_votes_)) {
-    SKV_INFO << "shard=" << n_.opts_.shard_id << " pre-vote won; starting real election";
-    become_candidate();
-    start_election();
-    n_.persist_locked();
+  pre_votes_[from] = granted;// 更新投票
+  if (votes_won(pre_votes_)) {// 如果投票获胜
+    SKV_INFO << "shard=" << n_.opts_.shard_id << " pre-vote won; starting real election";// 记录日志
+    become_candidate();// 成为候选人
+    start_election();// 开始选举
+    n_.persist_locked();// 持久化
   }
 }
 

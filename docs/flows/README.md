@@ -91,6 +91,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 | **Propose→ACK 落盘保证** | [36-propose-ack-durability.md](36-propose-ack-durability.md) | 调用链；ACK=apply；persist 先于 apply |
 | Storage 启动 | [07-storage-startup.md](07-storage-startup.md) | MultiRaft 工厂、WAL、tick、gRPC listen |
 | 故障恢复 | [04-fault-recovery.md](04-fault-recovery.md) | load WAL → AE 追赶 / InstallSnapshot |
+| Raft 协议核故障场景 | [40-raft-module-fault-tests.md](40-raft-module-fault-tests.md) | 本机内存多节点 A–H；`make raft-fault-local` |
 | 进程优雅关机 | [31-graceful-shutdown.md](31-graceful-shutdown.md) | SIGTERM：拒新 RPC + 排空在途 |
 | Meta HA | [05-meta-ha.md](05-meta-ha.md) | Meta×3、管控命令、TSO |
 
