@@ -16,9 +16,9 @@
 // 实现：RaftLocalState/LogEntry 编解码（含 CRC）、load_group_from_engine、save_group_to_engine。
 // 真正写盘在各 Engine::consume 实现中。
 
-#include "openkv/raft/raft_engine.hpp"
+#include "openkv/raft/engine/raft_engine.hpp"
 
-#include "openkv/raft/raft_log.hpp"
+#include "openkv/raft/log/raft_log.hpp"
 
 #include <cstdint>
 #include <cstring>

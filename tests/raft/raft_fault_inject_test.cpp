@@ -15,7 +15,7 @@
 // @file raft_fault_inject_test.cpp
 // 出站抖动注入：丢包/延迟规则（不启真实 gRPC）。
 
-#include "openkv/raft/raft_fault_inject.hpp"
+#include "openkv/raft/util/raft_fault_inject.hpp"
 
 #include <gtest/gtest.h>
 

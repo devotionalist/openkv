@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "openkv/raft/raft_node.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 #include "openkv/region.hpp"
 
 #include <cstdint>

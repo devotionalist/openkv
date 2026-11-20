@@ -15,7 +15,7 @@
 // @file raft_log_test.cpp
 // 测试 RaftLog 追加、冲突截断、match、compact_to 等日志语义。
 
-#include "openkv/raft/raft_log.hpp"
+#include "openkv/raft/log/raft_log.hpp"
 
 #include <gtest/gtest.h>
 

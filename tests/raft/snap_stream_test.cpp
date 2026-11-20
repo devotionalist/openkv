@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/raft/snap_stream.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
 
 #include <gtest/gtest.h>
 

@@ -22,8 +22,8 @@
 #pragma once
 
 #include "openkv/raft/engine/sync_mode.hpp"
-#include "openkv/raft/raft_log.hpp"
-#include "openkv/raft/types.hpp"
+#include "openkv/raft/log/raft_log.hpp"
+#include "openkv/raft/core/types.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -86,22 +86,27 @@ class RaftEngine {
  public:
   virtual ~RaftEngine() = default;
 
+  // 创建日志批次
   virtual std::unique_ptr<RaftLogBatch> make_log_batch(size_t capacity_hint = 0) = 0;
-  /// 消费 batch；sync=true 时 fsync/WriteOptions.sync。返回写入字节近似值。
+  // 消费批次；sync=true 时 fsync/WriteOptions.sync。返回写入字节近似值。
   virtual size_t consume(RaftLogBatch& batch, bool sync) = 0;
 
+  // 获取raft状态
   virtual std::optional<RaftLocalState> get_raft_state(uint64_t raft_group_id) const = 0;
+  // 获取日志
   virtual std::optional<LogEntry> get_entry(uint64_t raft_group_id, uint64_t index) const = 0;
-  /// 拉取 [begin, end) 到 to；受 max_size 限制。返回条数。
+  // 拉取 [begin, end) 到 to；受 max_size 限制。返回条数。
   virtual size_t fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end,
                                   size_t max_size, std::vector<LogEntry>* to) const = 0;
 
-  /// 删除 [from, to) 日志；返回删除条数。
+  // 删除 [from, to) 日志；返回删除条数。
   virtual size_t gc(uint64_t raft_group_id, uint64_t from, uint64_t to) = 0;
-  /// 销毁该 group 的 state + 全部日志。
+  // 销毁该 group 的 state + 全部日志。
   virtual void clean(uint64_t raft_group_id) = 0;
 
+  // 获取同步模式
   virtual SyncMode sync_mode() const = 0;
+  // 设置同步模式
   virtual void set_sync_mode(SyncMode m) = 0;
 };
 

@@ -91,7 +91,7 @@
 
 ## 6. 耐久类型（非引擎）
 
-- `SyncMode` / `PersistedHardState`：定义在 `engine/sync_mode.hpp`（旧 `raft_persist.hpp` 仅转发）。
+- `SyncMode` / `PersistedHardState`：定义在 `engine/sync_mode.hpp`。
 - 落盘实现只有 `FileRaftEngine` 与 `DbRaftEngine`；已删除旧文本 `hard.state` / `log.entries` 读写与迁移。
 
 ## 7. 验收

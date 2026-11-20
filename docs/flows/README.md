@@ -65,6 +65,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 |------|------|------|
 | 写入 Put / Delete | [01-write-put.md](01-write-put.md) | Locate → ONEPC → 多数派 → apply → ProposalQueue |
 | **1PC vs 2PC** | [37-onepc-vs-2pc.md](37-onepc-vs-2pc.md) | ONEPC 单 key；Prewrite→Commit 多 key；MVCC L/D/W |
+| **Percolator MVCC** | [41-percolator-mvcc.md](41-percolator-mvcc.md) | 解决什么；L/D/W；TSO；读冲突；与 Raw 边界 |
 | Raw vs Txn | [27-raw-vs-txn.md](27-raw-vs-txn.md) | RawPut/Get/Delete 无 TSO；与 Put 同 key 勿混用 |
 | Compute 网络优化 | [28-compute-net-opt.md](28-compute-net-opt.md) | 二进制 Get、stub 缓存、TSO async、Batch fan-in |
 | 读取 Get | [02-read-get.md](02-read-get.md) | 线性一致 vs 副本读；无 ReadIndex |

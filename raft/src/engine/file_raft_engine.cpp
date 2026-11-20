@@ -16,11 +16,11 @@
 // 实现：按 group 文件布局的 RaftEngine；纯追加 vs rewrite；state 原子替换。
 // 生产 Storage 请用 DbRaftEngine；本实现面向 Meta / UT。
 
-#include "openkv/raft/file_raft_engine.hpp"
+#include "openkv/raft/engine/file_raft_engine.hpp"
 
 #include "openkv/logging.hpp"
-#include "openkv/raft/raft_log.hpp"
-#include "openkv/raft/raft_log_file.hpp"
+#include "openkv/raft/log/raft_log.hpp"
+#include "openkv/raft/log/raft_log_file.hpp"
 #include "openkv/raft/engine/sync_mode.hpp"
 
 #include <fcntl.h>

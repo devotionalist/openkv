@@ -16,7 +16,7 @@
 // 门面编排：propose/tick；Ready→ReadyPump，apply→Apply，线性读→LinearRead，
 // 复制→Replication，落盘→LogPersist。
 
-#include "openkv/raft/raft_node.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 
 #include "openkv/logging.hpp"
 

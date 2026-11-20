@@ -15,7 +15,7 @@
 // @file multi_raft_test.cpp
 // 测试 MultiRaft 懒创建分片 group、tick 后选主与 leader_shards 列表。
 
-#include "openkv/raft/multi_raft.hpp"
+#include "openkv/raft/core/multi_raft.hpp"
 
 #include <gtest/gtest.h>
 

@@ -19,8 +19,8 @@
 
 #pragma once
 
-#include "openkv/raft/raft_node.hpp"
-#include "openkv/raft/ready.hpp"
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/core/ready.hpp"
 #include "openkv/region.hpp"
 
 #include <atomic>

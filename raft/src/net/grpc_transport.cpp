@@ -15,12 +15,12 @@
 // @file grpc_transport.cpp
 // 实现：出站 Unary/InstallSnapshot Callback 客户端、发送队列与 worker。
 
-#include "openkv/raft/grpc_transport.hpp"
+#include "openkv/raft/net/grpc_transport.hpp"
 
 #include "openkv/codec.hpp"
 #include "openkv/grpc_keepalive.hpp"
 #include "openkv/logging.hpp"
-#include "openkv/raft/raft_fault_inject.hpp"
+#include "openkv/raft/util/raft_fault_inject.hpp"
 
 #include <algorithm>
 #include <atomic>

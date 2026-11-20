@@ -12,7 +12,7 @@ OpenKV 的 **Multi-Raft 协议 + 本机调度运行时**，编成静态库 `open
 
 生产落盘：`DbRaftEngine`（当前后端 RocksDB）。Meta / 单测可用 `FileRaftEngine`。Store **默认**调用 `RaftNode::persist_ready`，消费者不必再 `set_persist_fn`。
 
-旧路径头文件（如 `openkv/raft/raft_node.hpp`）仍可用，内部转发到分包路径。
+对外文件请直接 include 分包路径（如 `openkv/raft/core/raft_node.hpp`），无旧路径转发。
 
 ```text
 Propose → Store::request_ready → BatchSystem

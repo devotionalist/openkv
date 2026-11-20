@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "openkv/raft/types.hpp"
+#include "openkv/raft/core/types.hpp"
 
 #include <cstddef>
 #include <optional>

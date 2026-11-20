@@ -30,9 +30,9 @@
 #include "openkv/meta/region_scheduler.hpp"
 #include "openkv/meta/scaler.hpp"
 #include "openkv/peer_counter.hpp"
-#include "openkv/raft/grpc_transport.hpp"
-#include "openkv/raft/raft_node.hpp"
-#include "openkv/raft/snap_stream.hpp"
+#include "openkv/raft/net/grpc_transport.hpp"
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
 
 #include <atomic>
 #include <chrono>

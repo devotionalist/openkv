@@ -21,7 +21,7 @@
 #pragma once
 
 #include "openkv/peer_counter.hpp"
-#include "openkv/raft/raft_node.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 
 #include <cstdint>
 #include <memory>

@@ -15,8 +15,8 @@
 // @file raft_node_test.cpp
 // 测试单节点选举、propose/apply、ConfChange 与 Follower 消息处理。
 
-#include "openkv/raft/file_raft_engine.hpp"
-#include "openkv/raft/raft_node.hpp"
+#include "openkv/raft/engine/file_raft_engine.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 
 #include <gtest/gtest.h>
 

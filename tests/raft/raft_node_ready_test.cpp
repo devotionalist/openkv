@@ -15,7 +15,7 @@
 // @file raft_node_ready_test.cpp
 // RaftNode(external_io) 纯内存 Ready 循环：无盘、无网，外层手动 drain。
 
-#include "openkv/raft/raft_node.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 
 #include <gtest/gtest.h>
 

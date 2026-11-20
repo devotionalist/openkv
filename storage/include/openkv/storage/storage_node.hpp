@@ -19,8 +19,8 @@
 
 #include "openkv/config.hpp"
 #include "openkv/peer_counter.hpp"
-#include "openkv/raft/multi_raft.hpp"
-#include "openkv/raft/snap_stream.hpp"
+#include "openkv/raft/core/multi_raft.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
 #include "openkv/region.hpp"
 #include "openkv/storage/kv_engine.hpp"
 #include "openkv/storage/proposal_queue.hpp"
@@ -29,7 +29,7 @@
 #include "openkv/storage/scheduler.hpp"
 #include "openkv/storage/coprocessor.hpp"
 #include "openkv/storage/watch_hub.hpp"
-#include "openkv/raft/grpc_transport.hpp"
+#include "openkv/raft/net/grpc_transport.hpp"
 
 #include <atomic>
 #include <chrono>

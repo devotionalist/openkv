@@ -15,7 +15,7 @@
 // @file multi_raft.cpp
 // 实现：把 MultiRaft::Options 映射为 Store::Options 并转发 API。
 
-#include "openkv/raft/multi_raft.hpp"
+#include "openkv/raft/core/multi_raft.hpp"
 
 #include "openkv/raftstore/store.hpp"
 

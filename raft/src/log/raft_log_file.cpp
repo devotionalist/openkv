@@ -15,9 +15,9 @@
 // @file raft_log_file.cpp
 // 实现：RLG 容器编解码与内存日志突变合并。
 
-#include "openkv/raft/raft_log_file.hpp"
+#include "openkv/raft/log/raft_log_file.hpp"
 
-#include "openkv/raft/raft_engine.hpp"
+#include "openkv/raft/engine/raft_engine.hpp"
 
 #include <algorithm>
 #include <cstdint>

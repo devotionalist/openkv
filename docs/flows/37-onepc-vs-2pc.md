@@ -1,7 +1,7 @@
 # 事务平面：1PC（ONEPC）与 2PC
 
 **状态：** 与源码对齐（Gateway `Put`/`Txn*` · Storage `CmdOp::kOnePc` / `kPrewrite` / `kCommit`）  
-**相关：** [01-write-put](01-write-put.md) · [27-raw-vs-txn](27-raw-vs-txn.md) · [13-version-cas](13-version-cas.md) · [36-propose-ack-durability](36-propose-ack-durability.md)
+**相关：** [41-percolator-mvcc](41-percolator-mvcc.md) · [01-write-put](01-write-put.md) · [27-raw-vs-txn](27-raw-vs-txn.md) · [13-version-cas](13-version-cas.md) · [36-propose-ack-durability](36-propose-ack-durability.md)
 
 ---
 

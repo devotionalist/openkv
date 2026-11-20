@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/raft/raft_frame.hpp"
-#include "openkv/raft/raft_node.hpp"
+#include "openkv/raft/util/raft_frame.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 
 #include <gtest/gtest.h>
 

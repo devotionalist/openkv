@@ -15,7 +15,7 @@
 // @file raftstore_test.cpp
 // Store / Router / Hibernate / Apply 队列 QoS 烟雾。
 
-#include "openkv/raft/file_raft_engine.hpp"
+#include "openkv/raft/engine/file_raft_engine.hpp"
 #include "openkv/raftstore/snap_worker.hpp"
 #include "openkv/raftstore/store.hpp"
 

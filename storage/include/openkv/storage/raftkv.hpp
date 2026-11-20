@@ -17,7 +17,7 @@
 
 #pragma once
 
-#include "openkv/raft/types.hpp"
+#include "openkv/raft/core/types.hpp"
 #include "openkv/raftstore/store.hpp"
 
 #include <cstdint>

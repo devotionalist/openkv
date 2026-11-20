@@ -19,8 +19,8 @@
 
 #pragma once
 
-#include "openkv/raft/ready.hpp"
-#include "openkv/raft/types.hpp"
+#include "openkv/raft/core/ready.hpp"
+#include "openkv/raft/core/types.hpp"
 #include "openkv/region.hpp"
 
 #include <cstdint>

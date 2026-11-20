@@ -15,9 +15,9 @@
 // @file raft_engine_test.cpp
 // FileRaftEngine：LogBatch 原子写 + 恢复。
 
-#include "openkv/raft/file_raft_engine.hpp"
-#include "openkv/raft/raft_engine.hpp"
-#include "openkv/raft/raft_log.hpp"
+#include "openkv/raft/engine/file_raft_engine.hpp"
+#include "openkv/raft/engine/raft_engine.hpp"
+#include "openkv/raft/log/raft_log.hpp"
 
 #include <gtest/gtest.h>
 

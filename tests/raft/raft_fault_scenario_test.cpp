@@ -16,9 +16,9 @@
 // Raft 协议核故障全场景：内存集群 + 分区/丢包/丢回包；覆盖 docs/flows/40 清单 A–F。
 
 #include "openkv/codec.hpp"
-#include "openkv/raft/file_raft_engine.hpp"
-#include "openkv/raft/raft_fault_inject.hpp"
-#include "openkv/raft/raft_node.hpp"
+#include "openkv/raft/engine/file_raft_engine.hpp"
+#include "openkv/raft/util/raft_fault_inject.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 
 #include <gtest/gtest.h>
 

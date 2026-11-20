@@ -14,7 +14,7 @@
 
 // @file raft_fault_inject.cpp
 
-#include "openkv/raft/raft_fault_inject.hpp"
+#include "openkv/raft/util/raft_fault_inject.hpp"
 
 #include "openkv/protocol.hpp"
 

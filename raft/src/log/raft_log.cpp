@@ -16,7 +16,7 @@
 // 实现：索引换算、Follower append_entries 冲突截断、compact/load。
 // 详见 raft_log.hpp——本文件无 IO。
 
-#include "openkv/raft/raft_log.hpp"
+#include "openkv/raft/log/raft_log.hpp"
 
 #include <stdexcept>
 
