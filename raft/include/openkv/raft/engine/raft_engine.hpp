@@ -21,9 +21,10 @@
 
 #pragma once
 
+#include "openkv/raft/core/types.hpp"
+#include "openkv/raft/engine/raft_wire.hpp"
 #include "openkv/raft/engine/sync_mode.hpp"
 #include "openkv/raft/log/raft_log.hpp"
-#include "openkv/raft/core/types.hpp"
 
 #include <cstdint>
 #include <memory>

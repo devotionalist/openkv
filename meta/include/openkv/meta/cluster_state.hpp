@@ -26,10 +26,14 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 namespace openkv::meta {
+
+/// ClusterState 文本快照魔数（serialize / load_snapshot）。
+inline constexpr std::string_view kMagicClusterSnap = "MSK1";
 
 /// 节点角色：Compute（网关，不持 Region 数据）/ Storage（存数据 + Multi-Raft）。
 enum class NodeRole { kCompute, kStorage };

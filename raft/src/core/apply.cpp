@@ -19,6 +19,7 @@
 
 #include "openkv/logging.hpp"
 #include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/engine/raft_wire.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -27,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <string_view>
 
 namespace openkv::raft {
 namespace {
@@ -123,7 +125,7 @@ void Apply::save_local_fsm_snapshot_locked() {
         SKV_WARN << "shard=" << n_.opts_.shard_id << " fsm snap open failed path=" << tmp;
         return;
       }
-      out.write("FSN1", 4);
+      out.write(kMagicFsmSnap.data(), static_cast<std::streamsize>(kMagicFsmSnap.size()));
       out.write(reinterpret_cast<const char*>(&li), sizeof(li));
       out.write(reinterpret_cast<const char*>(&lt), sizeof(lt));
       out.write(blob.data(), static_cast<std::streamsize>(blob.size()));
@@ -149,10 +151,10 @@ bool Apply::try_restore_fsm_snap_file() {
     if (!in) return false;
     char magic[4] = {};
     uint64_t li = 0, lt = 0;
-    in.read(magic, 4);
+    in.read(magic, static_cast<std::streamsize>(kMagicFsmSnap.size()));
     in.read(reinterpret_cast<char*>(&li), sizeof(li));
     in.read(reinterpret_cast<char*>(&lt), sizeof(lt));
-    if (!in || std::memcmp(magic, "FSN1", 4) != 0) {
+    if (!in || std::string_view(magic, kMagicFsmSnap.size()) != kMagicFsmSnap) {
       SKV_WARN << "shard=" << n_.opts_.shard_id << " fsm snap bad header";
       return false;
     }

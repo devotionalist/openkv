@@ -13,14 +13,15 @@
 // limitations under the License.
 
 // @file raft_log_file.hpp
-// 职责：Raft 日志文件容器编解码（RLG2 / 兼容 RLG1），与单条 RLE 编解码分离。
+// 职责：Raft 日志文件容器编解码（RLG），与单条 RLE 编解码分离。
 // 架构：FileRaftEngine 独占使用；append 路径只追加 RLE 记录，绝不重复写容器魔数。
-// 协作：依赖 encode_log_entry / decode_log_entry（raft_engine.hpp）。
-// 注意：RLG2 = "RLG2" + 连续 entry 记录；整文件 rewrite 才调用 encode_container。
+// 协作：依赖 encode_log_entry / decode_log_entry（raft_engine.hpp）；魔数见 raft_wire.hpp。
+// 注意：容器 = kMagicRlg + 连续 entry 记录；整文件 rewrite 才调用 encode_container。
 
 #pragma once
 
 #include "openkv/raft/core/types.hpp"
+#include "openkv/raft/engine/raft_wire.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -31,8 +32,7 @@
 
 namespace openkv::raft::log_file {
 
-inline constexpr std::string_view kMagicRlg2 = "RLG2";
-inline constexpr std::string_view kMagicRlg1 = "RLG1";
+// 容器魔数：统一用 openkv::raft::kMagicRlg（raft_wire.hpp）。
 
 /// 从 offset 起一条 entry 记录的字节长度；无法识别返回 0。
 size_t entry_record_size(std::string_view raw, size_t offset);

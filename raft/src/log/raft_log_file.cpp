@@ -36,24 +36,16 @@ uint64_t read_be64_at(std::string_view raw, size_t off) {
 }  // namespace
 
 size_t entry_record_size(std::string_view raw, size_t offset) {
-  if (offset + 4 + 24 > raw.size()) return 0;
-  const auto mag = raw.substr(offset, 4);
-  if (mag == "RLE2") {
-    if (offset + 4 + 24 + 4 > raw.size()) return 0;
-    const uint64_t dlen = read_be64_at(raw, offset + 4 + 16);
-    return 4 + 24 + static_cast<size_t>(dlen) + 4;
-  }
-  if (mag == "RLE1") {
-    const uint64_t dlen = read_be64_at(raw, offset + 4 + 16);
-    return 4 + 24 + static_cast<size_t>(dlen);
-  }
-  return 0;
+  if (offset + kWireMagicLen + 24 + 4 > raw.size()) return 0;
+  if (raw.substr(offset, kWireMagicLen) != kMagicRle) return 0;
+  const uint64_t dlen = read_be64_at(raw, offset + kWireMagicLen + 16);
+  return kWireMagicLen + 24 + static_cast<size_t>(dlen) + 4;
 }
 
 std::string encode_container(const std::vector<LogEntry>& entries) {
   std::string out;
-  out.reserve(4 + entries.size() * 48);
-  out.append(kMagicRlg2.data(), kMagicRlg2.size());
+  out.reserve(kWireMagicLen + entries.size() * 48);
+  out.append(kMagicRlg.data(), kMagicRlg.size());
   for (const auto& e : entries) {
     out.append(encode_log_entry(e));
   }
@@ -64,27 +56,10 @@ bool decode_container(std::string_view raw, std::vector<LogEntry>* out) {
   if (!out) return false;
   out->clear();
   if (raw.empty()) return true;
-  if (raw.size() < 4) return false;
+  if (raw.size() < kWireMagicLen || raw.substr(0, kWireMagicLen) != kMagicRlg) return false;
 
-  if (raw.substr(0, 4) == kMagicRlg2) {
-    size_t off = 4;
-    while (off < raw.size()) {
-      const size_t need = entry_record_size(raw, off);
-      if (need == 0 || off + need > raw.size()) return false;
-      LogEntry e;
-      if (!decode_log_entry(raw.substr(off, need), &e)) return false;
-      out->push_back(std::move(e));
-      off += need;
-    }
-    return true;
-  }
-
-  // RLG1：magic + be64 count + records（迁移兼容）
-  if (raw.substr(0, 4) != kMagicRlg1 || raw.size() < 12) return false;
-  const uint64_t n = read_be64_at(raw, 4);
-  size_t off = 12;
-  out->reserve(static_cast<size_t>(n));
-  for (uint64_t i = 0; i < n; ++i) {
+  size_t off = kWireMagicLen;
+  while (off < raw.size()) {
     const size_t need = entry_record_size(raw, off);
     if (need == 0 || off + need > raw.size()) return false;
     LogEntry e;

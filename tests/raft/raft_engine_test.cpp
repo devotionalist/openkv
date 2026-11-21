@@ -18,6 +18,7 @@
 #include "openkv/raft/engine/file_raft_engine.hpp"
 #include "openkv/raft/engine/raft_engine.hpp"
 #include "openkv/raft/log/raft_log.hpp"
+#include "openkv/raft/log/raft_log_file.hpp"
 
 #include <gtest/gtest.h>
 
@@ -75,7 +76,7 @@ TEST(RaftEngineTest, FileLogBatchRoundTrip) {
 TEST(RaftEngineTest, EntryCrcRoundTrip) {
   LogEntry e{9, 42, "payload-with-crc"};
   auto blob = openkv::raft::encode_log_entry(e);
-  ASSERT_TRUE(blob.substr(0, 4) == "RLE2");
+  ASSERT_EQ(blob.substr(0, openkv::raft::kWireMagicLen), openkv::raft::kMagicRle);
   LogEntry out;
   ASSERT_TRUE(openkv::raft::decode_log_entry(blob, &out));
   EXPECT_EQ(out.term, 9u);
@@ -84,6 +85,29 @@ TEST(RaftEngineTest, EntryCrcRoundTrip) {
   // 翻坏 CRC
   blob.back() = static_cast<char>(blob.back() ^ 0x7f);
   EXPECT_FALSE(openkv::raft::decode_log_entry(blob, &out));
+}
+
+TEST(RaftEngineTest, RejectLegacyRlg1AndRle1) {
+  // 旧 RLG1 容器、无 CRC 的 RLE1 条目均不再解码
+  std::string legacy_rlg = "RLG1";
+  for (int i = 0; i < 8; ++i) legacy_rlg.push_back('\0');
+  std::vector<LogEntry> out;
+  EXPECT_FALSE(openkv::raft::log_file::decode_container(legacy_rlg, &out));
+
+  std::string legacy_rle = "RLE1";
+  for (int i = 0; i < 24; ++i) legacy_rle.push_back('\0');  // term/index/len=0
+  LogEntry e;
+  EXPECT_FALSE(openkv::raft::decode_log_entry(legacy_rle, &e));
+  EXPECT_EQ(openkv::raft::log_file::entry_record_size(legacy_rle, 0), 0u);
+
+  auto ok = openkv::raft::log_file::encode_container({{1, 1, "x"}});
+  ASSERT_EQ(ok.substr(0, openkv::raft::kWireMagicLen), openkv::raft::kMagicRlg);
+  EXPECT_TRUE(openkv::raft::log_file::decode_container(ok, &out));
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].data, "x");
+
+  // 旧 RLG2 魔数同样拒绝
+  EXPECT_FALSE(openkv::raft::log_file::decode_container(std::string("RLG2"), &out));
 }
 
 TEST(RaftEngineTest, FilePureAppend) {

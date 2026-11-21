@@ -75,13 +75,13 @@
 {root}/
   g{group_id}/
     raft_state      # RLS1（原子：tmp → sync → rename）
-    raft_log        # RLG2 头 + 连续 RLE2 记录
+    raft_log        # RLG 头 + 连续 RLE 记录（魔数见 raft_wire.hpp）
 ```
 
 | 操作 | 行为 |
 |------|------|
 | 纯追加（无 cut、index 严格衔接） | 文件尾 append 记录；魔数只写一次 |
-| cut / 覆盖同 index / 非 RLG2 | 内存合并后整文件 rewrite（tmp → rename） |
+| cut / 覆盖同 index / 非 RLG | 内存合并后整文件 rewrite（tmp → rename） |
 | put_raft_state | 与本批 log 变更同一 `consume` 临界区提交 |
 | SyncMode::kData | 脏文件 FULLFSYNC / fdatasync |
 | SyncMode::kAll | 文件 sync + root 目录 sync |

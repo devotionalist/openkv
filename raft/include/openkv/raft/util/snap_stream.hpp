@@ -33,6 +33,9 @@ namespace openkv::raft {
 
 inline constexpr size_t kDefaultSnapChunkBytes = 16 * 1024;
 
+/// InstallSnapshot blob 前缀：ConfState CSV + KV 快照（Store 出站 / Replication 入站共用）。
+inline constexpr std::string_view kMagicSnapConf = "SKVC1\n";
+
 inline std::string snap_to_hex(std::string_view s) { return openkv::to_hex(s); }
 inline bool snap_from_hex(std::string_view hex, std::string* out) {
   return openkv::from_hex(hex, out);

@@ -233,7 +233,7 @@ bool FileRaftEngine::rewrite_log_unlocked(const GroupPaths& p, const std::vector
 bool FileRaftEngine::append_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents,
                                          bool sync) const {
   // 纯追加：ios::app 不截断。魔数仅在空文件写一次；之后只 append RLE 记录。
-  // 切勿把 encode_container() 的结果再 append——会在文件中段插入第二个 RLG2。
+  // 切勿把 encode_container() 的结果再 append——会在文件中段插入第二个 RLG 头。
   if (ents.empty()) return true;
   if (!p.ensure_dir()) {
     SKV_ERROR << "FileRaftEngine: ensure group dir failed dir=" << p.dir.string();
@@ -247,8 +247,9 @@ bool FileRaftEngine::append_log_unlocked(const GroupPaths& p, const std::vector<
     std::ifstream hin(p.log, std::ios::binary);
     char mag[4]{};
     hin.read(mag, 4);
-    if (hin.gcount() != 4 || std::string_view(mag, 4) != log_file::kMagicRlg2) {
-      SKV_WARN << "FileRaftEngine: log not RLG2, refuse append path=" << p.log.string();
+    if (hin.gcount() != static_cast<std::streamsize>(kWireMagicLen) ||
+        std::string_view(mag, kWireMagicLen) != kMagicRlg) {
+      SKV_WARN << "FileRaftEngine: log not RLG, refuse append path=" << p.log.string();
       return false;
     }
     write_hdr = false;
@@ -260,8 +261,7 @@ bool FileRaftEngine::append_log_unlocked(const GroupPaths& p, const std::vector<
     return false;
   }
   if (write_hdr) {
-    out.write(log_file::kMagicRlg2.data(),
-              static_cast<std::streamsize>(log_file::kMagicRlg2.size()));
+    out.write(kMagicRlg.data(), static_cast<std::streamsize>(kMagicRlg.size()));
   }
   for (const auto& e : ents) {
     const auto blob = encode_log_entry(e);
@@ -316,7 +316,7 @@ size_t FileRaftEngine::apply_group_mut_unlocked(uint64_t group_id, GroupMut& mut
 
   if (pure) {
     if (!append_log_unlocked(p, mut.appends, sync)) {
-      // 非 RLG2 或 append IO 失败：退化为整文件 rewrite，保证可恢复。
+      // 非 RLG 或 append IO 失败：退化为整文件 rewrite，保证可恢复。
       for (auto& e : mut.appends) ents.push_back(std::move(e));
       if (!rewrite_log_unlocked(p, ents, sync)) return 0;
       for (const auto& e : ents) bytes += approx_entry_bytes(e);

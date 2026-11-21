@@ -838,9 +838,9 @@ uint64_t ClusterState::gc_retain_ts() const {
 std::string ClusterState::serialize() const {
   std::lock_guard<std::mutex> lock(mu_);
   std::ostringstream oss;
-  oss << "MSK1|" << replica_factor_ << '|' << next_region_id_ << '|' << next_ts_ << '|'
-      << gc_safe_ts_ << '|' << min_start_ts_hint_ << '|' << gc_retain_ts_ << '|' << route_.version
-      << '|' << nodes_.size();
+  oss << kMagicClusterSnap << '|' << replica_factor_ << '|' << next_region_id_ << '|' << next_ts_
+      << '|' << gc_safe_ts_ << '|' << min_start_ts_hint_ << '|' << gc_retain_ts_ << '|'
+      << route_.version << '|' << nodes_.size();
   for (const auto& [_, n] : nodes_) {
     oss << '|' << n.node_id << '|' << static_cast<int>(n.role) << '|' << n.address << '|'
         << static_cast<int>(n.state) << '|' << n.last_heartbeat_ms;
@@ -865,7 +865,8 @@ std::string ClusterState::serialize() const {
 
 // 解析 MSK1；失败则状态不变（调用方应处理 false）。
 bool ClusterState::load_snapshot(std::string_view data) {
-  if (data.size() < 4 || data.substr(0, 4) != "MSK1") {
+  if (data.size() < kMagicClusterSnap.size() ||
+      data.substr(0, kMagicClusterSnap.size()) != kMagicClusterSnap) {
     SKV_WARN << "cluster_state snapshot bad magic";
     return false;
   }

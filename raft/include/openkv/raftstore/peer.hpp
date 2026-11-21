@@ -34,14 +34,14 @@
 namespace openkv::raftstore {
 
 struct PeerMeta {
-  uint32_t region_id{0};
-  openkv::KeyRange range;
-  uint64_t epoch{0};
-  std::string leader_id;
-  std::vector<raft::Peer> peers;
+  uint32_t region_id{0};// 区域ID
+  openkv::KeyRange range;// 范围
+  uint64_t epoch{0};// 任期
+  std::string leader_id;// 领导者ID
+  std::vector<raft::Peer> peers;// 节点列表
 };
 
-/// 运行时 Peer：持有 external_io RaftNode（Ready 由 Store 外提）。
+// 运行时 Peer：持有 external_io RaftNode（Ready 由 Store 外提）。
 class Peer {
  public:
   Peer(uint32_t region_id, std::shared_ptr<raft::RaftNode> node);

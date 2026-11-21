@@ -343,7 +343,8 @@ TEST(ClusterStateTest, SnapshotRoundTrip) {
   st.bump_route_version();
   auto blob = st.serialize();
   ASSERT_FALSE(blob.empty());
-  EXPECT_EQ(blob.substr(0, 4), "MSK1");
+  EXPECT_EQ(blob.substr(0, openkv::meta::kMagicClusterSnap.size()),
+            openkv::meta::kMagicClusterSnap);
 
   ClusterState loaded;
   ASSERT_TRUE(loaded.load_snapshot(blob));

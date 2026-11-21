@@ -85,7 +85,7 @@ class FileRaftEngine final : public RaftEngine {
 
   bool read_log_unlocked(const GroupPaths& p, std::vector<LogEntry>* out) const;
   bool rewrite_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents, bool sync) const;
-  /// 纯追加 RLE 记录；文件非 RLG2 或 IO 失败返回 false。
+  /// 纯追加 RLE 记录；文件非 RLG 或 IO 失败返回 false。
   bool append_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents, bool sync) const;
 
   /// 应用单 group 突变。REQUIRES: mu_ held。失败返回 0。

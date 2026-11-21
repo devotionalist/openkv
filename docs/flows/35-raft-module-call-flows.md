@@ -187,7 +187,7 @@ flowchart TB
 
 File 引擎布局与追加契约见 [ARCHITECTURE.md §5](../../raft/ARCHITECTURE.md)：
 
-- 容器编解码：`raft_log_file`（RLG2）
+- 容器编解码：`raft_log_file`（RLG）
 - 单条记录：`encode_log_entry`（RLE2）
 - 纯追加只写 RLE；cut / 冲突 index → 整文件 rewrite
 

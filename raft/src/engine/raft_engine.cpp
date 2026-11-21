@@ -78,7 +78,7 @@ uint32_t crc32(const uint8_t* data, size_t len) {
 
 std::string encode_raft_local_state(const RaftLocalState& st) {
   std::string out;
-  out.append("RLS1", 4);
+  out.append(kMagicRls.data(), kMagicRls.size());
   put_u64(&out, st.term);
   put_u64(&out, static_cast<uint64_t>(st.voted_for.size()));
   out.append(st.voted_for);
@@ -91,9 +91,9 @@ std::string encode_raft_local_state(const RaftLocalState& st) {
 }
 
 bool decode_raft_local_state(std::string_view raw, RaftLocalState* st) {
-  if (!st || raw.size() < 4 + 8 * 7) return false;
-  if (raw.substr(0, 4) != "RLS1") return false;
-  const char* p = raw.data() + 4;
+  if (!st || raw.size() < kWireMagicLen + 8 * 7) return false;
+  if (raw.substr(0, kWireMagicLen) != kMagicRls) return false;
+  const char* p = raw.data() + kWireMagicLen;
   const char* end = raw.data() + raw.size();
   uint64_t vote_len = 0;
   if (!get_u64(p, end, &st->term) || !get_u64(p, end, &vote_len)) return false;
@@ -106,7 +106,7 @@ bool decode_raft_local_state(std::string_view raw, RaftLocalState* st) {
 }
 
 std::string encode_log_entry(const LogEntry& e) {
-  // RLE2：term|index|len|data|crc32(payload without magic/crc)
+  // RLE：term|index|len|data|crc32(payload without magic/crc)
   std::string body;
   put_u64(&body, e.term);
   put_u64(&body, e.index);
@@ -114,43 +114,30 @@ std::string encode_log_entry(const LogEntry& e) {
   body.append(e.data);
   const uint32_t c = crc32(reinterpret_cast<const uint8_t*>(body.data()), body.size());
   std::string out;
-  out.append("RLE2", 4);
+  out.append(kMagicRle.data(), kMagicRle.size());
   out.append(body);
   put_u32(&out, c);
   return out;
 }
 
 bool decode_log_entry(std::string_view raw, LogEntry* e) {
-  if (!e || raw.size() < 4 + 24) return false;
-  if (raw.substr(0, 4) == "RLE2") {
-    if (raw.size() < 4 + 24 + 4) return false;
-    const char* p = raw.data() + 4;
-    const char* end = raw.data() + raw.size() - 4;  // exclude crc
-    uint64_t dlen = 0;
-    if (!get_u64(p, end, &e->term) || !get_u64(p, end, &e->index) || !get_u64(p, end, &dlen)) {
-      return false;
-    }
-    if (end - p < static_cast<std::ptrdiff_t>(dlen)) return false;
-    e->data.assign(p, dlen);
-    const char* crc_p = raw.data() + raw.size() - 4;
-    uint32_t expect = 0;
-    if (!get_u32(crc_p, raw.data() + raw.size(), &expect)) return false;
-    const size_t body_len = raw.size() - 4 - 4;
-    const uint32_t got =
-        crc32(reinterpret_cast<const uint8_t*>(raw.data() + 4), body_len);
-    return got == expect;
-  }
-  // 兼容旧 RLE1（无 CRC）
-  if (raw.substr(0, 4) != "RLE1") return false;
-  const char* p = raw.data() + 4;
-  const char* end = raw.data() + raw.size();
+  if (!e || raw.size() < kWireMagicLen + 24 + 4) return false;
+  if (raw.substr(0, kWireMagicLen) != kMagicRle) return false;
+  const char* p = raw.data() + kWireMagicLen;
+  const char* end = raw.data() + raw.size() - 4;  // exclude crc
   uint64_t dlen = 0;
   if (!get_u64(p, end, &e->term) || !get_u64(p, end, &e->index) || !get_u64(p, end, &dlen)) {
     return false;
   }
   if (end - p < static_cast<std::ptrdiff_t>(dlen)) return false;
   e->data.assign(p, dlen);
-  return true;
+  const char* crc_p = raw.data() + raw.size() - 4;
+  uint32_t expect = 0;
+  if (!get_u32(crc_p, raw.data() + raw.size(), &expect)) return false;
+  const size_t body_len = raw.size() - kWireMagicLen - 4;
+  const uint32_t got =
+      crc32(reinterpret_cast<const uint8_t*>(raw.data() + kWireMagicLen), body_len);
+  return got == expect;
 }
 
 bool load_group_from_engine(const RaftEngine& eng, uint64_t raft_group_id, PersistedHardState* hs,

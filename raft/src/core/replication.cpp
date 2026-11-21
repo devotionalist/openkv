@@ -26,6 +26,7 @@
 #include "openkv/raft/core/membership.hpp"
 #include "openkv/raft/core/raft_node.hpp"
 #include "openkv/raft/core/ready_pump.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
 
 #include <chrono>
 #include <sstream>
@@ -34,8 +35,6 @@ namespace openkv::raft {
 namespace {
 
 using ::openkv::to_hex;
-
-constexpr std::string_view kSnapConfMagic = "SKVC1\n";
 
 std::string encode_peers_csv(const std::vector<Peer>& peers) {
   std::ostringstream oss;
@@ -49,7 +48,7 @@ std::string encode_peers_csv(const std::vector<Peer>& peers) {
 
 std::string wrap_snap_conf(const std::string& conf_csv, std::string kv) {
   if (conf_csv.empty()) return kv;
-  return std::string(kSnapConfMagic) + conf_csv + "\n" + std::move(kv);
+  return std::string(kMagicSnapConf) + conf_csv + "\n" + std::move(kv);
 }
 
 bool parse_peers_csv(std::string_view csv, std::vector<Peer>* out) {
@@ -80,11 +79,11 @@ bool parse_peers_csv(std::string_view csv, std::vector<Peer>* out) {
 
 void peel_snap_conf(std::string_view data, std::vector<Peer>* conf, std::string_view* kv) {
   if (conf) conf->clear();
-  if (!data.starts_with(kSnapConfMagic)) {
+  if (!data.starts_with(kMagicSnapConf)) {
     if (kv) *kv = data;
     return;
   }
-  const auto rest = data.substr(kSnapConfMagic.size());
+  const auto rest = data.substr(kMagicSnapConf.size());
   const auto nl = rest.find('\n');
   if (nl == std::string_view::npos) {
     if (kv) *kv = data;

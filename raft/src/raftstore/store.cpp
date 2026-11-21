@@ -20,6 +20,7 @@
 
 #include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
 #include "openkv/raftstore/write_batch_merge.hpp"
 
 #include <chrono>
@@ -73,10 +74,10 @@ Store::Store(Options opts, NodeFactory factory)
   SnapWorker::Sender send = [this](uint32_t rid, const raft::SnapshotMeta& meta,
                                    const std::string& data) {
     if (!transport_fn_) return;
-    // payload: last_idx|last_term|hex(blob)；blob 前可带 SKVC1 ConfState。
+    // payload: last_idx|last_term|hex(blob)；blob 前可带 ConfState（kMagicSnapConf）。
     std::string blob = data;
     if (!meta.conf_state.empty()) {
-      blob = std::string("SKVC1\n") + meta.conf_state + "\n" + data;
+      blob = std::string(raft::kMagicSnapConf) + meta.conf_state + "\n" + data;
     }
     std::ostringstream oss;
     oss << meta.index << '|' << meta.term << '|' << openkv::to_hex(blob);
