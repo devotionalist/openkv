@@ -19,6 +19,7 @@
 | N5 | Gateway BatchPut 并行度；Storage 级 batch propose | Gateway 并行 + Batch CQ fan-in 见 [28](28-compute-net-opt.md)；跨请求 batch propose **待做** |
 | N8 | 二进制 Get / TSO async / stub 缓存 | 已做；见 [28](28-compute-net-opt.md) |
 | N7 | `propose` 对 `kOnePc` 检查 `region_splitting` | 已做 |
+| N9 | **海量数据 / 大快照迁移**（InstallSnapshot 逻辑 dump 过大） | 问题已记；见 [42](42-massive-snapshot-migration.md) |
 
 ---
 
@@ -36,7 +37,15 @@
 3. 某一份装成功且落后于 `last_applied` 时，用**仍在的日志**追平；
 4. 三份都坏且日志不够 → 明确失败/告警，勿默默 bootstrap。
 
-**代码锚点：** `raft/src/raft_node.cpp`：`save_local_fsm_snapshot_locked` / `restore_local_fsm_snapshot`。
+**代码锚点：** `raft/src/core/apply.cpp`：`save_local_fsm_snapshot_locked` / `restore_local_fsm_snapshot`。
+
+---
+
+## N9：海量数据迁移 / 大 InstallSnapshot（问题记录）
+
+**问题：** 追赶路径用 `create_snapshot` 把 Region KV 扫进大 blob 过网；Region 一大则内存/带宽/apply 顶穿。本机 `create_checkpoint`（SST 硬链）更便宜，但**未**接到 InstallSnapshot。
+
+**详情与方向：** [42-massive-snapshot-migration.md](42-massive-snapshot-migration.md)（流式导出 / SST ingest / 调度先 split 等，待排期）。
 
 ---
 
@@ -44,6 +53,6 @@
 
 | ID | 命令 / 期望 |
 |----|-------------|
-| O1 | `ctest -R 'MetaHa\|MetaFsm\|FsmSnap\|OnePc\|ApproxAndPickSplit\|ProposalQueue\|LatchAsync\|LatchHold'` PASS |
+| O1 | `ctest -R 'MetaHa\|MetaFsm\|FsmSnap\|OnePc\|ApproxAndPickSplit\|IndexWaiter\|LatchAsync\|LatchHold'` PASS |
 | O2 | Meta：split → compact → 重启 → `GET_ROUTE` regions 仍在 |
 | O3 | 集群 put bench `fail=0`；无长期 Deadline Exceeded |

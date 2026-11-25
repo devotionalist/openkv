@@ -17,10 +17,10 @@
 
 #pragma once
 
-#include "openkv/raft/core/ready.hpp"
-
 #include <cstdint>
 #include <vector>
+
+#include "openkv/raft/core/ready.hpp"
 
 namespace openkv::raft {
 
@@ -38,12 +38,12 @@ struct ReadyIo {
            ready_snaps_.empty();
   }
 
-  bool ready_hs_dirty_{false};            ///< HardState 有变更、尚未放进 Ready
-  HardState ready_hs_{};                  ///< 待外提的最新 HardState 快照
-  std::vector<LogEntry> ready_unstable_;  ///< 新 append、待写 WAL 的条目
-  std::vector<LogEntry> ready_committed_; ///< 已 commit、待 apply 的条目
-  std::vector<SnapshotMeta> ready_snaps_; ///< 待发/待装快照元数据
-  uint64_t ready_applied_watermark_{0};   ///< Ready 侧已报告的 apply 水位
+  bool ready_hs_dirty_{false};             ///< HardState 有变更、尚未放进 Ready
+  HardState ready_hs_{};                   ///< 待外提的最新 HardState 快照
+  std::vector<LogEntry> ready_unstable_;   ///< 新 append、待写 WAL 的条目
+  std::vector<LogEntry> ready_committed_;  ///< 已 commit、待 apply 的条目
+  std::vector<SnapshotMeta> ready_snaps_;  ///< 待发/待装快照元数据
+  uint64_t ready_applied_watermark_{0};    ///< Ready 侧已报告的 apply 水位
 };
 
 }  // namespace openkv::raft

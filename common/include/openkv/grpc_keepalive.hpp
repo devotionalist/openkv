@@ -16,7 +16,7 @@
 // 全仓统一半开连接探活。
 //
 // 注意：不要用 1s 级 keepalive。Storage 入站 AE 常在 gRPC 回调线程里同步 persist
-//（fdatasync），卡住 > keepalive_timeout 会被对端当成死连接掐断，Raft 复制抖 →
+// （fdatasync），卡住 > keepalive_timeout 会被对端当成死连接掐断，Raft 复制抖 →
 // 写路径 apply_timeout（表象是 put p50 秒级）。
 // 取 10s/3s：死人仍远快于 15s RPC deadline，又不误杀慢盘 IO。
 
@@ -51,7 +51,7 @@ inline grpc::ChannelArguments grpc_client_channel_args(int max_message_bytes = 0
 
 /// 不安全出站 channel（带统一 keepalive）。
 inline std::shared_ptr<grpc::Channel> grpc_insecure_channel(const std::string& addr,
-                                                             int max_message_bytes = 0) {
+                                                            int max_message_bytes = 0) {
   return grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(),
                                    grpc_client_channel_args(max_message_bytes));
 }

@@ -15,17 +15,10 @@
 // @file gateway_main.cpp
 // gateway_node 入口：等 Storage 就绪 → 启 GatewayServer 后台 → gRPC KV/DS + HTTP /stats。
 
-#include "openkv/compute/gateway_server.hpp"
-#include "openkv/compute/store_rpc.hpp"
-#include "openkv/grpc_keepalive.hpp"
-#include "openkv/grpc_shutdown.hpp"
-#include "openkv/logging.hpp"
-#include "openkv/net/tcp_line_client.hpp"
-
-#include <CLI/CLI.hpp>
 #include <grpcpp/grpcpp.h>
 #include <httplib.h>
 
+#include <CLI/CLI.hpp>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -34,6 +27,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "openkv/compute/gateway_server.hpp"
+#include "openkv/compute/store_rpc.hpp"
+#include "openkv/grpc_keepalive.hpp"
+#include "openkv/grpc_shutdown.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/net/tcp_line_client.hpp"
 
 namespace {
 

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file multi_raft.cpp
-// 实现：把 MultiRaft::Options 映射为 Store::Options 并转发 API。
+// 实现：Options→Store；持有出站 Transport，构造时接到 Store。
 
 #include "openkv/raft/core/multi_raft.hpp"
 
@@ -33,16 +33,22 @@ MultiRaft::MultiRaft(GroupFactory factory, Options opts) : opts_(opts) {
   so.ready_coalesce_ms = opts_.ready_coalesce_ms;
   so.persist_workers = opts_.persist_workers;
   store_ = std::make_unique<raftstore::Store>(so, std::move(factory));
+  // Store 出站只认闭包；这里固定转到本对象的 GrpcRaftTransport。
+  store_->set_transport_fn(
+      [this](uint32_t rid, const std::string& to, const std::string& type,
+             const std::string& payload) { transport_.bind(rid)(to, type, payload); });
 }
 
 MultiRaft::~MultiRaft() { stop(); }
 
 void MultiRaft::start() {
-  if (store_) store_->start();
+  transport_.start();
+  store_->start();
 }
 
 void MultiRaft::stop() {
-  if (store_) store_->stop();
+  store_->stop();
+  transport_.stop();
 }
 
 RaftNode* MultiRaft::get(uint32_t shard_id) { return store_->get(shard_id); }
@@ -51,9 +57,7 @@ std::shared_ptr<RaftNode> MultiRaft::get_shared(uint32_t shard_id) {
   return store_->get_shared(shard_id);
 }
 
-RaftNode& MultiRaft::get_or_create(uint32_t shard_id) {
-  return store_->get_or_create(shard_id);
-}
+RaftNode& MultiRaft::get_or_create(uint32_t shard_id) { return store_->get_or_create(shard_id); }
 
 bool MultiRaft::erase(uint32_t shard_id) { return store_->erase(shard_id); }
 
@@ -72,4 +76,3 @@ void MultiRaft::update_peer_meta(uint32_t region_id, openkv::KeyRange range, uin
 }
 
 }  // namespace openkv::raft
-

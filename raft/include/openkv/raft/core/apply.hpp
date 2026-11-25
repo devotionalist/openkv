@@ -42,8 +42,7 @@ class Apply {
   /// Apply worker 写完 KV 后回告；抬 last_applied_ 并可能 compact。自己抢 mu_。
   void report_applied(uint64_t index);
   /// 等到 last_applied_ >= index，或超时；可选 tick 回调推进协议。自己抢 mu_。
-  bool wait_applied(uint64_t index, uint32_t timeout_ms,
-                    const std::function<void()>& tick = {});
+  bool wait_applied(uint64_t index, uint32_t timeout_ms, const std::function<void()>& tick = {});
 
   std::condition_variable applied_cv_;  ///< wait_applied 等 last_applied_ 抬升
 

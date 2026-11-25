@@ -15,11 +15,6 @@
 // @file raft_fault_scenario_test.cpp
 // Raft 协议核故障全场景：内存集群 + 分区/丢包/丢回包；覆盖 docs/flows/40 清单 A–F。
 
-#include "openkv/codec.hpp"
-#include "openkv/raft/engine/file_raft_engine.hpp"
-#include "openkv/raft/util/raft_fault_inject.hpp"
-#include "openkv/raft/core/raft_node.hpp"
-
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -32,6 +27,11 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include "openkv/codec.hpp"
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/engine/file_raft_engine.hpp"
+#include "openkv/raft/util/raft_fault_inject.hpp"
 
 namespace {
 
@@ -116,8 +116,9 @@ class RaftFaultCluster {
       auto on_apply = [raw](uint64_t, const std::string& data) { raw->applied.push_back(data); };
       auto send = [this, id = p.id](const std::string& to, const std::string& type,
                                     const std::string& payload) { deliver(id, to, type, payload); };
-      slot->node = std::make_unique<RaftNode>(std::move(nopts), std::move(on_apply), std::move(send),
-                                              std::move(provider), std::move(applier));
+      slot->node =
+          std::make_unique<RaftNode>(std::move(nopts), std::move(on_apply), std::move(send),
+                                     std::move(provider), std::move(applier));
       nodes_[p.id] = std::move(slot);
     }
   }
@@ -237,7 +238,8 @@ class RaftFaultCluster {
       std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms_));
     }
     deliver_now(from, to, type, payload);
-    if (duplicate_ && (type == "AppendEntries" || type == "RequestVote" || type == "RequestPreVote")) {
+    if (duplicate_ &&
+        (type == "AppendEntries" || type == "RequestVote" || type == "RequestPreVote")) {
       deliver_now(from, to, type, payload);
     }
   }
@@ -712,8 +714,8 @@ TEST(RaftFaultScenario, D1_HealPartitionFollowerCatchesUp) {
   std::string victim = leader == "a" ? "c" : "a";
   c.isolate(victim);
   ASSERT_TRUE(c.at(leader).propose("before-heal"));
-  c.tick_ids(leader == "a" ? std::vector<std::string>{"a", "b"} : std::vector<std::string>{"b", "c"},
-             40);
+  c.tick_ids(
+      leader == "a" ? std::vector<std::string>{"a", "b"} : std::vector<std::string>{"b", "c"}, 40);
   ASSERT_TRUE(c.has_applied(leader, "before-heal"));
   c.heal(victim);
   EXPECT_TRUE(c.wait_applied(victim, "before-heal", 160));
@@ -932,8 +934,8 @@ TEST(RaftFaultScenario, F1_RestartRecoversHardState) {
                    ("okv_fault_f1_" +
                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   fs::create_directories(dir);
-  auto engine = std::make_shared<openkv::raft::FileRaftEngine>(dir.string(),
-                                                               openkv::raft::SyncMode::kNone);
+  auto engine =
+      std::make_shared<openkv::raft::FileRaftEngine>(dir.string(), openkv::raft::SyncMode::kNone);
   {
     RaftNode::Options opts;
     opts.external_io = false;
@@ -944,8 +946,8 @@ TEST(RaftFaultScenario, F1_RestartRecoversHardState) {
     opts.check_quorum = false;
     opts.persist_dir = dir.string();
     std::vector<std::string> applied;
-    RaftNode n(opts, [&](uint64_t, const std::string& d) { applied.push_back(d); },
-               [](auto&&...) {});
+    RaftNode n(
+        opts, [&](uint64_t, const std::string& d) { applied.push_back(d); }, [](auto&&...) {});
     for (int i = 0; i < 40 && !n.is_leader(); ++i) n.tick();
     ASSERT_TRUE(n.is_leader());
     ASSERT_TRUE(n.propose("persisted"));
@@ -961,8 +963,8 @@ TEST(RaftFaultScenario, F1_RestartRecoversHardState) {
     opts.check_quorum = false;
     opts.persist_dir = dir.string();
     std::vector<std::string> applied;
-    RaftNode n(opts, [&](uint64_t, const std::string& d) { applied.push_back(d); },
-               [](auto&&...) {});
+    RaftNode n(
+        opts, [&](uint64_t, const std::string& d) { applied.push_back(d); }, [](auto&&...) {});
     EXPECT_GE(n.soft_state().commit_index, 1u);
     n.recover_apply();
   }
@@ -1015,8 +1017,8 @@ TEST(RaftFaultScenario, F3_PersistNoneIgnoresMustSync) {
                    ("okv_fault_f3_" +
                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   fs::create_directories(dir);
-  auto engine = std::make_shared<openkv::raft::FileRaftEngine>(dir.string(),
-                                                               openkv::raft::SyncMode::kNone);
+  auto engine =
+      std::make_shared<openkv::raft::FileRaftEngine>(dir.string(), openkv::raft::SyncMode::kNone);
   RaftNode::Options opts;
   opts.external_io = true;
   opts.self_id = "n0";
@@ -1086,8 +1088,8 @@ TEST(RaftFaultScenario, H2_EngineDirReadonlyRejectsPersist) {
                    ("okv_fault_h2_" +
                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   fs::create_directories(dir);
-  auto engine = std::make_shared<openkv::raft::FileRaftEngine>(dir.string(),
-                                                               openkv::raft::SyncMode::kNone);
+  auto engine =
+      std::make_shared<openkv::raft::FileRaftEngine>(dir.string(), openkv::raft::SyncMode::kNone);
   RaftNode::Options opts;
   opts.external_io = false;
   opts.self_id = "n0";
@@ -1099,9 +1101,9 @@ TEST(RaftFaultScenario, H2_EngineDirReadonlyRejectsPersist) {
   RaftNode n(opts, [](uint64_t, const std::string&) {}, [](auto&&...) {});
   for (int i = 0; i < 40 && !n.is_leader(); ++i) n.tick();
   ASSERT_TRUE(n.is_leader());
-  fs::permissions(dir, fs::perms::owner_read | fs::perms::owner_exec |
-                           fs::perms::group_read | fs::perms::group_exec |
-                           fs::perms::others_read | fs::perms::others_exec,
+  fs::permissions(dir,
+                  fs::perms::owner_read | fs::perms::owner_exec | fs::perms::group_read |
+                      fs::perms::group_exec | fs::perms::others_read | fs::perms::others_exec,
                   fs::perm_options::replace);
   // 再 propose：应不崩；落盘可能失败，进程仍存活
   (void)n.propose("after-ro");
@@ -1521,10 +1523,14 @@ TEST(RaftFaultScenario, X15_MultiSeedHealAlwaysWritable) {
     ASSERT_FALSE(c.wait_one_leader(200).empty()) << seed;
     for (int r = 0; r < 25; ++r) {
       const int a = static_cast<int>(rng() % 5);
-      if (a == 0) c.isolate("a");
-      else if (a == 1) c.isolate("b");
-      else if (a == 2) c.drop_type("AppendEntries");
-      else if (a == 3) c.at("c").force_election();
+      if (a == 0)
+        c.isolate("a");
+      else if (a == 1)
+        c.isolate("b");
+      else if (a == 2)
+        c.drop_type("AppendEntries");
+      else if (a == 3)
+        c.at("c").force_election();
       else {
         c.clear_faults();
         c.heal_all();

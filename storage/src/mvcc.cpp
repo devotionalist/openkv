@@ -203,8 +203,7 @@ bool MvccStore::has_write_conflict(std::string_view user, uint64_t start_ts) con
   return conflict;
 }
 
-std::optional<uint64_t> MvccStore::find_commit_ts(std::string_view user,
-                                                   uint64_t start_ts) const {
+std::optional<uint64_t> MvccStore::find_commit_ts(std::string_view user, uint64_t start_ts) const {
   const std::string pref = write_key_prefix(user);
   std::optional<uint64_t> found;
   eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
@@ -222,8 +221,7 @@ std::optional<uint64_t> MvccStore::find_commit_ts(std::string_view user,
   return found;
 }
 
-CheckTxnStatusResult MvccStore::check_txn_status(std::string_view primary,
-                                                 uint64_t lock_ts) const {
+CheckTxnStatusResult MvccStore::check_txn_status(std::string_view primary, uint64_t lock_ts) const {
   CheckTxnStatusResult r;
   if (auto cts = find_commit_ts(primary, lock_ts)) {
     r.status = TxnStatus::kCommitted;
@@ -435,9 +433,7 @@ bool MvccStore::put_onepc(std::string_view user, uint64_t start_ts, uint64_t com
   return eng_.write_batch(puts, {});
 }
 
-void MvccStore::clear_lock(std::string_view user, uint64_t rev) {
-  eng_.del(lock_key(user), rev);
-}
+void MvccStore::clear_lock(std::string_view user, uint64_t rev) { eng_.del(lock_key(user), rev); }
 
 void MvccStore::clear_data(std::string_view user, uint64_t start_ts, uint64_t rev) {
   eng_.del(data_key(user, start_ts), rev);

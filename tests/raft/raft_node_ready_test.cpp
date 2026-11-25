@@ -15,12 +15,12 @@
 // @file raft_node_ready_test.cpp
 // RaftNode(external_io) 纯内存 Ready 循环：无盘、无网，外层手动 drain。
 
-#include "openkv/raft/core/raft_node.hpp"
-
 #include <gtest/gtest.h>
 
 #include <string>
 #include <vector>
+
+#include "openkv/raft/core/raft_node.hpp"
 
 namespace {
 
@@ -137,7 +137,7 @@ TEST(RaftNodeReadyTest, ThreeNodeVoteAndProposeReady) {
       if (sscanf(m.payload.c_str(), "%llu|%llu|%llu", &term, &li, &lt) != 3) continue;
       bool granted = false;
       dst->on_request_vote("a", static_cast<uint64_t>(term), static_cast<uint64_t>(li),
-                          static_cast<uint64_t>(lt), &granted);
+                           static_cast<uint64_t>(lt), &granted);
       a.on_request_vote_reply(m.to, static_cast<uint64_t>(term), granted);
       if (dst->has_ready()) {
         Ready r2 = dst->take_ready();

@@ -19,11 +19,11 @@
 
 #pragma once
 
-#include "openkv/raft/core/ready.hpp"
-
 #include <functional>
 #include <string>
 #include <vector>
+
+#include "openkv/raft/core/ready.hpp"
 
 namespace openkv::raft {
 
@@ -39,27 +39,27 @@ class ReadyPump {
   /// 嵌入路径：把 outbound_ 经 TransportSend 发出；external_io 直接空操作。自己抢 mu_。
   void flush_transport();
 
-  bool has_ready() const;
-  Ready take_ready();
-  void advance(const Ready& rd);
-  void set_ready_notify(std::function<void()> cb);
+  bool has_ready() const;                           // 是否有待发送消息
+  Ready take_ready();                               // 获取待发送消息
+  void advance(const Ready& rd);                    // 推进状态
+  void set_ready_notify(std::function<void()> cb);  // 设置唤醒回调函数
   /// 回包线程：Ready 有货就立刻唤醒 Store，别干等 tick。勿持 mu_ 调用。
-  void maybe_notify_ready();
+  void maybe_notify_ready();  // 可能唤醒 Store
 
   /// 组装 SoftState 公共字段（不含 replication_lag）。须已持 mu_。
-  SoftState soft_state_locked() const;
+  SoftState soft_state_locked() const;  // 组装 SoftState 公共字段（不含 replication_lag）
 
   struct Outbound {
-    std::string peer_id;
-    std::string type;
-    std::string payload;
+    std::string peer_id;  // 目标 peer_id
+    std::string type;     // 消息类型
+    std::string payload;  // 消息负载
   };
 
-  std::vector<Outbound> outbound_;
-  std::function<void()> ready_notify_;
+  std::vector<Outbound> outbound_;      // 待发送消息队列
+  std::function<void()> ready_notify_;  // 唤醒回调函数
 
  private:
-  RaftNode& n_;
+  RaftNode& n_;  // raft节点
 };
 
 }  // namespace openkv::raft

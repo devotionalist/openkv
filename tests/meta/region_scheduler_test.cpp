@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/meta/cluster_state.hpp"
 #include "openkv/meta/region_scheduler.hpp"
 
 #include <gtest/gtest.h>
@@ -21,6 +20,8 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+
+#include "openkv/meta/cluster_state.hpp"
 
 using openkv::meta::ClusterState;
 using openkv::meta::MigrateState;

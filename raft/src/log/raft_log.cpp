@@ -39,11 +39,12 @@ uint64_t RaftLog::last_term() const {
   return entries_.back().term;
 }
 
+// 按索引查询；越界返回 nullopt。
 std::optional<LogEntry> RaftLog::entry(uint64_t index) const {
-  if (index < first_index_ || index > last_index()) {
+  if (index < first_index_ || index > last_index()) {  // 越界返回 nullopt
     return std::nullopt;
   }
-  return entries_[index - first_index_];
+  return entries_[index - first_index_];  // 返回索引对应的日志
 }
 
 std::vector<LogEntry> RaftLog::entries_from(uint64_t index, size_t limit, size_t max_bytes) const {
@@ -61,13 +62,14 @@ std::vector<LogEntry> RaftLog::entries_from(uint64_t index, size_t limit, size_t
   return out;
 }
 
+// 追加本地提案（Leader）
 uint64_t RaftLog::append(uint64_t term, std::string data) {
   LogEntry e;
-  e.term = term;
-  e.index = last_index() + 1;
-  e.data = std::move(data);
-  entries_.push_back(std::move(e));
-  return entries_.back().index;
+  e.term = term;                     // 任期
+  e.index = last_index() + 1;        // 索引
+  e.data = std::move(data);          // 数据
+  entries_.push_back(std::move(e));  // 追加日志
+  return entries_.back().index;      // 返回新条目的索引
 }
 
 bool RaftLog::match(uint64_t index, uint64_t term) const {

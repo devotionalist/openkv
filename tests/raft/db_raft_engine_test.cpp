@@ -18,9 +18,9 @@
 #include "openkv/raft/engine/db_raft_engine.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <filesystem>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 using openkv::raft::DbRaftEngine;

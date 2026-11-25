@@ -18,11 +18,11 @@
 
 #pragma once
 
-#include "openkv/raft/core/types.hpp"
-
 #include <cstdint>
 #include <utility>
 #include <vector>
+
+#include "openkv/raft/core/types.hpp"
 
 namespace openkv::raftstore {
 

@@ -18,15 +18,15 @@
 // - 加载失败则用内置单机开发默认（meta-0:8500 + 3 storage）
 // - SIGINT/SIGTERM → stop MetaNode 后退出
 
-#include "openkv/logging.hpp"
-#include "openkv/meta/meta_fsm.hpp"
-#include "openkv/meta/meta_node.hpp"
-#include "openkv/metrics_http.hpp"
-
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <thread>
+
+#include "openkv/logging.hpp"
+#include "openkv/meta/meta_fsm.hpp"
+#include "openkv/meta/meta_node.hpp"
+#include "openkv/metrics_http.hpp"
 
 namespace {
 std::atomic<bool> g_stop{false};
@@ -56,9 +56,8 @@ int main(int argc, char** argv) {
     boot.storage_peers = {{"storage-0", "127.0.0.1:9100"},
                           {"storage-1", "127.0.0.1:9101"},
                           {"storage-2", "127.0.0.1:9102"}};
-    boot.meta_peers = {{"meta-0", "127.0.0.1:8500"},
-                       {"meta-1", "127.0.0.1:8501"},
-                       {"meta-2", "127.0.0.1:8502"}};
+    boot.meta_peers = {
+        {"meta-0", "127.0.0.1:8500"}, {"meta-1", "127.0.0.1:8501"}, {"meta-2", "127.0.0.1:8502"}};
   }
 
   meta::MetaNode server(boot);
@@ -83,9 +82,7 @@ int main(int argc, char** argv) {
 
   MetricsHttpServer metrics_http;
   // Meta 的 Prometheus 文本仍走 handle_line("METRICS")；HTTP 复用同一入口
-  metrics_http.start(metrics_addr_from_env(), [&server] {
-    return server.handle_line("METRICS");
-  });
+  metrics_http.start(metrics_addr_from_env(), [&server] { return server.handle_line("METRICS"); });
 
   while (!g_stop) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));

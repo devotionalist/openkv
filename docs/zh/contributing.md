@@ -4,6 +4,13 @@
 
 本仓库公开。外部贡献者**只能通过 Pull Request** 提交改动。直接推送到 `master`，以及创建 tag / 发布 Release，仅仓库所有者（`@devotionalist`）可以操作。
 
+## C++ 约定
+
+- **语言**：C++20（`CMAKE_CXX_STANDARD` / `make show-std`）
+- **风格**：[Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)；格式化见根目录 `.clang-format`
+- **命令**：`make format`（改文件）/ `make format-check`（只检查）
+- 注释可用中文白话；标识符保持英文。勿对全仓库做无必要的大重排。
+
 ## 权限一览
 
 | 操作 | 贡献者 | 所有者（`@devotionalist`） |

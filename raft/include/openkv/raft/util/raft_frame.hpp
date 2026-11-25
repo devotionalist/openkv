@@ -23,10 +23,10 @@
 
 namespace openkv::raft {
 
-using net::DecodedFrame;
-using net::FrameType;
 using net::decode_frame_header;
+using net::DecodedFrame;
 using net::encode_frame;
+using net::FrameType;
 using net::is_binary_frame;
 using net::kFrameMagic;
 

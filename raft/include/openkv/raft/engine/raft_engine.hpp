@@ -21,17 +21,17 @@
 
 #pragma once
 
-#include "openkv/raft/core/types.hpp"
-#include "openkv/raft/engine/raft_wire.hpp"
-#include "openkv/raft/engine/sync_mode.hpp"
-#include "openkv/raft/log/raft_log.hpp"
-
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "openkv/raft/core/types.hpp"
+#include "openkv/raft/engine/raft_wire.hpp"
+#include "openkv/raft/engine/sync_mode.hpp"
+#include "openkv/raft/log/raft_log.hpp"
 
 namespace openkv::raft {
 

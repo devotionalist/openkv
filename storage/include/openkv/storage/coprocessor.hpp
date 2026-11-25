@@ -17,23 +17,23 @@
 
 #pragma once
 
-#include "openkv/storage/kv_engine.hpp"
-
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "openkv/storage/kv_engine.hpp"
+
 namespace openkv::storage {
 
 struct CoprocessorRequest {
   std::string start_key;
-  std::string end_key;        // exclusive；空=不限
-  std::string key_prefix;     // 空=不过滤
-  std::string value_prefix;   // 空=不过滤
+  std::string end_key;       // exclusive；空=不限
+  std::string key_prefix;    // 空=不过滤
+  std::string value_prefix;  // 空=不过滤
   uint32_t limit{256};
-  bool keys_only{false};      // 不返回 value
-  bool count_only{false};     // 只计匹配数（pairs 空）
+  bool keys_only{false};   // 不返回 value
+  bool count_only{false};  // 只计匹配数（pairs 空）
 };
 
 struct CoprocessorPair {

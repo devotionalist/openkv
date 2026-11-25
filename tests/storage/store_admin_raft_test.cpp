@@ -12,27 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/storage/store_service.hpp"
-#include "facade_sync.hpp"
-#include "openkv/storage/storage_node.hpp"
-
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <thread>
-#include <unistd.h>
+
+#include "facade_sync.hpp"
+#include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/store_service.hpp"
 
 namespace fs = std::filesystem;
 using openkv::NodeConfig;
 using openkv::storage::CmdOp;
 using openkv::storage::Command;
-using openkv::storage::StorageNode;
-using openkv::storage::StoreFacade;
 using openkv::storage::decode_command;
 using openkv::storage::encode_command;
 using openkv::storage::region_epoch_storage_key;
+using openkv::storage::StorageNode;
+using openkv::storage::StoreFacade;
 
 TEST(StoreAdminRaftTest, AdminCommandRoundTrip) {
   Command c;

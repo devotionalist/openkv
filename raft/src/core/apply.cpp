@@ -17,10 +17,6 @@
 
 #include "openkv/raft/core/apply.hpp"
 
-#include "openkv/logging.hpp"
-#include "openkv/raft/core/raft_node.hpp"
-#include "openkv/raft/engine/raft_wire.hpp"
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -29,6 +25,10 @@
 #include <fstream>
 #include <mutex>
 #include <string_view>
+
+#include "openkv/logging.hpp"
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/engine/raft_wire.hpp"
 
 namespace openkv::raft {
 namespace {
@@ -61,6 +61,14 @@ uint64_t Apply::term_at_applied() const {
   return n_.log_.snapshot_term();
 }
 
+/**
+ * @brief 应用提交：应用提交是应用提交的，用于应用提交的。
+ *
+ * 从应用提交索引到日志的最后一个索引，遍历每个索引，如果索引的 term
+ * 等于当前任期，并且索引的索引大于当前提交索引，则更新当前提交索引。 如果索引的 term
+ * 不等于当前任期，则跳过。 如果索引的 term
+ * 等于当前任期，并且索引的索引大于当前应用提交索引，则更新当前应用提交索引。
+ */
 void Apply::apply_committed() {
   while (n_.apply_scheduled_ < n_.commit_index_) {
     const uint64_t idx = n_.apply_scheduled_ + 1;
@@ -227,10 +235,8 @@ void Apply::report_applied(uint64_t index) {
   n_.persist_locked();
 }
 
-bool Apply::wait_applied(uint64_t index, uint32_t timeout_ms,
-                         const std::function<void()>& tick) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+bool Apply::wait_applied(uint64_t index, uint32_t timeout_ms, const std::function<void()>& tick) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   for (;;) {
     {
       std::lock_guard<std::mutex> lock(n_.mu_);
@@ -243,8 +249,8 @@ bool Apply::wait_applied(uint64_t index, uint32_t timeout_ms,
     if (tick) tick();
     std::unique_lock<std::mutex> lock(n_.mu_);
     if (n_.last_applied_ >= index) return true;
-    const auto slice = std::min(deadline, std::chrono::steady_clock::now() +
-                                              std::chrono::milliseconds(2));
+    const auto slice =
+        std::min(deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(2));
     applied_cv_.wait_until(lock, slice);
   }
 }

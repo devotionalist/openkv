@@ -40,7 +40,7 @@ TEST(TsRangeQueueTest, PushTakeOrder) {
 
 TEST(TsRangeQueueTest, DropFragmentThenNextRange) {
   TsRangeQueue<8> q;
-  ASSERT_TRUE(q.push(10, 1));   // only 1 left
+  ASSERT_TRUE(q.push(10, 1));  // only 1 left
   ASSERT_TRUE(q.push(100, 5));
   uint64_t s = 0;
   ASSERT_TRUE(q.try_take(2, &s));  // drop [10,11), take from 100

@@ -15,13 +15,12 @@
 // @file gateway_txn.cpp
 // Percolator Txn* 异步路径：StoreService Propose/Get/CheckTxnStatus。
 
-#include "openkv/compute/gateway_server.hpp"
-
-#include "openkv/logging.hpp"
-
 #include <memory>
 #include <string>
 #include <utility>
+
+#include "openkv/compute/gateway_server.hpp"
+#include "openkv/logging.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -69,8 +68,7 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
                        out.redirect_to);
                 return;
               }
-              on_rpc(grpc::Status::OK, true, out.status + "\n" + std::to_string(out.commit_ts),
-                     "");
+              on_rpc(grpc::Status::OK, true, out.status + "\n" + std::to_string(out.commit_ts), "");
             });
       },
       [this, key, le, cont = std::move(cont)](grpc::Status sst, bool ok, std::string body,
@@ -104,16 +102,15 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
                 ProposeTxnArgs args =
                     make_txn_args(region, ProposeOp::kResolveLock, k, lock_ts, epoch);
                 args.commit_ts = cts;
-                store_resolve_lock_async(addr, std::move(args), 15000,
-                                         [on_rpc = std::move(on_rpc)](grpc::Status sst,
-                                                                      ProposeResult out) {
-                                           if (!sst.ok()) {
-                                             on_rpc(sst, false, sst.error_message(), "");
-                                             return;
-                                           }
-                                           on_rpc(grpc::Status::OK, out.ok, out.error,
-                                                  out.redirect_to);
-                                         });
+                store_resolve_lock_async(
+                    addr, std::move(args), 15000,
+                    [on_rpc = std::move(on_rpc)](grpc::Status sst, ProposeResult out) {
+                      if (!sst.ok()) {
+                        on_rpc(sst, false, sst.error_message(), "");
+                        return;
+                      }
+                      on_rpc(grpc::Status::OK, out.ok, out.error, out.redirect_to);
+                    });
               },
               [next = std::move(next)](grpc::Status st, bool ok2, std::string err, std::string,
                                        std::string) {
@@ -122,7 +119,8 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
                   return;
                 }
                 if (!ok2) {
-                  next(grpc::Status(grpc::StatusCode::ABORTED, err.empty() ? "resolve_failed" : err));
+                  next(grpc::Status(grpc::StatusCode::ABORTED,
+                                    err.empty() ? "resolve_failed" : err));
                   return;
                 }
                 next(grpc::Status::OK);
@@ -159,14 +157,15 @@ void GatewayServer::async_resolve_secondaries(uint64_t start_ts, uint64_t commit
         region, 0,
         [args](const std::string& addr,
                std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) mutable {
-          store_resolve_lock_async(addr, std::move(args), 15000,
-                                   [on_rpc = std::move(on_rpc)](grpc::Status sst, ProposeResult out) {
-                                     if (!sst.ok()) {
-                                       on_rpc(sst, false, sst.error_message(), "");
-                                       return;
-                                     }
-                                     on_rpc(grpc::Status::OK, out.ok, out.error, out.redirect_to);
-                                   });
+          store_resolve_lock_async(
+              addr, std::move(args), 15000,
+              [on_rpc = std::move(on_rpc)](grpc::Status sst, ProposeResult out) {
+                if (!sst.ok()) {
+                  on_rpc(sst, false, sst.error_message(), "");
+                  return;
+                }
+                on_rpc(grpc::Status::OK, out.ok, out.error, out.redirect_to);
+              });
         },
         [key](grpc::Status st, bool ok, std::string err, std::string, std::string) {
           if (!st.ok() || !ok) {
@@ -177,7 +176,8 @@ void GatewayServer::async_resolve_secondaries(uint64_t start_ts, uint64_t commit
   }
 }
 
-void GatewayServer::txn_begin_async(const kv::v1::TxnBeginRequest* req, kv::v1::TxnBeginResponse* resp,
+void GatewayServer::txn_begin_async(const kv::v1::TxnBeginRequest* req,
+                                    kv::v1::TxnBeginResponse* resp,
                                     std::function<void(grpc::Status)> done) {
   uint32_t n = req->count();
   if (n == 0) n = 1;
@@ -217,14 +217,15 @@ void GatewayServer::txn_get_async(const kv::v1::TxnGetRequest* req, kv::v1::TxnG
         }
         if (out.locked || contains(out.error, "locked")) {
           LockedError le(out.lock_primary, out.lock_ts, out.error.empty() ? "locked" : out.error);
-          resolve_blocking_lock_async(req->key(), le, [this, req, resp, attempt, done](grpc::Status rst) {
-            if (!rst.ok() && contains(rst.error_message(), "locked")) {
-              resp->set_locked(true);
-              done(grpc::Status::OK);
-              return;
-            }
-            txn_get_async(req, resp, attempt + 1, done);
-          });
+          resolve_blocking_lock_async(req->key(), le,
+                                      [this, req, resp, attempt, done](grpc::Status rst) {
+                                        if (!rst.ok() && contains(rst.error_message(), "locked")) {
+                                          resp->set_locked(true);
+                                          done(grpc::Status::OK);
+                                          return;
+                                        }
+                                        txn_get_async(req, resp, attempt + 1, done);
+                                      });
           return;
         }
         if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
@@ -288,8 +289,8 @@ void GatewayServer::txn_prewrite_async(const kv::v1::TxnPrewriteRequest* req,
     const auto& m = st->req->mutations(st->idx);
     const uint32_t region = st->self->region_of(m.key());
     const uint64_t epoch = st->self->epoch_of(region);
-    ProposeTxnArgs args =
-        make_txn_args(region, ProposeOp::kPrewrite, m.key(), st->req->start_ts(), epoch, st->primary);
+    ProposeTxnArgs args = make_txn_args(region, ProposeOp::kPrewrite, m.key(), st->req->start_ts(),
+                                        epoch, st->primary);
     args.mvcc_op = m.is_delete() ? 1u : 0u;
     if (!m.is_delete()) args.value = m.value();
     args.cas = st->req->cas();
@@ -300,21 +301,21 @@ void GatewayServer::txn_prewrite_async(const kv::v1::TxnPrewriteRequest* req,
         [args = std::move(args)](
             const std::string& addr,
             std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) mutable {
-          store_prewrite_async(addr, std::move(args), 15000,
-                               [on_rpc = std::move(on_rpc)](grpc::Status sst, ProposeResult out) {
-                                 if (!sst.ok()) {
-                                   on_rpc(sst, false, sst.error_message(), "");
-                                   return;
-                                 }
-                                 if (out.cas_failed) {
-                                   on_rpc(grpc::Status::OK, false,
-                                          "cas_failed current_revision=" +
-                                              std::to_string(out.current_revision),
-                                          out.redirect_to);
-                                   return;
-                                 }
-                                 on_rpc(grpc::Status::OK, out.ok, out.error, out.redirect_to);
-                               });
+          store_prewrite_async(
+              addr, std::move(args), 15000,
+              [on_rpc = std::move(on_rpc)](grpc::Status sst, ProposeResult out) {
+                if (!sst.ok()) {
+                  on_rpc(sst, false, sst.error_message(), "");
+                  return;
+                }
+                if (out.cas_failed) {
+                  on_rpc(grpc::Status::OK, false,
+                         "cas_failed current_revision=" + std::to_string(out.current_revision),
+                         out.redirect_to);
+                  return;
+                }
+                on_rpc(grpc::Status::OK, out.ok, out.error, out.redirect_to);
+              });
         },
         [st](grpc::Status sst, bool ok, std::string err, std::string, std::string) {
           if (!sst.ok()) {
@@ -348,7 +349,8 @@ void GatewayServer::txn_commit_async(const kv::v1::TxnCommitRequest* req,
     return;
   }
   note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
-  ts_.alloc_async(1, [this, req, resp, done = std::move(done)](grpc::Status tst, uint64_t commit_ts) {
+  ts_.alloc_async(1, [this, req, resp, done = std::move(done)](grpc::Status tst,
+                                                               uint64_t commit_ts) {
     if (!tst.ok()) {
       done(tst);
       return;
@@ -364,8 +366,7 @@ void GatewayServer::txn_commit_async(const kv::v1::TxnCommitRequest* req,
     }
     const uint32_t pr = region_of(pri);
     const uint64_t epoch = epoch_of(pr);
-    ProposeTxnArgs args =
-        make_txn_args(pr, ProposeOp::kCommit, pri, req->start_ts(), epoch, pri);
+    ProposeTxnArgs args = make_txn_args(pr, ProposeOp::kCommit, pri, req->start_ts(), epoch, pri);
     args.commit_ts = commit_ts;
     with_store_async(
         pr, 0,
@@ -409,17 +410,18 @@ void GatewayServer::txn_commit_async(const kv::v1::TxnCommitRequest* req,
             a.commit_ts = commit_ts;
             with_store_async(
                 region, 0,
-                [a = std::move(a)](
-                    const std::string& addr,
-                    std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) mutable {
-                  store_commit_async(addr, std::move(a), 15000,
-                                     [on_rpc = std::move(on_rpc)](grpc::Status sst, ProposeResult out) {
-                                       if (!sst.ok()) {
-                                         on_rpc(sst, false, sst.error_message(), "");
-                                         return;
-                                       }
-                                       on_rpc(grpc::Status::OK, out.ok, out.error, out.redirect_to);
-                                     });
+                [a = std::move(a)](const std::string& addr,
+                                   std::function<void(grpc::Status, bool, std::string, std::string)>
+                                       on_rpc) mutable {
+                  store_commit_async(
+                      addr, std::move(a), 15000,
+                      [on_rpc = std::move(on_rpc)](grpc::Status sst, ProposeResult out) {
+                        if (!sst.ok()) {
+                          on_rpc(sst, false, sst.error_message(), "");
+                          return;
+                        }
+                        on_rpc(grpc::Status::OK, out.ok, out.error, out.redirect_to);
+                      });
                 },
                 [](grpc::Status, bool, std::string, std::string, std::string) {});
           }
@@ -491,7 +493,8 @@ void GatewayServer::txn_pessimistic_lock_async(const kv::v1::TxnPessimisticLockR
   }
   std::string primary = req->primary_key();
   if (primary.empty()) primary = req->keys(0);
-  auto continue_with = [this, req, resp, primary, done = std::move(done)](uint64_t for_update) mutable {
+  auto continue_with = [this, req, resp, primary,
+                        done = std::move(done)](uint64_t for_update) mutable {
     uint64_t ttl = req->ttl_ms();
     if (ttl == 0) ttl = 5000;
     struct State {
@@ -564,13 +567,14 @@ void GatewayServer::txn_pessimistic_lock_async(const kv::v1::TxnPessimisticLockR
     return;
   }
   note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
-  ts_.alloc_async(1, [continue_with = std::move(continue_with), done](grpc::Status st, uint64_t ts) mutable {
-    if (!st.ok()) {
-      done(st);
-      return;
-    }
-    continue_with(ts);
-  });
+  ts_.alloc_async(
+      1, [continue_with = std::move(continue_with), done](grpc::Status st, uint64_t ts) mutable {
+        if (!st.ok()) {
+          done(st);
+          return;
+        }
+        continue_with(ts);
+      });
 }
 
 void GatewayServer::txn_pessimistic_rollback_async(const kv::v1::TxnPessimisticRollbackRequest* req,
@@ -684,8 +688,7 @@ void GatewayServer::txn_check_status_async(const kv::v1::TxnCheckStatusRequest* 
                        out.redirect_to);
                 return;
               }
-              on_rpc(grpc::Status::OK, true, out.status + "\n" + std::to_string(out.commit_ts),
-                     "");
+              on_rpc(grpc::Status::OK, true, out.status + "\n" + std::to_string(out.commit_ts), "");
             });
       },
       [resp, done = std::move(done)](grpc::Status sst, bool ok, std::string body, std::string,

@@ -120,10 +120,9 @@ inline constexpr std::string_view kOpBumpRoute = "BUMP_ROUTE";
 
 /// Meta 需鉴权的写操作列表（供 meta_needs_admin）。
 inline constexpr std::string_view kMetaAdminOps[] = {
-    kOpDrainNode,         kOpActivateNode,   kOpOfflineNode,     kOpScaleOut,
-    kOpStoreDelete,       kOpJoinNode,       kOpRemoveTombstone, kOpKickNode,
-    kOpSplitRegion,       kOpMergeRegions,   kOpPlaceRegion,     kOpScheduleMigrate,
-    kOpCancelMigrate,     kOpAdvanceSafePoint, kOpBumpRoute,
+    kOpDrainNode,   kOpActivateNode,    kOpOfflineNode,   kOpScaleOut,         kOpStoreDelete,
+    kOpJoinNode,    kOpRemoveTombstone, kOpKickNode,      kOpSplitRegion,      kOpMergeRegions,
+    kOpPlaceRegion, kOpScheduleMigrate, kOpCancelMigrate, kOpAdvanceSafePoint, kOpBumpRoute,
 };
 
 // ---------------------------------------------------------------------------

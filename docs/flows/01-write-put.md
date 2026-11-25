@@ -8,8 +8,8 @@
 |----|-------------|
 | SDK | `openkv-client-go`（及 rust/java/ts）`Put` / `Delete` |
 | Gateway | `GatewayServer::Put` · `put_async_cb` · `alloc_async` · `store_propose_onepc_async` |
-| Storage | `StoreFacade::one_pc_async` · `CmdOp::kOnePc` · `MvccStore` · `ProposalQueue` |
-| Raft | `RaftKV::async_write` · `Store::request_ready` · `PersistWorker` · `RaftNode::persist_ready` |
+| Storage | `StoreFacade::one_pc_async` · `CmdOp::kOnePc` · `MvccStore` · `IndexWaiter` |
+| Raft | `Store::async_write` · `request_ready` · `PersistWorker` · `RaftNode::persist_ready` |
 | ACK/落盘 | [36-propose-ack-durability.md](36-propose-ack-durability.md)（ACK=apply；persist 先于 apply） |
 
 短 Put/Delete 走 **ONEPC**（1 次 Raft Propose，一次写入 MVCC data+write）。多 key / 显式 Txn 仍 **Prewrite → Commit**（见 Gateway `Txn*`）。
@@ -32,7 +32,7 @@ flowchart TD
   E --> F{本机是<br/>该 Region Leader?}
   F -->|否| H[ERR not_leader<br/>redirect=leader_addr]
   H --> R[Gateway rememberLeader<br/>重试 · 见 08]
-  F -->|是| I[encode kOnePc<br/>RaftKV async_write<br/>request_ready 攒批]
+  F -->|是| I[encode kOnePc<br/>Store async_write<br/>request_ready 攒批]
   I --> J[drive_ready → PersistWorker<br/>persist_ready]
   J --> K[kPersistDone → AE → Followers]
   K --> L[Follower 写日志 + OK AE]
@@ -42,7 +42,7 @@ flowchart TD
   N -->|是| O[maybe_commit<br/>commit_index++]
   O --> P[ApplyMsg → on_apply_entries]
   P --> Q[MvccStore put_data+put_write<br/>RocksDB]
-  Q --> S[ProposalQueue.invoke]
+  Q --> S[IndexWaiter.invoke]
   S --> U[OK → Gateway → SDK<br/>revision=commit_ts]
 ```
 
@@ -62,14 +62,14 @@ sequenceDiagram
   participant TS as TsAllocator
   participant RT as Router
   participant SS as StoreService/StoreFacade
-  participant KV as RaftKV
+  participant KV as Store
   participant RN as RaftNode
   participant ST as Store/BatchSystem
   participant PW as PersistWorker
   participant Eng as DbRaftEngine
   participant F as Follower
   participant AW as Apply worker
-  participant PQ as ProposalQueue
+  participant PQ as IndexWaiter
 
   C->>GW: Put (gRPC Callback)
   GW->>GW: Put → put_async_cb
@@ -120,10 +120,10 @@ sequenceDiagram
 | 6 | `StoreServiceImpl::Propose` | Callback 收到 ONEPC |
 | 7 | `StoreFacade::one_pc_async` | 校验 splitting / key_in_region；组 `CmdOp::kOnePc` |
 | 8 | `Scheduler::lock_async`（事务） | 同 key latch；**Raw 非 CAS 跳过** |
-| 9 | `RaftKV::async_write` | 写路径**唯一**门面（`start()` 后必挂；无裸 `propose` 兜底） |
+| 9 | `Store::async_write` | 写路径**唯一**门面（propose + request_ready；无裸 propose 兜底） |
 | 10 | `RaftNode::propose` | **只** `RaftLog::append`，返回 `index`；未落盘、未复制 |
 | 11 | `Store::request_ready` | 按 `SKV_READY_COALESCE_*` 攒批，稍后 `drive_ready` |
-| 12 | `StorageNode::wait_apply_async` → `ProposalQueue` | 按 `index` 挂 waiter，等 apply 再 ACK |
+| 12 | `StorageNode::wait_apply_async` → `IndexWaiter` | 按 `index` 挂 waiter，等 apply 再 ACK |
 
 ### C. Raftstore Ready + 异步 persist
 
@@ -152,7 +152,7 @@ sequenceDiagram
 | 23 | `router_->send_apply(ApplyMsg)` | 投递 Apply worker |
 | 24 | `Store::on_apply_batch` → `ApplyBatchFn` / `on_apply_entries` | 解码 ONEPC，`MvccStore` 写 data+write（默认 KV **不** sync） |
 | 25 | `RaftNode::report_applied` | 推进 `last_applied`，可能 compact |
-| 26 | `ProposalQueue::invoke(index)` | 唤醒步骤 12 的 waiter |
+| 26 | `IndexWaiter::invoke(index)` | 唤醒步骤 12 的 waiter |
 | 27 | `Propose` `Finish` → Gateway → Client | **此时客户端才算 Put 成功**（可见 = 已 apply） |
 
 ### 不变量
@@ -160,7 +160,7 @@ sequenceDiagram
 ```text
 propose(内存)  ≠  落盘  ≠  多数派  ≠  apply  ≠  客户端 ACK
 
-ACK 卡在：apply 完成（ProposalQueue.invoke）
+ACK 卡在：apply 完成（IndexWaiter.invoke）
 Raft 耐久点：persist_ready / consume(sync) —— 且必须在发 AE、apply 之前
 ```
 
@@ -211,7 +211,7 @@ TSO 批缓存说明：[16-gateway-tso-perf.md](16-gateway-tso-perf.md)。
 ## 6. 时序要点
 
 1. Gateway 热路径在 **Callback 接收线程** 取本地 TS，再 `store_propose_onepc_async`；不在 handler 里 sleep 等 apply（见 [22](22-async-threading-model.md)）。
-2. `propose` 后按 index 挂 **ProposalQueue**；apply `invoke`（或 `wait_async` 回调）唤醒。
+2. `propose` 后按 index 挂 **IndexWaiter**；apply `invoke`（或 `wait_async` 回调）唤醒。
 3. 仅当前 term 日志可 commit；空心跳 / 写触发的 AE 都会推进复制。
 4. 撞 `locked` → Lock Resolver 后重试；`splitting` / `epoch_not_match` → 刷路由重试。
 5. Latch：ONEPC/CAS 用 `lock_key_async` 持到 apply；非 CAS Raw Put/Delete 跳过（[19](19-architecture-hardening.md) · [27](27-raw-vs-txn.md)）。
@@ -239,7 +239,7 @@ cd client/go && go run ./examples/basic   # Put/Get
 go run ./examples/bench -op put -w 8 -n 200
 make cluster-down
 # 单测
-./build/tests/openkv_unit_tests --gtest_filter='*OnePc*:*ProposalQueue*'
+./build/tests/openkv_unit_tests --gtest_filter='*OnePc*:*IndexWaiter*'
 ```
 
 期望：Put 返回递增 revision；bench `fail=0`。记录见 [TEST_CASES.md](../test/TEST_CASES.md)。

@@ -18,16 +18,16 @@
 
 #include "openkv/raftstore/store.hpp"
 
-#include "openkv/codec.hpp"
-#include "openkv/logging.hpp"
-#include "openkv/raft/util/snap_stream.hpp"
-#include "openkv/raftstore/write_batch_merge.hpp"
-
 #include <chrono>
 #include <sstream>
 #include <type_traits>
 #include <variant>
 #include <vector>
+
+#include "openkv/codec.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
+#include "openkv/raftstore/write_batch_merge.hpp"
 
 namespace openkv::raftstore {
 namespace {
@@ -52,9 +52,8 @@ std::vector<std::string> split_pipe(const std::string& s) {
 Store::Store(Options opts, NodeFactory factory)
     : opts_(opts), factory_(std::move(factory)), router_(std::make_shared<Router>()) {
   batch_ = std::make_unique<BatchSystem>(router_, opts_.batch);
-  batch_->set_raft_handler([this](uint32_t rid, std::vector<PeerMsg> msgs) {
-    on_raft_batch(rid, std::move(msgs));
-  });
+  batch_->set_raft_handler(
+      [this](uint32_t rid, std::vector<PeerMsg> msgs) { on_raft_batch(rid, std::move(msgs)); });
   batch_->set_apply_handler([this](uint32_t rid, std::vector<ApplyControl> msgs) {
     on_apply_batch(rid, std::move(msgs));
   });
@@ -71,17 +70,21 @@ Store::Store(Options opts, NodeFactory factory)
     meta->term = lt;
     return data;
   };
+  // 【出网入口·快照】SnapWorker 拉完 blob 后，在 Store 内拼成 InstallSnapshot 再交给
+  // transport_fn_。 线协议改包留在 raftstore，Storage 只提供 bind/发送能力（见 flows/54）。
   SnapWorker::Sender send = [this](uint32_t rid, const raft::SnapshotMeta& meta,
                                    const std::string& data) {
     if (!transport_fn_) return;
-    // payload: last_idx|last_term|hex(blob)；blob 前可带 ConfState（kMagicSnapConf）。
+    // blob 前可带 ConfState（kMagicSnapConf）；线格式：term|last_idx|last_term|hex(blob)
     std::string blob = data;
     if (!meta.conf_state.empty()) {
       blob = std::string(raft::kMagicSnapConf) + meta.conf_state + "\n" + data;
     }
+    uint64_t raft_term = 0;
+    if (auto* n = get(rid)) raft_term = n->soft_state().term;
     std::ostringstream oss;
-    oss << meta.index << '|' << meta.term << '|' << openkv::to_hex(blob);
-    transport_fn_(rid, meta.to, "InstallSnapshotData", oss.str());
+    oss << raft_term << '|' << meta.index << '|' << meta.term << '|' << openkv::to_hex(blob);
+    transport_fn_(rid, meta.to, "InstallSnapshot", oss.str());
     batch_->note_snap_done();
   };
   snap_ = std::make_unique<SnapWorker>(opts_.snap, std::move(prov), std::move(send));
@@ -124,6 +127,26 @@ void Store::stop() {
   if (batch_) batch_->stop();
 }
 
+bool Store::async_write(uint32_t region_id, std::string data, uint64_t* assigned_index,
+                        std::string* error) {
+  // 写路径唯一入口（原 storage::RaftKV）：propose 只改内存日志 → request_ready 攒批。
+  auto* n = get(region_id);
+  if (!n) {
+    if (error) *error = "no_region";
+    return false;
+  }
+  if (!n->is_leader()) {
+    if (error) *error = "not_leader";
+    return false;
+  }
+  if (!n->propose(std::move(data), assigned_index)) {
+    if (error) *error = "propose_failed";
+    return false;
+  }
+  request_ready(region_id);
+  return true;
+}
+
 void Store::request_ready(uint32_t region_id) {
   // Propose 热路径调用：把多次 propose 合成一次 Ready/persist（group commit）。
   // 触发条件：pending>=ready_coalesce_n，或 coalesce_loop 等到 ready_coalesce_ms。
@@ -143,7 +166,8 @@ void Store::request_ready(uint32_t region_id) {
       st.armed = false;
       should_flush = true;
     } else if (opts_.ready_coalesce_ms > 0) {
-      const auto dl = std::chrono::steady_clock::now() + std::chrono::milliseconds(opts_.ready_coalesce_ms);
+      const auto dl =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(opts_.ready_coalesce_ms);
       if (!st.armed) {
         st.armed = true;
         st.deadline = dl;
@@ -177,9 +201,8 @@ void Store::coalesce_loop() {
           return false;
         });
       } else {
-        coalesce_cv_.wait_until(lk, next, [this] {
-          return !coalesce_running_.load(std::memory_order_acquire);
-        });
+        coalesce_cv_.wait_until(
+            lk, next, [this] { return !coalesce_running_.load(std::memory_order_acquire); });
       }
       if (!coalesce_running_.load(std::memory_order_acquire)) break;
       const auto now = clock::now();
@@ -517,18 +540,20 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
 }
 
 void Store::dispatch_ready_after_persist(Peer& peer, raft::Ready& rd) {
+  // persist 已完成；下面才进入「出站」。mailbox/ReadyPump 此前都还不是网络。
   if (transport_fn_) {
     for (const auto& m : rd.messages) {
-      if (m.type == "InstallSnapshot" &&
-          ((rd.snapshot && rd.snapshot->to == m.to) || m.payload.empty() ||
-           m.payload.back() == '|')) {
+      if (m.type == "InstallSnapshot" && ((rd.snapshot && rd.snapshot->to == m.to) ||
+                                          m.payload.empty() || m.payload.back() == '|')) {
         if (batch_ && batch_->snap_overloaded()) {
           SKV_WARN << "snap QoS reject region=" << peer.region_id();
           continue;
         }
+        // 【非网络】快照壳先扔给 SnapWorker；真出网在 SnapWorker::Sender → transport_fn_。
         SnapTask t;
         t.region_id = peer.region_id();
-        if (rd.snapshot) t.meta = *rd.snapshot;
+        if (rd.snapshot)
+          t.meta = *rd.snapshot;
         else {
           t.meta.to = m.to;
         }
@@ -536,6 +561,7 @@ void Store::dispatch_ready_after_persist(Peer& peer, raft::Ready& rd) {
         if (snap_) snap_->enqueue(std::move(t));
         continue;
       }
+      // 【出网入口】AE/Vote/已拼好的 InstallSnapshot → 调用方 transport_fn_（如 gRPC bind）。
       transport_fn_(peer.region_id(), m.to, m.type, m.payload);
     }
   }
@@ -559,15 +585,22 @@ void Store::finish_persist_pipeline(Peer& peer) {
   dispatch_ready_after_persist(peer, *rd);
 }
 
+/**
+ * @brief 处理准备：处理准备是处理准备的外部io，用于处理准备的外部io。 如果使用外部io，则处理准备。
+ *
+ * 如果使用外部io，则处理准备。 否则，处理准备。
+ * @param peer 节点
+ * @param pipeline 是否启用持久化流水线
+ */
 void Store::process_ready(Peer& peer, bool pipeline) {
-  auto* n = peer.raft_node();
-  if (!n || !n->has_ready()) return;
+  auto* n = peer.raft_node();         // 获取节点
+  if (!n || !n->has_ready()) return;  // 如果没有节点，或者没有准备，则返回
 
   // 落盘：自定义 persist_fn_ 优先；否则模块内默认 node->persist_ready（通用库闭环）。
-  auto do_persist = [this](uint32_t rid, raft::RaftNode* node, const raft::Ready& rd) {
-    if (persist_fn_) {
+  auto do_persist = [this](uint32_t rid, raft::RaftNode* node, const raft::Ready& rd) {  // 处理准备
+    if (persist_fn_) {  // 如果使用持久化函数，则处理准备
       persist_fn_(rid, rd);
-    } else if (node) {
+    } else if (node) {  // 如果节点存在，则调用节点持久化函数
       node->persist_ready(rd);
     }
   };
@@ -575,16 +608,17 @@ void Store::process_ready(Peer& peer, bool pipeline) {
   if (pipeline && persist_pipeline_enabled()) {
     if (peer.persist_inflight()) return;  // 等 kPersistDone
     // 每次只提交一批 Ready 到 IO；完成后由 PersistDone 再发网/apply/advance。
-    raft::Ready rd = n->take_ready();
-    const uint32_t rid = peer.region_id();
+    raft::Ready rd = n->take_ready();       // 获取准备
+    const uint32_t rid = peer.region_id();  // 获取区域id
     auto rd_io = std::make_shared<raft::Ready>(rd);
-    peer.set_pending_ready(std::move(rd));
-    peer.set_persist_inflight(true);
+    peer.set_pending_ready(std::move(rd));  // 设置准备
+    peer.set_persist_inflight(true);        // 设置持久化inflight
+    // 提交持久化任务
     persist_->submit([this, rid, rd_io] {
       // PersistWorker 线程：用 get(rid) 取节点，勿捕获 Peer&。
-      if (persist_fn_) {
+      if (persist_fn_) {  // 如果使用持久化函数，则处理准备
         persist_fn_(rid, *rd_io);
-      } else if (auto* node = get(rid)) {
+      } else if (auto* node = get(rid)) {  // 如果节点存在，则调用节点持久化函数
         node->persist_ready(*rd_io);
       }
       router_->send_raft(rid, SignificantMsg{SignificantMsg::Type::kPersistDone, {}});

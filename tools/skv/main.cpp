@@ -14,16 +14,9 @@
 
 // @file main.cpp
 // skv — OpenKV C++ 运维 CLI（生命周期 + Meta/Admin 类型化 RPC + Gateway KV）；CLI11 解析。
-#include "cluster.hpp"
-#include "tcp_line.hpp"
-
-#include <CLI/CLI.hpp>
-
-#include "kv/v1/kv.grpc.pb.h"
-#include "openkv/grpc_keepalive.hpp"
-
 #include <grpcpp/grpcpp.h>
 
+#include <CLI/CLI.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -34,6 +27,11 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#include "cluster.hpp"
+#include "kv/v1/kv.grpc.pb.h"
+#include "openkv/grpc_keepalive.hpp"
+#include "tcp_line.hpp"
 
 namespace {
 
@@ -76,8 +74,7 @@ std::vector<std::string> meta_addrs() {
 
 // Storage TCP：优先走 preferred；跟随 redirect；再回退 preferred/全量列表。
 // Admin propose（SPLIT/ConfChange）常 >2s，过短会 recv timeout →「truncated」假失败。
-std::string storage_call(const std::string& req,
-                         const std::vector<std::string>& preferred = {},
+std::string storage_call(const std::string& req, const std::vector<std::string>& preferred = {},
                          int timeout_ms = 8000, int max_attempts = 20) {
   auto addrs = preferred.empty() ? storage_addrs() : preferred;
   if (addrs.empty()) addrs = storage_addrs();
@@ -146,8 +143,8 @@ std::vector<std::string> region_addrs(uint32_t rid) {
       std::stringstream ss(rest.substr(comma + 1));
       std::string item;
       while (std::getline(ss, item, ',')) {
-        while (!item.empty() && (item.back() == 'L' || item.back() == 'N') &&
-               item.size() >= 2 && item[item.size() - 2] == '*') {
+        while (!item.empty() && (item.back() == 'L' || item.back() == 'N') && item.size() >= 2 &&
+               item[item.size() - 2] == '*') {
           item = item.substr(0, item.size() - 2);
         }
         auto at = item.find('@');
@@ -344,8 +341,8 @@ RegionPeers parse_region_peers(uint32_t rid) {
     while (std::getline(ss, item, ',')) {
       if (item.empty()) continue;
       const bool is_leader = item.find("*L") != std::string::npos;
-      while (!item.empty() && (item.back() == 'L' || item.back() == 'N') &&
-             item.size() >= 2 && item[item.size() - 2] == '*') {
+      while (!item.empty() && (item.back() == 'L' || item.back() == 'N') && item.size() >= 2 &&
+             item[item.size() - 2] == '*') {
         item = item.substr(0, item.size() - 2);
       }
       auto at = item.find('@');
@@ -382,8 +379,8 @@ int cmd_split(const std::vector<std::string>& args) {
   }
   // 只打左 Region 副本 / 跟 Leader，避免对 6 台全广播刷 not_leader 噪音
   try {
-    auto prep = storage_call("ADMIN_PREPARE_SPLIT " + parts[2] + " " + skv::to_hex(args[1]),
-                             left_addrs);
+    auto prep =
+        storage_call("ADMIN_PREPARE_SPLIT " + parts[2] + " " + skv::to_hex(args[1]), left_addrs);
     std::cout << "prepare -> " << prep << "\n";
     if (prep.rfind("OK", 0) != 0) return 1;
   } catch (const std::exception& e) {
@@ -391,8 +388,8 @@ int cmd_split(const std::vector<std::string>& args) {
     return 1;
   }
   try {
-    auto spl = storage_call(
-        "ADMIN_SPLIT " + parts[2] + " " + parts[3] + " " + skv::to_hex(args[1]), left_addrs);
+    auto spl = storage_call("ADMIN_SPLIT " + parts[2] + " " + parts[3] + " " + skv::to_hex(args[1]),
+                            left_addrs);
     std::cout << "split -> " << spl << "\n";
     if (spl.rfind("OK", 0) != 0) return 1;
   } catch (const std::exception& e) {
@@ -436,8 +433,7 @@ int cmd_nodes(const std::vector<std::string>& args) {
     try {
       int st = std::stoi(parts[i].substr(colon + 1));
       if (st >= 0 && st <= 4) {
-        std::cout << "  " << parts[i].substr(0, parts[i].find('@')) << "  " << kNames[st]
-                  << "\n";
+        std::cout << "  " << parts[i].substr(0, parts[i].find('@')) << "  " << kNames[st] << "\n";
       }
     } catch (...) {
     }
@@ -630,8 +626,8 @@ int cmd_place(const std::vector<std::string>& args) {
         auto parts = skv::split_ws(r);
         int learner = 2;
         if (parts.size() >= 7 && parts[0] == "OK") learner = std::stoi(parts[6]);
-        std::cout << "promote-wait " << peer_id << " joint_status=" << js
-                  << " learner=" << learner << "\n";
+        std::cout << "promote-wait " << peer_id << " joint_status=" << js << " learner=" << learner
+                  << "\n";
         // learner=0 且已确认非 joint；learner=2 时催选主并继续等
         if (js == 0 && learner == 0) return true;
         if (learner == 2 && i > 0 && i % 20 == 0) {
@@ -659,7 +655,8 @@ int cmd_place(const std::vector<std::string>& args) {
     // 数据面可能已完成上一轮 place（Meta 路由未更新）：已是 voter 且追平则跳过 ConfChange
     {
       try {
-        auto r = storage_call("ADMIN_PEER_PROGRESS " + std::to_string(rid) + " " + id, live_addrs());
+        auto r =
+            storage_call("ADMIN_PEER_PROGRESS " + std::to_string(rid) + " " + id, live_addrs());
         auto parts = skv::split_ws(r);
         if (parts.size() >= 7 && parts[0] == "OK" && parts[5] == "1" && parts[6] == "0") {
           std::cout << "skip add " << id << " (already voter caught-up)\n";
@@ -676,8 +673,8 @@ int cmd_place(const std::vector<std::string>& args) {
     }
     peers << ',' << id << '@' << addr << "*N";
     try {
-      auto er = skv::tcp_line(addr, "ADMIN_ENSURE_REGION " + std::to_string(rid) + " " + peers.str(),
-                             3000);
+      auto er = skv::tcp_line(
+          addr, "ADMIN_ENSURE_REGION " + std::to_string(rid) + " " + peers.str(), 3000);
       std::cout << "ensure " << id << " -> " << er << "\n";
     } catch (const std::exception& e) {
       std::cerr << "ensure " << id << " FAIL " << e.what() << "\n";
@@ -700,7 +697,8 @@ int cmd_place(const std::vector<std::string>& args) {
           break;
         }
         if (r.find("busy") != std::string::npos || r.find("not_leader") != std::string::npos ||
-            r.find("joint") != std::string::npos || r.find("add_learner_failed") != std::string::npos) {
+            r.find("joint") != std::string::npos ||
+            r.find("add_learner_failed") != std::string::npos) {
           if (r.find("not_leader") != std::string::npos && attempt >= 3 && !desired.empty()) {
             auto it = nodes.find(desired[0]);
             if (it != nodes.end()) {
@@ -777,8 +775,8 @@ int cmd_place(const std::vector<std::string>& args) {
         }
       }
       if (target.empty()) target = desired[0];
-      auto tr = storage_call(
-          "ADMIN_TRANSFER_LEADER " + std::to_string(rid) + " " + target, live_addrs());
+      auto tr =
+          storage_call("ADMIN_TRANSFER_LEADER " + std::to_string(rid) + " " + target, live_addrs());
       std::cout << "transfer " << rp.leader_id << " -> " << target << " : " << tr << "\n";
       auto it = nodes.find(target);
       if (it != nodes.end()) {
@@ -848,7 +846,8 @@ int cmd_place(const std::vector<std::string>& args) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     if (!left_joint) {
-      std::cerr << "refuse DESTROY " << nid << ": still in joint or unreachable (would brick elections)\n";
+      std::cerr << "refuse DESTROY " << nid
+                << ": still in joint or unreachable (would brick elections)\n";
       return 1;
     }
     try {
@@ -920,8 +919,8 @@ int cmd_ping() {
   }
   const char* gw = std::getenv("SKV_GATEWAY");
   std::string gaddr = gw ? gw : "127.0.0.1:19000";
-  std::cout << "gw    " << gaddr << "  "
-            << (skv::tcp_reachable(gaddr, 400) ? "UP" : "DOWN") << "\n";
+  std::cout << "gw    " << gaddr << "  " << (skv::tcp_reachable(gaddr, 400) ? "UP" : "DOWN")
+            << "\n";
   if (!skv::tcp_reachable(gaddr, 400)) ++fail;
   return fail == 0 ? 0 : 1;
 }
@@ -968,16 +967,18 @@ int main(int argc, char** argv) {
     };
   };
 
-  app.add_subcommand("status", "Show cluster process status")
-      ->callback(run([] { return skv::cmd_status(skv::find_root()); }));
+  app.add_subcommand("status", "Show cluster process status")->callback(run([] {
+    return skv::cmd_status(skv::find_root());
+  }));
 
   bool start_fresh = false;
   auto* start = app.add_subcommand("start", "Start local cluster");
   start->add_flag("--fresh", start_fresh, "Wipe data before start");
   start->callback(run([&] { return skv::cmd_start(skv::find_root(), start_fresh); }));
 
-  app.add_subcommand("stop", "Stop local cluster")
-      ->callback(run([] { return skv::cmd_stop(skv::find_root()); }));
+  app.add_subcommand("stop", "Stop local cluster")->callback(run([] {
+    return skv::cmd_stop(skv::find_root());
+  }));
 
   std::string restart_name;
   auto* restart = app.add_subcommand("restart", "Restart one process");
@@ -1069,14 +1070,14 @@ int main(int argc, char** argv) {
   std::string bal_n;
   auto* c_bal = app.add_subcommand("balance", "Enqueue RF-constant balance moves");
   c_bal->add_option("count", bal_n, "max moves (default 1)");
-  c_bal->callback(run([&] {
-    return bal_n.empty() ? cmd_balance({}) : cmd_balance({bal_n});
-  }));
+  c_bal->callback(run([&] { return bal_n.empty() ? cmd_balance({}) : cmd_balance({bal_n}); }));
 
   app.add_subcommand("ping", "Ping meta/storage/gateway")->callback(run([] { return cmd_ping(); }));
   app.add_subcommand("route", "GET_ROUTE")->callback(run([] { return cmd_route(); }));
   app.add_subcommand("who-leader", "WHO_LEADER")->callback(run([] { return cmd_who_leader(); }));
-  app.add_subcommand("leader", "alias of who-leader")->callback(run([] { return cmd_who_leader(); }));
+  app.add_subcommand("leader", "alias of who-leader")->callback(run([] {
+    return cmd_who_leader();
+  }));
   app.add_subcommand("smoke", "put+get smoke")->callback(run([] { return cmd_smoke(); }));
 
   try {

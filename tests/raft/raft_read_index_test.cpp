@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/raft/util/raft_frame.hpp"
-#include "openkv/raft/core/raft_node.hpp"
-
 #include <gtest/gtest.h>
 
 #include <memory>
 #include <string>
 #include <vector>
 
-using openkv::raft::RaftNode;
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/util/raft_frame.hpp"
+
 using openkv::raft::decode_frame_header;
 using openkv::raft::encode_frame;
 using openkv::raft::FrameType;
 using openkv::raft::is_binary_frame;
+using openkv::raft::RaftNode;
 
 TEST(RaftFrameTest, EncodeDecodeRoundTrip) {
   auto wire = encode_frame(FrameType::kAppendEntries, 7, "RAFT_AE 0 n0 1");

@@ -20,14 +20,14 @@
 
 #pragma once
 
-#include "openkv/peer_counter.hpp"
-#include "openkv/raft/core/raft_node.hpp"
-
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "openkv/peer_counter.hpp"
+#include "openkv/raft/core/raft_node.hpp"
 
 namespace openkv::raft {
 

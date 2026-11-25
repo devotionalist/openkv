@@ -15,12 +15,11 @@
 // @file gateway_ds.cpp
 // DSService：Hash/Set/List/ZSet 经 MetaKey + ds_encode；出站 get/put_async。
 
-#include "openkv/compute/gateway_server.hpp"
-
-#include "openkv/compute/ds_encode.hpp"
-
 #include <memory>
 #include <utility>
+
+#include "openkv/compute/ds_encode.hpp"
+#include "openkv/compute/gateway_server.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -50,14 +49,13 @@ void GatewayServer::ds_load_async(const std::string& mk,
   gr->set_key(mk);
   gr->set_linearizable(true);
   auto out = std::make_shared<kv::v1::GetResponse>();
-  get_async_cb(gr.get(), out.get(), 0,
-               [gr, out, done = std::move(done)](grpc::Status st) {
-                 if (!st.ok()) {
-                   done(st, {}, false);
-                   return;
-                 }
-                 done(grpc::Status::OK, out->found() ? out->value() : std::string{}, out->found());
-               });
+  get_async_cb(gr.get(), out.get(), 0, [gr, out, done = std::move(done)](grpc::Status st) {
+    if (!st.ok()) {
+      done(st, {}, false);
+      return;
+    }
+    done(grpc::Status::OK, out->found() ? out->value() : std::string{}, out->found());
+  });
 }
 
 void GatewayServer::ds_store_async(const std::string& mk, const std::string& blob,
@@ -70,64 +68,61 @@ void GatewayServer::ds_store_async(const std::string& mk, const std::string& blo
     auto dr = std::make_shared<kv::v1::DeleteRequest>();
     dr->set_key(mk);
     auto out = std::make_shared<kv::v1::DeleteResponse>();
-    with_start_commit_ts(
-        done, [this, dr, out, done, attempt](uint64_t start, uint64_t commit_ts) {
-          active_ts_.add(start);
-          const uint32_t region = region_of(dr->key());
-          const uint64_t epoch = epoch_of(region);
-          auto addr_opt = pick_leader_addr(region);
-          if (!addr_opt) {
+    with_start_commit_ts(done, [this, dr, out, done, attempt](uint64_t start, uint64_t commit_ts) {
+      active_ts_.add(start);
+      const uint32_t region = region_of(dr->key());
+      const uint64_t epoch = epoch_of(region);
+      auto addr_opt = pick_leader_addr(region);
+      if (!addr_opt) {
+        active_ts_.remove(start);
+        done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
+        return;
+      }
+      ProposeOnePcArgs args;
+      args.shard_id = region;
+      args.key = dr->key();
+      args.start_ts = start;
+      args.commit_ts = commit_ts;
+      args.primary = dr->key();
+      args.mvcc_op = 1;
+      args.epoch = epoch;
+      note_to_store(*addr_opt);
+      store_propose_onepc_async(
+          *addr_opt, std::move(args), 15000,
+          [this, dr, out, start, region, addr = *addr_opt, done, attempt](grpc::Status sst,
+                                                                          ProposeOnePcResult res) {
             active_ts_.remove(start);
-            done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"));
-            return;
-          }
-          ProposeOnePcArgs args;
-          args.shard_id = region;
-          args.key = dr->key();
-          args.start_ts = start;
-          args.commit_ts = commit_ts;
-          args.primary = dr->key();
-          args.mvcc_op = 1;
-          args.epoch = epoch;
-          note_to_store(*addr_opt);
-          store_propose_onepc_async(
-              *addr_opt, std::move(args), 15000,
-              [this, dr, out, start, region, addr = *addr_opt, done, attempt](
-                  grpc::Status sst, ProposeOnePcResult res) {
-                active_ts_.remove(start);
-                if (!sst.ok()) {
-                  done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
-                  return;
-                }
-                if (res.ok) {
-                  remember_leader(region, addr);
-                  out->set_deleted(true);
-                  out->set_revision(res.revision);
-                  done(grpc::Status::OK);
-                  return;
-                }
-                std::string body = res.error;
-                if (!res.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
-                  body += " redirect=" + res.redirect_to;
-                }
-                if (retry_async_write(body, dr->key(), region, false,
-                                      [this, dr, out, done, attempt] {
-                                        ds_store_async(dr->key(), "", done, attempt + 1);
-                                      })) {
-                  return;
-                }
-                done(grpc::Status(grpc::StatusCode::ABORTED, "ds_store delete: " + body));
-              });
-        });
+            if (!sst.ok()) {
+              done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+              return;
+            }
+            if (res.ok) {
+              remember_leader(region, addr);
+              out->set_deleted(true);
+              out->set_revision(res.revision);
+              done(grpc::Status::OK);
+              return;
+            }
+            std::string body = res.error;
+            if (!res.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
+              body += " redirect=" + res.redirect_to;
+            }
+            if (retry_async_write(body, dr->key(), region, false, [this, dr, out, done, attempt] {
+                  ds_store_async(dr->key(), "", done, attempt + 1);
+                })) {
+              return;
+            }
+            done(grpc::Status(grpc::StatusCode::ABORTED, "ds_store delete: " + body));
+          });
+    });
     return;
   }
   auto pr = std::make_shared<kv::v1::PutRequest>();
   pr->set_key(mk);
   pr->set_value(blob);
   auto out = std::make_shared<kv::v1::PutResponse>();
-  put_async_cb(pr.get(), out.get(), 0, [pr, out, done = std::move(done)](grpc::Status st) {
-    done(st);
-  });
+  put_async_cb(pr.get(), out.get(), 0,
+               [pr, out, done = std::move(done)](grpc::Status st) { done(st); });
 }
 
 void GatewayServer::list_push_async(const std::string& key, std::vector<std::string> values,
@@ -156,15 +151,13 @@ void GatewayServer::list_push_async(const std::string& key, std::vector<std::str
       for (const auto& v : values) l.push_back(v);
     }
     const int64_t length = static_cast<int64_t>(l.size());
-    ds_store_async(mk, ds::encode_list(l), [done = std::move(done), length](grpc::Status sst) {
-      done(sst, length);
-    });
+    ds_store_async(mk, ds::encode_list(l),
+                   [done = std::move(done), length](grpc::Status sst) { done(sst, length); });
   });
 }
 
-void GatewayServer::list_pop_async(
-    const std::string& key, bool left,
-    std::function<void(grpc::Status, std::string, bool)> done) {
+void GatewayServer::list_pop_async(const std::string& key, bool left,
+                                   std::function<void(grpc::Status, std::string, bool)> done) {
   if (auto st = require_key(key); !st.ok()) {
     done(st, {}, false);
     return;
@@ -218,31 +211,32 @@ void GatewayServer::HSetAsync(const kv::v1::HSetRequest* req, kv::v1::HSetRespon
     return;
   }
   const std::string mk = ds::meta_key(req->key());
-  ds_load_async(mk, [this, req, resp, mk, done = std::move(done)](grpc::Status st, std::string blob,
-                                                                  bool) {
-    if (!st.ok()) {
-      done(st);
-      return;
-    }
-    ds::Hash h;
-    try {
-      h = ds::decode_hash(blob);
-    } catch (const std::exception& e) {
-      done(ds_err(e));
-      return;
-    }
-    const bool existed = h.count(req->field()) > 0;
-    h[req->field()] = req->value();
-    ds_store_async(mk, ds::encode_hash(h), [resp, existed, done = std::move(done)](grpc::Status sst) {
-      if (!sst.ok()) {
-        done(sst);
-        return;
-      }
-      resp->set_ok(true);
-      resp->set_added(!existed);
-      done(grpc::Status::OK);
-    });
-  });
+  ds_load_async(
+      mk, [this, req, resp, mk, done = std::move(done)](grpc::Status st, std::string blob, bool) {
+        if (!st.ok()) {
+          done(st);
+          return;
+        }
+        ds::Hash h;
+        try {
+          h = ds::decode_hash(blob);
+        } catch (const std::exception& e) {
+          done(ds_err(e));
+          return;
+        }
+        const bool existed = h.count(req->field()) > 0;
+        h[req->field()] = req->value();
+        ds_store_async(mk, ds::encode_hash(h),
+                       [resp, existed, done = std::move(done)](grpc::Status sst) {
+                         if (!sst.ok()) {
+                           done(sst);
+                           return;
+                         }
+                         resp->set_ok(true);
+                         resp->set_added(!existed);
+                         done(grpc::Status::OK);
+                       });
+      });
 }
 
 void GatewayServer::HGetAsync(const kv::v1::HGetRequest* req, kv::v1::HGetResponse* resp,
@@ -252,29 +246,30 @@ void GatewayServer::HGetAsync(const kv::v1::HGetRequest* req, kv::v1::HGetRespon
     return;
   }
   const std::string mk = ds::meta_key(req->key());
-  ds_load_async(mk, [req, resp, done = std::move(done)](grpc::Status st, std::string blob, bool found) {
-    if (!st.ok()) {
-      done(st);
-      return;
-    }
-    if (!found) {
-      done(grpc::Status::OK);
-      return;
-    }
-    ds::Hash h;
-    try {
-      h = ds::decode_hash(blob);
-    } catch (const std::exception& e) {
-      done(ds_err(e));
-      return;
-    }
-    auto it = h.find(req->field());
-    if (it != h.end()) {
-      resp->set_value(it->second);
-      resp->set_found(true);
-    }
-    done(grpc::Status::OK);
-  });
+  ds_load_async(mk,
+                [req, resp, done = std::move(done)](grpc::Status st, std::string blob, bool found) {
+                  if (!st.ok()) {
+                    done(st);
+                    return;
+                  }
+                  if (!found) {
+                    done(grpc::Status::OK);
+                    return;
+                  }
+                  ds::Hash h;
+                  try {
+                    h = ds::decode_hash(blob);
+                  } catch (const std::exception& e) {
+                    done(ds_err(e));
+                    return;
+                  }
+                  auto it = h.find(req->field());
+                  if (it != h.end()) {
+                    resp->set_value(it->second);
+                    resp->set_found(true);
+                  }
+                  done(grpc::Status::OK);
+                });
 }
 
 void GatewayServer::HDelAsync(const kv::v1::HDelRequest* req, kv::v1::HDelResponse* resp,
@@ -413,29 +408,29 @@ void GatewayServer::HMSetAsync(const kv::v1::HMSetRequest* req, kv::v1::HMSetRes
     return;
   }
   const std::string mk = ds::meta_key(req->key());
-  ds_load_async(mk, [this, req, resp, mk, done = std::move(done)](grpc::Status st, std::string blob,
-                                                                  bool) {
-    if (!st.ok()) {
-      done(st);
-      return;
-    }
-    ds::Hash h;
-    try {
-      h = ds::decode_hash(blob);
-    } catch (const std::exception& e) {
-      done(ds_err(e));
-      return;
-    }
-    for (int i = 0; i < req->fields_size(); ++i) h[req->fields(i)] = req->values(i);
-    ds_store_async(mk, ds::encode_hash(h), [resp, done = std::move(done)](grpc::Status sst) {
-      if (!sst.ok()) {
-        done(sst);
-        return;
-      }
-      resp->set_ok(true);
-      done(grpc::Status::OK);
-    });
-  });
+  ds_load_async(
+      mk, [this, req, resp, mk, done = std::move(done)](grpc::Status st, std::string blob, bool) {
+        if (!st.ok()) {
+          done(st);
+          return;
+        }
+        ds::Hash h;
+        try {
+          h = ds::decode_hash(blob);
+        } catch (const std::exception& e) {
+          done(ds_err(e));
+          return;
+        }
+        for (int i = 0; i < req->fields_size(); ++i) h[req->fields(i)] = req->values(i);
+        ds_store_async(mk, ds::encode_hash(h), [resp, done = std::move(done)](grpc::Status sst) {
+          if (!sst.ok()) {
+            done(sst);
+            return;
+          }
+          resp->set_ok(true);
+          done(grpc::Status::OK);
+        });
+      });
 }
 
 void GatewayServer::HMGetAsync(const kv::v1::HMGetRequest* req, kv::v1::HMGetResponse* resp,
@@ -480,32 +475,33 @@ void GatewayServer::SAddAsync(const kv::v1::SAddRequest* req, kv::v1::SAddRespon
     return;
   }
   const std::string mk = ds::meta_key(req->key());
-  ds_load_async(mk, [this, req, resp, mk, done = std::move(done)](grpc::Status st, std::string blob,
-                                                                  bool) {
-    if (!st.ok()) {
-      done(st);
-      return;
-    }
-    ds::Set set;
-    try {
-      set = ds::decode_set(blob);
-    } catch (const std::exception& e) {
-      done(ds_err(e));
-      return;
-    }
-    int64_t added = 0;
-    for (const auto& m : req->members()) {
-      if (set.insert(m).second) ++added;
-    }
-    ds_store_async(mk, ds::encode_set(set), [resp, added, done = std::move(done)](grpc::Status sst) {
-      if (!sst.ok()) {
-        done(sst);
-        return;
-      }
-      resp->set_added(added);
-      done(grpc::Status::OK);
-    });
-  });
+  ds_load_async(
+      mk, [this, req, resp, mk, done = std::move(done)](grpc::Status st, std::string blob, bool) {
+        if (!st.ok()) {
+          done(st);
+          return;
+        }
+        ds::Set set;
+        try {
+          set = ds::decode_set(blob);
+        } catch (const std::exception& e) {
+          done(ds_err(e));
+          return;
+        }
+        int64_t added = 0;
+        for (const auto& m : req->members()) {
+          if (set.insert(m).second) ++added;
+        }
+        ds_store_async(mk, ds::encode_set(set),
+                       [resp, added, done = std::move(done)](grpc::Status sst) {
+                         if (!sst.ok()) {
+                           done(sst);
+                           return;
+                         }
+                         resp->set_added(added);
+                         done(grpc::Status::OK);
+                       });
+      });
 }
 
 void GatewayServer::SRemAsync(const kv::v1::SRemRequest* req, kv::v1::SRemResponse* resp,
@@ -600,7 +596,8 @@ void GatewayServer::SCardAsync(const kv::v1::SCardRequest* req, kv::v1::SCardRes
                 });
 }
 
-void GatewayServer::SMembersAsync(const kv::v1::SMembersRequest* req, kv::v1::SMembersResponse* resp,
+void GatewayServer::SMembersAsync(const kv::v1::SMembersRequest* req,
+                                  kv::v1::SMembersResponse* resp,
                                   std::function<void(grpc::Status)> done) {
   if (auto st = require_key(req->key()); !st.ok()) {
     done(st);
@@ -716,28 +713,27 @@ void GatewayServer::LRangeAsync(const kv::v1::LRangeRequest* req, kv::v1::LRange
     done(st);
     return;
   }
-  ds_load_async(ds::meta_key(req->key()),
-                [req, resp, done = std::move(done)](grpc::Status st, std::string blob, bool found) {
-                  if (!st.ok()) {
-                    done(st);
-                    return;
-                  }
-                  if (!found) {
-                    done(grpc::Status::OK);
-                    return;
-                  }
-                  try {
-                    auto l = ds::decode_list(blob);
-                    auto rng =
-                        ds::normalize_range(static_cast<int64_t>(l.size()), req->start(), req->stop());
-                    if (rng) {
-                      for (size_t i = rng->first; i < rng->second; ++i) resp->add_values(l[i]);
-                    }
-                    done(grpc::Status::OK);
-                  } catch (const std::exception& e) {
-                    done(ds_err(e));
-                  }
-                });
+  ds_load_async(ds::meta_key(req->key()), [req, resp, done = std::move(done)](
+                                              grpc::Status st, std::string blob, bool found) {
+    if (!st.ok()) {
+      done(st);
+      return;
+    }
+    if (!found) {
+      done(grpc::Status::OK);
+      return;
+    }
+    try {
+      auto l = ds::decode_list(blob);
+      auto rng = ds::normalize_range(static_cast<int64_t>(l.size()), req->start(), req->stop());
+      if (rng) {
+        for (size_t i = rng->first; i < rng->second; ++i) resp->add_values(l[i]);
+      }
+      done(grpc::Status::OK);
+    } catch (const std::exception& e) {
+      done(ds_err(e));
+    }
+  });
 }
 
 void GatewayServer::LIndexAsync(const kv::v1::LIndexRequest* req, kv::v1::LIndexResponse* resp,
@@ -910,31 +906,30 @@ void GatewayServer::ZRangeAsync(const kv::v1::ZRangeRequest* req, kv::v1::ZRange
     done(st);
     return;
   }
-  ds_load_async(ds::meta_key(req->key()),
-                [req, resp, done = std::move(done)](grpc::Status st, std::string blob, bool found) {
-                  if (!st.ok()) {
-                    done(st);
-                    return;
-                  }
-                  if (!found) {
-                    done(grpc::Status::OK);
-                    return;
-                  }
-                  try {
-                    auto ents = ds::z_sorted(ds::decode_zset(blob));
-                    auto rng = ds::normalize_range(static_cast<int64_t>(ents.size()), req->start(),
-                                                   req->stop());
-                    if (rng) {
-                      for (size_t i = rng->first; i < rng->second; ++i) {
-                        resp->add_members(ents[i].member);
-                        if (req->with_scores()) resp->add_scores(ents[i].score);
-                      }
-                    }
-                    done(grpc::Status::OK);
-                  } catch (const std::exception& e) {
-                    done(ds_err(e));
-                  }
-                });
+  ds_load_async(ds::meta_key(req->key()), [req, resp, done = std::move(done)](
+                                              grpc::Status st, std::string blob, bool found) {
+    if (!st.ok()) {
+      done(st);
+      return;
+    }
+    if (!found) {
+      done(grpc::Status::OK);
+      return;
+    }
+    try {
+      auto ents = ds::z_sorted(ds::decode_zset(blob));
+      auto rng = ds::normalize_range(static_cast<int64_t>(ents.size()), req->start(), req->stop());
+      if (rng) {
+        for (size_t i = rng->first; i < rng->second; ++i) {
+          resp->add_members(ents[i].member);
+          if (req->with_scores()) resp->add_scores(ents[i].score);
+        }
+      }
+      done(grpc::Status::OK);
+    } catch (const std::exception& e) {
+      done(ds_err(e));
+    }
+  });
 }
 
 }  // namespace openkv::compute

@@ -15,11 +15,12 @@
 // @file store_codec_test.cpp
 // 测试 Command encode/decode 对 Put/Delete 及非法 payload 的处理。
 
-#include "openkv/storage/kv_engine.hpp"
-#include "openkv/storage/store_service.hpp"
+#include <gtest/gtest.h>
 
 #include <cstring>
-#include <gtest/gtest.h>
+
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/store_service.hpp"
 
 using openkv::storage::CmdOp;
 using openkv::storage::Command;
@@ -114,10 +115,10 @@ TEST(StoreCodecTest, CasTrailerRoundTrip) {
 }
 
 TEST(StoreCodecTest, KvPayloadExpireRoundTripAndLegacy) {
-  using openkv::storage::KvRecord;
   using openkv::storage::decode_kv_payload;
   using openkv::storage::encode_kv_payload;
   using openkv::storage::kv_record_expired;
+  using openkv::storage::KvRecord;
 
   auto neu = encode_kv_payload(9, 1234567890, "hello");
   KvRecord r;

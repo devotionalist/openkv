@@ -59,9 +59,9 @@ flowchart TD
 Client Put/Delete
   → Gateway：alloc_ts(2)（start/commit 语义由 ONEPC 一次吃掉）
   → Locate Region → StoreService.Propose(op=ONEPC)
-  → RaftKV::async_write → … → apply
+  → Store::async_write → … → apply
   → MvccStore：写 data + write（同一次 apply）
-  → ProposalQueue → ACK
+  → IndexWaiter → ACK
 ```
 
 源码锚点：

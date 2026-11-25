@@ -17,11 +17,11 @@
 
 #include "openkv/raft/core/log_persist.hpp"
 
-#include "openkv/raft/core/raft_node.hpp"
-#include "openkv/raft/engine/sync_mode.hpp"
-
 #include <algorithm>
 #include <vector>
+
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/engine/sync_mode.hpp"
 
 namespace openkv::raft {
 
@@ -50,7 +50,7 @@ void LogPersist::persist_maybe_flush(bool force) {
 }
 
 std::unique_ptr<RaftLogBatch> LogPersist::build_engine_batch_locked(uint64_t& out_first,
-                                                                   uint64_t& out_last) {
+                                                                    uint64_t& out_last) {
   if (!n_.engine_) return nullptr;
   out_first = n_.log_.first_index();
   out_last = n_.log_.last_index();
@@ -114,6 +114,12 @@ void LogPersist::engine_flush_locked(bool sync) {
   commit_stable_locked(first, last);
 }
 
+/**
+ * @brief 持久化准备：持久化准备是持久化准备的外部io，用于持久化准备的外部io。
+ *
+ * 如果使用外部io，则持久化准备。
+ * 否则，持久化准备。
+ */
 void LogPersist::persist_ready(const Ready& rd) {
   // Store persist_fn：持协议锁只组 batch；consume/fsync 在 persist_io_mu_ 下。
   std::unique_ptr<RaftLogBatch> batch;
@@ -125,7 +131,7 @@ void LogPersist::persist_ready(const Ready& rd) {
     if (!n_.opts_.external_io || !n_.engine_) return;
     const bool want_sync = rd.must_sync || n_.ready_io_.ready_hs_dirty_ || !rd.entries.empty();
     sync = want_sync && raft_log_sync(n_.opts_.persist_sync);
-    batch = build_engine_batch_locked(first, last);
+    batch = build_engine_batch_locked(first, last);  // 构建引擎批次
     n_.ready_io_.ready_hs_dirty_ = false;
     persist_dirty_ = false;
     persist_pending_ = 0;

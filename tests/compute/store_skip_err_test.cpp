@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/compute/gateway_server.hpp"
-
 #include <gtest/gtest.h>
+
+#include "openkv/compute/gateway_server.hpp"
 
 using openkv::compute::store_skip_err;
 

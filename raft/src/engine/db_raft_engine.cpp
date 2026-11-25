@@ -17,8 +17,6 @@
 
 #include "openkv/raft/engine/db_raft_engine.hpp"
 
-#include "openkv/logging.hpp"
-
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/write_batch.h>
@@ -27,6 +25,8 @@
 #include <filesystem>
 #include <stdexcept>
 #include <vector>
+
+#include "openkv/logging.hpp"
 
 namespace openkv::raft {
 namespace fs = std::filesystem;
@@ -193,8 +193,7 @@ std::optional<RaftLocalState> DbRaftEngine::get_raft_state(uint64_t raft_group_i
   return out;
 }
 
-std::optional<LogEntry> DbRaftEngine::get_entry(uint64_t raft_group_id,
-                                                        uint64_t index) const {
+std::optional<LogEntry> DbRaftEngine::get_entry(uint64_t raft_group_id, uint64_t index) const {
   if (!db_) return std::nullopt;
   std::string val;
   auto st = db_->db->Get(rocksdb::ReadOptions(), log_key(raft_group_id, index), &val);
@@ -205,7 +204,7 @@ std::optional<LogEntry> DbRaftEngine::get_entry(uint64_t raft_group_id,
 }
 
 size_t DbRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end,
-                                         size_t max_size, std::vector<LogEntry>* to) const {
+                                      size_t max_size, std::vector<LogEntry>* to) const {
   if (!to || !db_ || end <= begin) return 0;
   std::string prefix = log_prefix(raft_group_id);
   std::string start = log_key(raft_group_id, begin);
@@ -214,8 +213,7 @@ size_t DbRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin, ui
   size_t bytes = 0;
   for (it->Seek(start); it->Valid(); it->Next()) {
     auto k = it->key();
-    if (k.size() < prefix.size() ||
-        std::memcmp(k.data(), prefix.data(), prefix.size()) != 0) {
+    if (k.size() < prefix.size() || std::memcmp(k.data(), prefix.data(), prefix.size()) != 0) {
       break;
     }
     // parse index from key
@@ -248,8 +246,7 @@ void DbRaftEngine::clean(uint64_t raft_group_id) {
   std::unique_ptr<rocksdb::Iterator> it(db_->db->NewIterator(rocksdb::ReadOptions()));
   for (it->Seek(prefix); it->Valid(); it->Next()) {
     auto k = it->key();
-    if (k.size() < prefix.size() ||
-        std::memcmp(k.data(), prefix.data(), prefix.size()) != 0) {
+    if (k.size() < prefix.size() || std::memcmp(k.data(), prefix.data(), prefix.size()) != 0) {
       break;
     }
     wb.Delete(k);

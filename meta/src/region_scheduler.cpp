@@ -21,12 +21,12 @@
 
 #include "openkv/meta/region_scheduler.hpp"
 
-#include "openkv/logging.hpp"
-
 #include <algorithm>
 #include <chrono>
 #include <optional>
 #include <set>
+
+#include "openkv/logging.hpp"
 
 namespace openkv::meta {
 namespace {
@@ -251,54 +251,54 @@ void RegionScheduler::maybe_enqueue_from_scan() {
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (inflight_count_locked() < max_inflight_) {
-    std::vector<std::string> avoid;
-    for (const auto& n : state_.list_nodes(NodeRole::kStorage)) {
-      if (n.state == NodeState::kDraining || n.state == NodeState::kOffline ||
-          n.state == NodeState::kTombstone || n.state == NodeState::kJoining) {
-        avoid.push_back(n.node_id);
+      std::vector<std::string> avoid;
+      for (const auto& n : state_.list_nodes(NodeRole::kStorage)) {
+        if (n.state == NodeState::kDraining || n.state == NodeState::kOffline ||
+            n.state == NodeState::kTombstone || n.state == NodeState::kJoining) {
+          avoid.push_back(n.node_id);
+        }
       }
-    }
 
-    auto cands = scan_candidates();
-    for (uint32_t rid : cands) {
-      if (inflight_count_locked() >= max_inflight_) break;
-      if (region_to_task_.count(rid)) continue;
-      MigrateTask task;
-      task.task_id = "mig-" + std::to_string(++task_seq_);
-      task.region_id = rid;
-      task.state = MigrateState::kPending;
-      // Replace：尽量保留健康 voter，只换掉 draining/offline 上的 peer
-      task.desired_peers = state_.suggest_replace_away(rid, avoid);
-      if (task.desired_peers.size() < state_.replica_factor()) {
-        task.desired_peers = state_.suggest_placement({});
+      auto cands = scan_candidates();
+      for (uint32_t rid : cands) {
+        if (inflight_count_locked() >= max_inflight_) break;
+        if (region_to_task_.count(rid)) continue;
+        MigrateTask task;
+        task.task_id = "mig-" + std::to_string(++task_seq_);
+        task.region_id = rid;
+        task.state = MigrateState::kPending;
+        // Replace：尽量保留健康 voter，只换掉 draining/offline 上的 peer
+        task.desired_peers = state_.suggest_replace_away(rid, avoid);
+        if (task.desired_peers.size() < state_.replica_factor()) {
+          task.desired_peers = state_.suggest_placement({});
+        }
+        if (task.desired_peers.size() < state_.replica_factor()) continue;
+        region_to_task_[rid] = task.task_id;
+        tasks_[task.task_id] = task;
+        pending_persist.push_back(task);
+        SKV_INFO << "migrate auto-enqueue id=" << task.task_id << " region=" << rid;
       }
-      if (task.desired_peers.size() < state_.replica_factor()) continue;
-      region_to_task_[rid] = task.task_id;
-      tasks_[task.task_id] = task;
-      pending_persist.push_back(task);
-      SKV_INFO << "migrate auto-enqueue id=" << task.task_id << " region=" << rid;
-    }
 
-    // Balance：过载 → 轻载（RF 不变）。默认关闭 auto；显式 BALANCE / set_auto_balance(true)。
-    // SCALE_OUT 进行中也必须跳过，否则与加副本抢同一空 Store，路由/Raft 会乱。
-    if (auto_balance_ && inflight_count_locked() < max_inflight_) {
-      if (!(pause_balance_ && pause_balance_())) {
-        if (auto mv = state_.suggest_balance_move()) {
-          if (!region_to_task_.count(mv->first)) {
-            MigrateTask task;
-            task.task_id = "mig-" + std::to_string(++task_seq_);
-            task.region_id = mv->first;
-            task.state = MigrateState::kPending;
-            task.desired_peers = mv->second;
-            region_to_task_[task.region_id] = task.task_id;
-            tasks_[task.task_id] = task;
-            pending_persist.push_back(task);
-            SKV_INFO << "migrate balance-enqueue id=" << task.task_id
-                     << " region=" << task.region_id;
+      // Balance：过载 → 轻载（RF 不变）。默认关闭 auto；显式 BALANCE / set_auto_balance(true)。
+      // SCALE_OUT 进行中也必须跳过，否则与加副本抢同一空 Store，路由/Raft 会乱。
+      if (auto_balance_ && inflight_count_locked() < max_inflight_) {
+        if (!(pause_balance_ && pause_balance_())) {
+          if (auto mv = state_.suggest_balance_move()) {
+            if (!region_to_task_.count(mv->first)) {
+              MigrateTask task;
+              task.task_id = "mig-" + std::to_string(++task_seq_);
+              task.region_id = mv->first;
+              task.state = MigrateState::kPending;
+              task.desired_peers = mv->second;
+              region_to_task_[task.region_id] = task.task_id;
+              tasks_[task.task_id] = task;
+              pending_persist.push_back(task);
+              SKV_INFO << "migrate balance-enqueue id=" << task.task_id
+                       << " region=" << task.region_id;
+            }
           }
         }
       }
-    }
     }  // inflight < max
   }
   // Raft persist 在锁外，避免与 BALANCE / place_ / apply 交叉死锁
@@ -410,8 +410,10 @@ void RegionScheduler::advance(const std::string& task_id) {
         upsert = to_persist(task);
       }
     }
-    if (erase_id && erase_) erase_(*erase_id);
-    else if (upsert && persist_) persist_(*upsert);
+    if (erase_id && erase_)
+      erase_(*erase_id);
+    else if (upsert && persist_)
+      persist_(*upsert);
     return;
   }
 

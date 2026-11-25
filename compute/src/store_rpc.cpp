@@ -17,12 +17,11 @@
 
 #include "openkv/compute/store_rpc.hpp"
 
-#include "openkv/codec.hpp"
-
-#include "storage/v1/storage.pb.h"
-
 #include <stdexcept>
 #include <vector>
+
+#include "openkv/codec.hpp"
+#include "storage/v1/storage.pb.h"
 
 namespace openkv::compute {
 namespace {
@@ -155,14 +154,13 @@ void store_admin_set_epoch_async(const std::string& addr, uint32_t region_id, ui
   req->set_region_id(region_id);
   req->set_epoch(epoch);
   auto resp = std::make_shared<::storage::v1::AdminSimpleResponse>();
-  stub->async()->SetEpoch(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        std::string err;
-        if (st.ok() && !resp->ok()) err = resp->message();
-        cb(st, std::move(err));
-      });
+  stub->async()->SetEpoch(ctx.get(), req.get(), resp.get(),
+                          [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                            if (!st.ok()) drop_cached_channel(addr);
+                            std::string err;
+                            if (st.ok() && !resp->ok()) err = resp->message();
+                            cb(st, std::move(err));
+                          });
 }
 
 // 异步调用 store_propose_onepc_async
@@ -188,12 +186,11 @@ void store_propose_onepc_async(const std::string& addr, ProposeOnePcArgs args, i
   auto resp = std::make_shared<::storage::v1::ProposeResponse>();
 
   // 异步调用 Propose
-  stub->async()->Propose(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        cb(st, propose_result_from(*resp));
-      });
+  stub->async()->Propose(ctx.get(), req.get(), resp.get(),
+                         [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                           if (!st.ok()) drop_cached_channel(addr);
+                           cb(st, propose_result_from(*resp));
+                         });
 }
 
 void store_propose_plain_async(const std::string& addr, ProposePlainArgs args, int timeout_ms,
@@ -213,12 +210,11 @@ void store_propose_plain_async(const std::string& addr, ProposePlainArgs args, i
   req->set_cas(args.cas);
   req->set_expected_revision(args.expected_revision);
   auto resp = std::make_shared<::storage::v1::ProposeResponse>();
-  stub->async()->Propose(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        cb(st, propose_result_from(*resp));
-      });
+  stub->async()->Propose(ctx.get(), req.get(), resp.get(),
+                         [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                           if (!st.ok()) drop_cached_channel(addr);
+                           cb(st, propose_result_from(*resp));
+                         });
 }
 
 void store_get_async(const std::string& addr, uint32_t shard_id, std::string key, bool linearizable,
@@ -263,12 +259,11 @@ void store_propose_op_async(const std::string& addr, ProposeTxnArgs args, int ti
   req->set_for_update_ts(args.for_update_ts);
   req->set_lock_ttl_ms(args.lock_ttl_ms);
   auto resp = std::make_shared<::storage::v1::ProposeResponse>();
-  stub->async()->Propose(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        cb(st, propose_result_from(*resp));
-      });
+  stub->async()->Propose(ctx.get(), req.get(), resp.get(),
+                         [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                           if (!st.ok()) drop_cached_channel(addr);
+                           cb(st, propose_result_from(*resp));
+                         });
 }
 
 void store_prewrite_async(const std::string& addr, ProposeTxnArgs args, int timeout_ms,
@@ -323,12 +318,11 @@ void store_scan_async(const std::string& addr, StoreScanArgs args, int timeout_m
   req->set_keys_only(args.keys_only);
   req->set_linearizable(args.linearizable);
   auto resp = std::make_shared<::storage::v1::StoreScanResponse>();
-  stub->async()->Scan(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        cb(st, store_scan_result_from(*resp));
-      });
+  stub->async()->Scan(ctx.get(), req.get(), resp.get(),
+                      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                        if (!st.ok()) drop_cached_channel(addr);
+                        cb(st, store_scan_result_from(*resp));
+                      });
 }
 
 void store_ttl_async(const std::string& addr, uint32_t shard_id, std::string key, uint64_t start_ts,
@@ -363,12 +357,11 @@ void store_check_txn_status_async(const std::string& addr, uint32_t shard_id, st
   req->set_primary(std::move(primary));
   req->set_lock_ts(lock_ts);
   auto resp = std::make_shared<::storage::v1::StoreCheckTxnResponse>();
-  stub->async()->CheckTxnStatus(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        cb(st, store_check_txn_result_from(*resp));
-      });
+  stub->async()->CheckTxnStatus(ctx.get(), req.get(), resp.get(),
+                                [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                                  if (!st.ok()) drop_cached_channel(addr);
+                                  cb(st, store_check_txn_result_from(*resp));
+                                });
 }
 
 void store_watch_head_async(const std::string& addr, uint32_t shard_id, int timeout_ms,
@@ -380,20 +373,19 @@ void store_watch_head_async(const std::string& addr, uint32_t shard_id, int time
   auto req = std::make_shared<::storage::v1::StoreWatchHeadRequest>();
   req->set_shard_id(shard_id);
   auto resp = std::make_shared<::storage::v1::StoreWatchHeadResponse>();
-  stub->async()->WatchHead(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        StoreWatchHeadResult out;
-        out.revision = resp->revision();
-        out.redirect_to = resp->redirect_to();
-        out.error = resp->error();
-        cb(st, std::move(out));
-      });
+  stub->async()->WatchHead(ctx.get(), req.get(), resp.get(),
+                           [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                             if (!st.ok()) drop_cached_channel(addr);
+                             StoreWatchHeadResult out;
+                             out.revision = resp->revision();
+                             out.redirect_to = resp->redirect_to();
+                             out.error = resp->error();
+                             cb(st, std::move(out));
+                           });
 }
 
-void store_watch_poll_async(const std::string& addr, uint32_t shard_id, uint64_t since, int32_t limit,
-                            int timeout_ms,
+void store_watch_poll_async(const std::string& addr, uint32_t shard_id, uint64_t since,
+                            int32_t limit, int timeout_ms,
                             std::function<void(grpc::Status, StoreWatchPollResult)> cb) {
   if (!cb) return;
   auto stub = cached_store_stub(addr);
@@ -404,25 +396,24 @@ void store_watch_poll_async(const std::string& addr, uint32_t shard_id, uint64_t
   req->set_since(since);
   req->set_limit(limit);
   auto resp = std::make_shared<::storage::v1::StoreWatchPollResponse>();
-  stub->async()->WatchPoll(
-      ctx.get(), req.get(), resp.get(),
-      [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-        if (!st.ok()) drop_cached_channel(addr);
-        StoreWatchPollResult out;
-        out.max_revision = resp->max_revision();
-        out.redirect_to = resp->redirect_to();
-        out.error = resp->error();
-        out.events.reserve(static_cast<size_t>(resp->events_size()));
-        for (const auto& e : resp->events()) {
-          StoreWatchEvent ev;
-          ev.key = e.key();
-          ev.value = e.value();
-          ev.revision = e.revision();
-          ev.deleted = e.deleted();
-          out.events.push_back(std::move(ev));
-        }
-        cb(st, std::move(out));
-      });
+  stub->async()->WatchPoll(ctx.get(), req.get(), resp.get(),
+                           [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
+                             if (!st.ok()) drop_cached_channel(addr);
+                             StoreWatchPollResult out;
+                             out.max_revision = resp->max_revision();
+                             out.redirect_to = resp->redirect_to();
+                             out.error = resp->error();
+                             out.events.reserve(static_cast<size_t>(resp->events_size()));
+                             for (const auto& e : resp->events()) {
+                               StoreWatchEvent ev;
+                               ev.key = e.key();
+                               ev.value = e.value();
+                               ev.revision = e.revision();
+                               ev.deleted = e.deleted();
+                               out.events.push_back(std::move(ev));
+                             }
+                             cb(st, std::move(out));
+                           });
 }
 
 }  // namespace openkv::compute

@@ -28,8 +28,8 @@ using openkv::meta::NodeInfo;
 using openkv::meta::NodeRole;
 using openkv::meta::NodeState;
 using openkv::meta::Replica;
-using openkv::meta::ScaleTaskState;
 using openkv::meta::Scaler;
+using openkv::meta::ScaleTaskState;
 
 TEST(ScalerTest, ScaleOutCompletes) {
   ClusterState st;
@@ -79,8 +79,7 @@ TEST(ScalerTest, ScaleOutCompletes) {
 
 TEST(ScalerTest, UnknownNodeFails) {
   ClusterState st;
-  st.bootstrap(1, 1,
-               {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
+  st.bootstrap(1, 1, {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
   Scaler scaler(
       st, [](uint32_t, const Replica&) { return true; },
       [](uint32_t, const std::string&) { return true; });
@@ -91,10 +90,10 @@ TEST(ScalerTest, UnknownNodeFails) {
 
 TEST(ScalerTest, ConcurrentScaleOutQueues) {
   ClusterState st;
-  st.bootstrap(1, 1,
-               {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
+  st.bootstrap(1, 1, {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
   for (const char* id : {"s1", "s2"}) {
-    NodeInfo n{id, NodeRole::kStorage, std::string("127.0.0.1:910") + id[1], NodeState::kJoining, 0};
+    NodeInfo n{id, NodeRole::kStorage, std::string("127.0.0.1:910") + id[1], NodeState::kJoining,
+               0};
     st.register_node(n);
     ASSERT_TRUE(st.set_node_state(id, NodeState::kActive));
   }
@@ -139,18 +138,15 @@ TEST(ScalerTest, ConcurrentScaleOutQueues) {
 
 TEST(ScalerTest, CancelInflight) {
   ClusterState st;
-  st.bootstrap(1, 1,
-               {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
+  st.bootstrap(1, 1, {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
   NodeInfo n{"s1", NodeRole::kStorage, "127.0.0.1:9101", NodeState::kJoining, 0};
   st.register_node(n);
   ASSERT_TRUE(st.set_node_state("s1", NodeState::kActive));
 
   std::atomic<bool> release{false};
   Scaler scaler(
-      st,
-      [&](uint32_t sid, const Replica& r) { return st.set_learner(sid, r); },
-      [&](uint32_t sid, const std::string& id) { return st.promote_learner(sid, id); },
-      nullptr,
+      st, [&](uint32_t sid, const Replica& r) { return st.set_learner(sid, r); },
+      [&](uint32_t sid, const std::string& id) { return st.promote_learner(sid, id); }, nullptr,
       [&](uint32_t, const std::string&) {
         // 一直不追平，直到被 cancel
         return release.load();
@@ -178,8 +174,7 @@ TEST(ScalerTest, CancelInflight) {
 
 TEST(ScalerTest, CatchUpGateWaits) {
   ClusterState st;
-  st.bootstrap(1, 1,
-               {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
+  st.bootstrap(1, 1, {{"s0", NodeRole::kStorage, "127.0.0.1:9100", NodeState::kActive, 0}});
   NodeInfo n{"s1", NodeRole::kStorage, "127.0.0.1:9101", NodeState::kJoining, 0};
   st.register_node(n);
   ASSERT_TRUE(st.set_node_state("s1", NodeState::kActive));
@@ -187,10 +182,8 @@ TEST(ScalerTest, CatchUpGateWaits) {
 
   std::atomic<int> checks{0};
   Scaler scaler(
-      st,
-      [&](uint32_t sid, const Replica& r) { return st.set_learner(sid, r); },
-      [&](uint32_t sid, const std::string& id) { return st.promote_learner(sid, id); },
-      nullptr,
+      st, [&](uint32_t sid, const Replica& r) { return st.set_learner(sid, r); },
+      [&](uint32_t sid, const std::string& id) { return st.promote_learner(sid, id); }, nullptr,
       [&](uint32_t, const std::string&) {
         // 前 3 次未追平，之后追平
         return ++checks >= 3;

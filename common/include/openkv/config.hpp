@@ -59,7 +59,7 @@ struct ClusterBootstrap {
   std::vector<PeerConfig> compute_peers;
   std::vector<PeerConfig> meta_peers;  // Meta Raft 副本（>=3 时多数派 HA）
   std::string meta_addr;
-  std::string node_id;                 // 本 Meta 进程 id（多副本时必填）
+  std::string node_id;  // 本 Meta 进程 id（多副本时必填）
   std::string listen_addr{"0.0.0.0:8500"};
   /// Meta 本地数据根（raft persist 在 data_dir/raft）；空则 ./data/<node_id>
   std::string data_dir;

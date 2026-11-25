@@ -18,13 +18,13 @@
 
 #pragma once
 
-#include "openkv/protocol.hpp"
-
 #include <sys/socket.h>
 
 #include <cstdlib>
 #include <string>
 #include <string_view>
+
+#include "openkv/protocol.hpp"
 
 namespace openkv {
 

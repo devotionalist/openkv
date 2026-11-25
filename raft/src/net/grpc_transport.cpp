@@ -17,10 +17,8 @@
 
 #include "openkv/raft/net/grpc_transport.hpp"
 
-#include "openkv/codec.hpp"
-#include "openkv/grpc_keepalive.hpp"
-#include "openkv/logging.hpp"
-#include "openkv/raft/util/raft_fault_inject.hpp"
+#include <grpcpp/grpcpp.h>
+#include <grpcpp/support/client_callback.h>
 
 #include <algorithm>
 #include <atomic>
@@ -36,8 +34,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include <grpcpp/grpcpp.h>
-#include <grpcpp/support/client_callback.h>
+#include "openkv/codec.hpp"
+#include "openkv/grpc_keepalive.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/raft/util/raft_fault_inject.hpp"
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
@@ -46,7 +46,7 @@ namespace openkv::raft {
 namespace {
 
 constexpr int kMaxQueue = 4096;
-constexpr int kGrpcMsgBytes = 64 << 20;       // 64MiB 安全上限
+constexpr int kGrpcMsgBytes = 64 << 20;          // 64MiB 安全上限
 constexpr size_t kDefaultSnapChunk = 256 << 10;  // 256KiB 分片，避开默认 4MiB 限制
 
 std::vector<std::string> split_pipe(const std::string& s) {
@@ -168,7 +168,8 @@ struct GrpcRaftTransport::Impl {
     }
   }
 
-  class InstallSnapshotReactor final : public grpc::ClientWriteReactor<::storage::v1::SnapshotChunk> {
+  class InstallSnapshotReactor final
+      : public grpc::ClientWriteReactor<::storage::v1::SnapshotChunk> {
    public:
     InstallSnapshotReactor(std::shared_ptr<::storage::v1::RaftService::Stub> stub, Job job,
                            std::string addr, uint64_t send_term, uint64_t last_idx,
@@ -184,6 +185,7 @@ struct GrpcRaftTransport::Impl {
           total_(bin_.size()),
           done_(std::make_shared<std::promise<grpc::Status>>()) {
       ctx_.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(60));
+      // 【真正网络发送·快照流】起 client stream，随后 StartWrite 分片。
       stub_->async()->InstallSnapshot(&ctx_, &resp_, this);
       write_next();
       StartCall();
@@ -288,6 +290,7 @@ struct GrpcRaftTransport::Impl {
     }
 
     try {
+      // 【真正网络发送】worker 里对 peer stub 发起 gRPC（Vote / AE / Snapshot 同理）。
       if (job.type == "RequestVote" || job.type == "RequestPreVote") {
         auto parts = split_pipe(job.payload);
         if (parts.size() < 3) return;
@@ -356,6 +359,7 @@ struct GrpcRaftTransport::Impl {
         auto resp = std::make_shared<::storage::v1::AppendEntriesResponse>();
         auto done = std::make_shared<std::promise<grpc::Status>>();
         auto fut = done->get_future();
+        // 【真正网络发送·AE】
         stub->async()->AppendEntries(ctx.get(), req.get(), resp.get(),
                                      [done, stub, ctx, req, resp](grpc::Status st) {
                                        try {
@@ -449,6 +453,8 @@ void GrpcRaftTransport::unregister_node(uint32_t shard_id) {
 }
 
 TransportSend GrpcRaftTransport::bind(uint32_t shard_id) {
+  // 返回的闭包：【尚未上线】只入出站 Job 队列；真正 RPC 在 worker_loop → stub->async() /
+  // StartWrite。
   return [this, shard_id](const std::string& peer_id, const std::string& type,
                           const std::string& payload) {
     if (type == "RequestVote" || type == "RequestPreVote") {
@@ -519,9 +525,7 @@ uint64_t GrpcRaftTransport::dropped_jobs() const {
   return impl_->dropped_.load(std::memory_order_relaxed);
 }
 
-void GrpcRaftTransport::set_snap_chunk_bytes(size_t n) {
-  impl_->snap_chunk_bytes_ = n;
-}
+void GrpcRaftTransport::set_snap_chunk_bytes(size_t n) { impl_->snap_chunk_bytes_ = n; }
 
 uint64_t GrpcRaftTransport::out_raft_total() const {
   uint64_t s = 0;

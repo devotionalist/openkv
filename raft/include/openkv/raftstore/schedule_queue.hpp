@@ -43,9 +43,8 @@ class ScheduleQueue {
   std::optional<uint32_t> pop(int timeout_ms, const std::atomic<bool>& running) {
     std::unique_lock<std::mutex> lk(mu_);
     if (q_.empty() && timeout_ms > 0 && running.load(std::memory_order_acquire)) {
-      cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms), [&] {
-        return !q_.empty() || !running.load(std::memory_order_acquire);
-      });
+      cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms),
+                   [&] { return !q_.empty() || !running.load(std::memory_order_acquire); });
     }
     if (q_.empty()) return std::nullopt;
     const uint32_t rid = q_.front();

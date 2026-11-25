@@ -17,11 +17,11 @@
 
 #pragma once
 
-#include "openkv/meta/meta_node.hpp"
-
 #include <atomic>
 #include <memory>
 #include <string>
+
+#include "openkv/meta/meta_node.hpp"
 
 namespace openkv::meta {
 

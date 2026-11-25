@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// @file proposal_queue_test.cpp
-// W1：ProposalQueue 即时唤醒 / 超时（apply callback）。
+// @file index_waiter_test.cpp
+// IndexWaiter：即时唤醒 / 超时 / 异步回调。
 
-#include "openkv/storage/proposal_queue.hpp"
+#include "openkv/raftstore/index_waiter.hpp"
 
 #include <gtest/gtest.h>
 
@@ -25,25 +25,25 @@
 #include <thread>
 #include <vector>
 
-TEST(ProposalQueueTest, InvokeWakesWaiter) {
-  openkv::storage::ProposalQueue q;
+TEST(IndexWaiterTest, InvokeWakesWaiter) {
+  openkv::raftstore::IndexWaiter q;
   std::thread pub([&] {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     q.invoke(7, "");
   });
   const auto t0 = std::chrono::steady_clock::now();
   auto out = q.wait(7, std::chrono::milliseconds(2000));
-  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::steady_clock::now() - t0)
-                      .count();
+  const auto ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+          .count();
   pub.join();
   EXPECT_FALSE(out.timed_out);
   EXPECT_TRUE(out.error.empty());
-  EXPECT_LT(ms, 500);  // 不应被 5ms×N 空转拖到秒级
+  EXPECT_LT(ms, 500);
 }
 
-TEST(ProposalQueueTest, InvokeWithError) {
-  openkv::storage::ProposalQueue q;
+TEST(IndexWaiterTest, InvokeWithError) {
+  openkv::raftstore::IndexWaiter q;
   std::thread pub([&] {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     q.invoke(3, "cas_failed current_revision=9");
@@ -54,26 +54,27 @@ TEST(ProposalQueueTest, InvokeWithError) {
   EXPECT_EQ(out.error, "cas_failed current_revision=9");
 }
 
-TEST(ProposalQueueTest, Timeout) {
-  openkv::storage::ProposalQueue q;
+TEST(IndexWaiterTest, Timeout) {
+  openkv::raftstore::IndexWaiter q;
   auto out = q.wait(99, std::chrono::milliseconds(40));
   EXPECT_TRUE(out.timed_out);
   EXPECT_GE(q.timeout_total(), 1u);
 }
 
-TEST(ProposalQueueTest, InvokeBeforeWait) {
-  openkv::storage::ProposalQueue q;
+TEST(IndexWaiterTest, InvokeBeforeWait) {
+  openkv::raftstore::IndexWaiter q;
   q.invoke(1, "");
   auto out = q.wait(1, std::chrono::milliseconds(100));
   EXPECT_FALSE(out.timed_out);
   EXPECT_TRUE(out.error.empty());
 }
 
-TEST(ProposalQueueTest, WaitAsyncInvoke) {
-  openkv::storage::ProposalQueue q;
-  std::promise<openkv::storage::ProposalQueue::WaitOutcome> done;
-  q.wait_async(42, std::chrono::milliseconds(2000),
-               [&](openkv::storage::ProposalQueue::WaitOutcome out) { done.set_value(std::move(out)); });
+TEST(IndexWaiterTest, WaitAsyncInvoke) {
+  openkv::raftstore::IndexWaiter q;
+  std::promise<openkv::raftstore::IndexWaiter::WaitOutcome> done;
+  q.wait_async(
+      42, std::chrono::milliseconds(2000),
+      [&](openkv::raftstore::IndexWaiter::WaitOutcome out) { done.set_value(std::move(out)); });
   std::thread pub([&] {
     std::this_thread::sleep_for(std::chrono::milliseconds(15));
     q.invoke(42, "");
@@ -84,29 +85,31 @@ TEST(ProposalQueueTest, WaitAsyncInvoke) {
   EXPECT_TRUE(out.error.empty());
 }
 
-TEST(ProposalQueueTest, WaitAsyncTimeout) {
-  openkv::storage::ProposalQueue q;
-  std::promise<openkv::storage::ProposalQueue::WaitOutcome> done;
-  q.wait_async(77, std::chrono::milliseconds(40),
-               [&](openkv::storage::ProposalQueue::WaitOutcome out) { done.set_value(std::move(out)); });
+TEST(IndexWaiterTest, WaitAsyncTimeout) {
+  openkv::raftstore::IndexWaiter q;
+  std::promise<openkv::raftstore::IndexWaiter::WaitOutcome> done;
+  q.wait_async(
+      77, std::chrono::milliseconds(40),
+      [&](openkv::raftstore::IndexWaiter::WaitOutcome out) { done.set_value(std::move(out)); });
   auto out = done.get_future().get();
   EXPECT_TRUE(out.timed_out);
   EXPECT_GE(q.timeout_total(), 1u);
 }
 
-TEST(ProposalQueueTest, WaitAsyncAlreadyDone) {
-  openkv::storage::ProposalQueue q;
+TEST(IndexWaiterTest, WaitAsyncAlreadyDone) {
+  openkv::raftstore::IndexWaiter q;
   q.invoke(5, "cas_failed");
-  std::promise<openkv::storage::ProposalQueue::WaitOutcome> done;
-  q.wait_async(5, std::chrono::milliseconds(1000),
-               [&](openkv::storage::ProposalQueue::WaitOutcome out) { done.set_value(std::move(out)); });
+  std::promise<openkv::raftstore::IndexWaiter::WaitOutcome> done;
+  q.wait_async(
+      5, std::chrono::milliseconds(1000),
+      [&](openkv::raftstore::IndexWaiter::WaitOutcome out) { done.set_value(std::move(out)); });
   auto out = done.get_future().get();
   EXPECT_FALSE(out.timed_out);
   EXPECT_EQ(out.error, "cas_failed");
 }
 
-TEST(ProposalQueueTest, ConcurrentWaitInvokeNoTimeout) {
-  openkv::storage::ProposalQueue q;
+TEST(IndexWaiterTest, ConcurrentWaitInvokeNoTimeout) {
+  openkv::raftstore::IndexWaiter q;
   constexpr int kN = 64;
   std::vector<std::thread> waiters;
   std::vector<std::thread> invokers;

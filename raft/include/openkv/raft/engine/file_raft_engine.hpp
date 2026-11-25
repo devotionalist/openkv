@@ -20,14 +20,14 @@
 
 #pragma once
 
-#include "openkv/raft/engine/raft_engine.hpp"
-
 #include <filesystem>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "openkv/raft/engine/raft_engine.hpp"
 
 namespace openkv::raft {
 
@@ -84,14 +84,16 @@ class FileRaftEngine final : public RaftEngine {
   bool write_state_unlocked(const GroupPaths& p, const RaftLocalState& st, bool sync) const;
 
   bool read_log_unlocked(const GroupPaths& p, std::vector<LogEntry>* out) const;
-  bool rewrite_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents, bool sync) const;
+  bool rewrite_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents,
+                            bool sync) const;
   /// 纯追加 RLE 记录；文件非 RLG 或 IO 失败返回 false。
   bool append_log_unlocked(const GroupPaths& p, const std::vector<LogEntry>& ents, bool sync) const;
 
   /// 应用单 group 突变。REQUIRES: mu_ held。失败返回 0。
   size_t apply_group_mut_unlocked(uint64_t group_id, GroupMut& mut, bool sync);
 
-  static RaftLocalState merge_state(const GroupMut& mut, const std::vector<LogEntry>& ents, const RaftLocalState* existing);
+  static RaftLocalState merge_state(const GroupMut& mut, const std::vector<LogEntry>& ents,
+                                    const RaftLocalState* existing);
   static size_t approx_entry_bytes(const LogEntry& e);
 
   std::string root_;

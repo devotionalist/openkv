@@ -1,0 +1,15 @@
+# OpenKV C++ 格式：Google C++ Style Guide（clang-format BasedOnStyle: Google）
+# 语言标准：C++20（与 CMakeLists / Makefile CXX_STANDARD 一致）
+# 文档：https://google.github.io/styleguide/cppguide.html
+#
+# 用法：
+#   make format          # 格式化业务 C++（不含 build/_deps）
+#   make format-check    # 仅检查，不改文件
+#   clang-format -i path/to/file.cpp
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++20
+# Google 默认 ColumnLimit=80；本仓库历史行宽偏长，放宽到 100 减少无意义换行。
+ColumnLimit: 100
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup

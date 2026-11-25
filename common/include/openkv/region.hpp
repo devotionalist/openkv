@@ -53,9 +53,9 @@ struct KeyRange {
   }
 };
 
-struct RegionMeta {// 区域元数据
-  RegionId id{0}; // 区域ID
-  KeyRange range; // 区域范围
+struct RegionMeta {  // 区域元数据
+  RegionId id{0};    // 区域ID
+  KeyRange range;    // 区域范围
 };
 
 // 在按 start_key 升序排列的 region 列表中二分定位；未命中返回 nullopt。
@@ -63,24 +63,26 @@ inline std::optional<RegionId> locate_region(const std::vector<RegionMeta>& regi
                                              std::string_view key) {
   if (regions.empty()) return std::nullopt;
   // regions 应按 start_key 排序；用 upper_bound 找最后一个 start <= key
-  auto it = std::upper_bound(regions.begin(), regions.end(), key,[](std::string_view k, const RegionMeta& r) { return k < r.range.start_key; });
-  if (it != regions.begin()) --it;
+  auto it = std::upper_bound(
+      regions.begin(), regions.end(), key,
+      [](std::string_view k, const RegionMeta& r) { return k < r.range.start_key; });
+  if (it != regions.begin())
+    --it;
   else if (!regions.front().range.start_key.empty() && key < regions.front().range.start_key) {
     return std::nullopt;
   }
-  if (it->range.contains(key)) return it->id; // 包含则返回区域ID
+  if (it->range.contains(key)) return it->id;  // 包含则返回区域ID
   // 兜底线性（乱序表）
   for (const auto& r : regions) {
-    if (r.range.contains(key)) return r.id; // 包含则返回区域ID
+    if (r.range.contains(key)) return r.id;  // 包含则返回区域ID
   }
   return std::nullopt;
 }
 
-inline void sort_regions(std::vector<RegionMeta>& regions) { // 排序区域
-  std::sort(regions.begin(), regions.end(),
-            [](const RegionMeta& a, const RegionMeta& b) {
-              return a.range.start_key < b.range.start_key; // 按 start_key 排序  
-            });
+inline void sort_regions(std::vector<RegionMeta>& regions) {  // 排序区域
+  std::sort(regions.begin(), regions.end(), [](const RegionMeta& a, const RegionMeta& b) {
+    return a.range.start_key < b.range.start_key;  // 按 start_key 排序
+  });
 }
 
 }  // namespace openkv

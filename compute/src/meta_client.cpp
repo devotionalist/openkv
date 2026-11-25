@@ -17,15 +17,14 @@
 
 #include "openkv/compute/meta_client.hpp"
 
-#include "openkv/codec.hpp"
-#include "openkv/compute/grpc_channel.hpp"
-
-#include "meta/v1/meta.pb.h"
-
 #include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <thread>
+
+#include "meta/v1/meta.pb.h"
+#include "openkv/codec.hpp"
+#include "openkv/compute/grpc_channel.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -229,9 +228,9 @@ void meta_get_ts_async(const std::string& addr, int timeout_ms,
                        });
 }
 
-void meta_alloc_ts_range_async(
-    const std::vector<std::string>& meta_addrs, uint32_t count, int timeout_ms,
-    std::function<void(grpc::Status, uint64_t start, uint32_t got)> cb) {
+void meta_alloc_ts_range_async(const std::vector<std::string>& meta_addrs, uint32_t count,
+                               int timeout_ms,
+                               std::function<void(grpc::Status, uint64_t start, uint32_t got)> cb) {
   if (!cb) return;
   if (count == 0) count = 1;
   if (meta_addrs.empty()) {
@@ -265,18 +264,17 @@ void meta_alloc_ts_range_async(
     req->set_count(st->count);
     auto resp = std::make_shared<::meta::v1::GetTsResponse>();
     auto next = st->try_seed;
-    stub->async()->GetTs(
-        ctx.get(), req.get(), resp.get(),
-        [st, addr, stub, ctx, req, resp, next](grpc::Status gst) {
-          if (!gst.ok() || resp->ts() == 0) {
-            if (!gst.ok()) drop_cached_channel(addr);
-            ++st->seed_idx;
-            (*next)();
-            return;
-          }
-          const uint32_t got = resp->count() == 0 ? 1 : resp->count();
-          st->cb(grpc::Status::OK, resp->ts(), got);
-        });
+    stub->async()->GetTs(ctx.get(), req.get(), resp.get(),
+                         [st, addr, stub, ctx, req, resp, next](grpc::Status gst) {
+                           if (!gst.ok() || resp->ts() == 0) {
+                             if (!gst.ok()) drop_cached_channel(addr);
+                             ++st->seed_idx;
+                             (*next)();
+                             return;
+                           }
+                           const uint32_t got = resp->count() == 0 ? 1 : resp->count();
+                           st->cb(grpc::Status::OK, resp->ts(), got);
+                         });
   };
   (*st->try_seed)();
 }

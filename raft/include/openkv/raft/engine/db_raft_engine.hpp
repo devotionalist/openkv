@@ -13,15 +13,16 @@
 // limitations under the License.
 
 // @file db_raft_engine.hpp
-// DbRaftEngine：多 Group 共享嵌入式 KV WAL（当前后端 RocksDB；data_dir/raft），按 region 前缀存 state/log。
+// DbRaftEngine：多 Group 共享嵌入式 KV WAL（当前后端 RocksDB；data_dir/raft），按 region 前缀存
+// state/log。
 
 #pragma once
-
-#include "openkv/raft/engine/raft_engine.hpp"
 
 #include <memory>
 #include <mutex>
 #include <string>
+
+#include "openkv/raft/engine/raft_engine.hpp"
 
 namespace openkv::raft {
 
@@ -61,12 +62,12 @@ class DbRaftEngine : public RaftEngine {
 
   struct DbHandle;
 
-  static std::string state_key(uint64_t group_id); // 状态键
-  static std::string log_key(uint64_t group_id, uint64_t index); // 日志键
-  static std::string log_prefix(uint64_t group_id); // 日志前缀
+  static std::string state_key(uint64_t group_id);                // 状态键
+  static std::string log_key(uint64_t group_id, uint64_t index);  // 日志键
+  static std::string log_prefix(uint64_t group_id);               // 日志前缀
 
-  std::string path_; // 数据库路径
-  SyncMode sync_{SyncMode::kData}; // 同步模式
+  std::string path_;                // 数据库路径
+  SyncMode sync_{SyncMode::kData};  // 同步模式
   std::unique_ptr<DbHandle> db_;
   mutable std::mutex mu_;  // 保护 set_sync_mode 与 WriteOptions
 };

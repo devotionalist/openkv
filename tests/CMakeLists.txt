@@ -45,6 +45,7 @@ set(OPENKV_TEST_SOURCES
   raft/raft_node_ready_test.cpp
   raft/raftstore_test.cpp
   raft/batch_system_test.cpp
+  raft/index_waiter_test.cpp
   raft/raft_fault_inject_test.cpp
   raft/raft_fault_scenario_test.cpp
   # storage：引擎、命令编解码、StoreFacade 端到端
@@ -58,7 +59,6 @@ set(OPENKV_TEST_SOURCES
   storage/watch_log_test.cpp
   storage/inflight_gate_test.cpp
   storage/scheduler_cop_test.cpp
-  storage/proposal_queue_test.cpp
   # meta：集群状态、扩容编排、HA FSM
   meta/cluster_state_test.cpp
   meta/scaler_test.cpp

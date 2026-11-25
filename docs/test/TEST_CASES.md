@@ -121,6 +121,7 @@
 | RaftNodeReadyTest | SingleNodeElectAndPropose, BootstrapThenPropose, ThreeNodeVoteAndProposeReady | `raft_node_ready_test.cpp` |
 | MultiRaftTest | GetOrCreateAndLeaders | `multi_raft_test.cpp` |
 | RaftstoreTest | StoreTickElectsLeader, HibernateSkipsTickUntilWake, DriveReadyCoalescesPersist, RequestReadyCoalescesByCount, ApplyQosFlag | `raftstore_test.cpp` |
+| IndexWaiterTest | InvokeWakesWaiter, Timeout, WaitAsync* | `raft/index_waiter_test.cpp`（`./build/tests/openkv_unit_tests --gtest_filter='IndexWaiter*'`） |
 | BatchSystemTest / ScheduleQueueTest | ScheduleDrainsWithoutScan, DedupAndPop | `batch_system_test.cpp` |
 
 </details>

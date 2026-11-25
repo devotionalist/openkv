@@ -16,11 +16,18 @@
 - 不把内存 `RaftLog` 伪装成 WAL；落盘只发生在 `RaftEngine::consume`。
 - 不在热路径用「整库扫描」代替按 group / 按 index 的读写。
 
+**与 Storage 的边界（约定）**
+
+- Storage **只关注真实数据读写**与组合根注入（peer 地址、引擎、apply 回调）。
+- **共识逻辑（选举 / 复制 / 出站入站 / 快照追赶）应在本库内聚**；Storage 不当线协议改包与传输实现者。
+- 心智：无 Raft 时 Storage≈引擎读写；有 Raft 时是对读写外包一层共识，不是两套数据逻辑搅在一起。
+- 详见 [docs/flows/54-storage-raft-boundary.md](../docs/flows/54-storage-raft-boundary.md)。
+
 ## 2. 分层（自上而下）
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│  调用方：storage::RaftKV / StorageNode / Meta                 │
+│  调用方：StorageNode（Store::async_write）/ Meta               │
 ├─────────────────────────────────────────────────────────────┤
 │  门面：MultiRaft · GrpcRaftTransport（出站）                   │
 ├─────────────────────────────────────────────────────────────┤

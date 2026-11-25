@@ -13,16 +13,17 @@
 // limitations under the License.
 
 #include "openkv/storage/latency_hist.hpp"
-#include "openkv/storage/store_service.hpp"
-#include "facade_sync.hpp"
-#include "openkv/storage/storage_node.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <filesystem>
 #include <thread>
-#include <unistd.h>
+
+#include "facade_sync.hpp"
+#include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/store_service.hpp"
 
 using openkv::NodeConfig;
 using openkv::storage::CmdOp;
@@ -34,9 +35,9 @@ using openkv::storage::StoreFacade;
 
 TEST(LatencyHistTest, QuantilesAndPrometheus) {
   LatencyHistogram h;
-  for (int i = 0; i < 90; ++i) h.observe(200);   // <=250
-  for (int i = 0; i < 9; ++i) h.observe(8000);    // <=10000
-  h.observe(200000);                              // <=250000
+  for (int i = 0; i < 90; ++i) h.observe(200);  // <=250
+  for (int i = 0; i < 9; ++i) h.observe(8000);  // <=10000
+  h.observe(200000);                            // <=250000
   EXPECT_EQ(h.count(), 100u);
   EXPECT_EQ(h.quantile_us(0.50), 250u);
   EXPECT_GE(h.quantile_us(0.99), 10000u);
@@ -60,8 +61,7 @@ TEST(LatencyHistTest, RegionMetricsProposeGet) {
 }
 
 TEST(LatencyHistTest, FacadeRecordsPropose) {
-  auto dir =
-      std::filesystem::temp_directory_path() / ("skv_lat_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / ("skv_lat_" + std::to_string(::getpid()));
   std::filesystem::remove_all(dir);
   NodeConfig cfg;
   cfg.node_id = "storage-test";

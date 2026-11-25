@@ -32,16 +32,16 @@ enum class Role { kFollower, kCandidate, kLeader, kLearner };
 
 /// 集群内一个 Raft 对等体（含 learner 标记）。
 struct Peer {
-  std::string id;
-  std::string address;
-  bool learner{false};
+  std::string id;       // 节点ID
+  std::string address;  // 节点地址
+  bool learner{false};  // 是否学习者
 };
 
 /// 已持久化/复制的一条 Raft 日志记录；data 由上层状态机解释（如 KV Command）。
 struct LogEntry {
-  uint64_t term{0}; // 日志条目的任期号
-  uint64_t index{0}; // 日志条目的索引
-  std::string data; // 日志条目的数据
+  uint64_t term{0};   // 日志条目的任期号
+  uint64_t index{0};  // 日志条目的索引
+  std::string data;   // 日志条目的数据
 };
 
 /// 可观测软状态快照（给 metrics / redirect / 调试）。

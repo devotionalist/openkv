@@ -15,14 +15,14 @@
 // @file raft_persist_test.cpp
 // Raft 持久化装载与宕机恢复（单节点；经 FileRaftEngine，套件名历史遗留）。
 
-#include "openkv/raft/core/raft_node.hpp"
-
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <filesystem>
 #include <thread>
-#include <unistd.h>
+
+#include "openkv/raft/core/raft_node.hpp"
 
 namespace fs = std::filesystem;
 using openkv::raft::RaftNode;
@@ -34,9 +34,7 @@ TEST(RaftPersistTest, SaveAndRecoverApplied) {
   fs::create_directories(dir);
 
   std::vector<std::pair<uint64_t, std::string>> applied;
-  auto on_apply = [&](uint64_t idx, const std::string& data) {
-    applied.emplace_back(idx, data);
-  };
+  auto on_apply = [&](uint64_t idx, const std::string& data) { applied.emplace_back(idx, data); };
   TransportSend noop = [](const std::string&, const std::string&, const std::string&) {};
 
   {

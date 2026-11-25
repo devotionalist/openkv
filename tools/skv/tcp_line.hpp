@@ -21,12 +21,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "openkv/admin_acl.hpp"
-#include "openkv/admin_rpc.hpp"
-#include "openkv/codec.hpp"
-#include "openkv/meta_rpc.hpp"
-#include "openkv/protocol.hpp"
-
 #include <chrono>
 #include <cstring>
 #include <optional>
@@ -34,6 +28,12 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "openkv/admin_acl.hpp"
+#include "openkv/admin_rpc.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/meta_rpc.hpp"
+#include "openkv/protocol.hpp"
 
 namespace skv {
 
@@ -84,8 +84,7 @@ inline bool looks_meta_req(std::string_view req) {
          req.rfind("CANCEL_", 0) == 0 || req.rfind("BUMP_", 0) == 0 ||
          req.rfind("ADVANCE_", 0) == 0 || req.rfind("REPORT_", 0) == 0 ||
          req.rfind("STORE_", 0) == 0 || req.rfind("FIND_MERGE", 0) == 0 ||
-         req.rfind("REMOVE_", 0) == 0 || req.rfind("METRICS", 0) == 0 ||
-         req.rfind("STATS", 0) == 0;
+         req.rfind("REMOVE_", 0) == 0 || req.rfind("METRICS", 0) == 0 || req.rfind("STATS", 0) == 0;
 }
 
 inline std::string tcp_line(std::string_view addr, std::string_view req, int timeout_ms = 3000) {

@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #include "openkv/raftstore/batch_system.hpp"
-#include "openkv/raftstore/schedule_queue.hpp"
 
 #include <gtest/gtest.h>
 
@@ -21,6 +20,8 @@
 #include <chrono>
 #include <thread>
 #include <unordered_set>
+
+#include "openkv/raftstore/schedule_queue.hpp"
 
 using namespace openkv::raftstore;
 

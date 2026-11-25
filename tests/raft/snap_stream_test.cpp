@@ -16,9 +16,9 @@
 
 #include <gtest/gtest.h>
 
-using openkv::raft::SnapStreamBuffer;
 using openkv::raft::snap_from_hex;
 using openkv::raft::snap_to_hex;
+using openkv::raft::SnapStreamBuffer;
 
 TEST(SnapStreamTest, HexRoundTrip) {
   const std::string raw("hello\0world", 11);
@@ -36,8 +36,8 @@ TEST(SnapStreamTest, AssembleChunks) {
   std::string out;
   uint64_t term = 0, last_term = 0;
 
-  ASSERT_TRUE(buf.append(key, 3, 2, 0, payload.size(), false, payload.substr(0, 40), &complete, &out,
-                         &term, &last_term));
+  ASSERT_TRUE(buf.append(key, 3, 2, 0, payload.size(), false, payload.substr(0, 40), &complete,
+                         &out, &term, &last_term));
   EXPECT_FALSE(complete);
 
   ASSERT_TRUE(buf.append(key, 3, 2, 40, payload.size(), false, payload.substr(40, 40), &complete,

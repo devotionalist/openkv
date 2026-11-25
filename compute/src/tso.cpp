@@ -17,11 +17,11 @@
 
 #include "openkv/compute/tso.hpp"
 
-#include "openkv/compute/meta_client.hpp"
-
 #include <cstdlib>
 #include <stdexcept>
 #include <utility>
+
+#include "openkv/compute/meta_client.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -97,8 +97,7 @@ bool TSOracle::enqueue_waiter_and_arm(uint32_t n, std::function<void(grpc::Statu
 
 void TSOracle::start_refill_async(uint32_t req) {
   meta_alloc_ts_range_async(
-      meta_addrs_, req, 3000,
-      [this](grpc::Status st, uint64_t start, uint32_t got) {
+      meta_addrs_, req, 3000, [this](grpc::Status st, uint64_t start, uint32_t got) {
         if (st.ok() && got > 0) push_batch(start, got);
         refill_inflight_.store(false, std::memory_order_release);
 

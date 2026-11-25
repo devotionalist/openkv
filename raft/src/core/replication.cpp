@@ -17,6 +17,9 @@
 
 #include "openkv/raft/core/replication.hpp"
 
+#include <chrono>
+#include <sstream>
+
 #include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/raft/core/apply.hpp"
@@ -27,9 +30,6 @@
 #include "openkv/raft/core/raft_node.hpp"
 #include "openkv/raft/core/ready_pump.hpp"
 #include "openkv/raft/util/snap_stream.hpp"
-
-#include <chrono>
-#include <sstream>
 
 namespace openkv::raft {
 namespace {
@@ -109,12 +109,21 @@ bool Replication::try_inc_inflight(const std::string& peer_id) {
   return true;
 }
 
-void Replication::maybe_broadcast() {
-  if (n_.role_ != Role::kLeader || !need_bcast_) return;
-  broadcast_heartbeat();
-  need_bcast_ = false;
+// Leader 且被标了 need_replicate_ 时，立刻推一轮 AE/快照（不等下一个 heartbeat tick）。
+void Replication::maybe_replicate() {
+  if (n_.role_ != Role::kLeader || !need_replicate_) return;
+  broadcast_replicate();
+  need_replicate_ = false;
 }
 
+/**
+ * 提交日志：如果日志的 term 等于当前任期，并且日志的索引大于当前提交索引，则更新当前提交索引。
+ *
+ * 从当前提交索引到日志的最后一个索引，遍历每个索引，如果索引的 term
+ * 等于当前任期，并且索引的索引大于当前提交索引，则更新当前提交索引。 如果索引的 term
+ * 不等于当前任期，则跳过。 如果索引的 term
+ * 等于当前任期，并且索引的索引大于当前提交索引，则更新当前提交索引。
+ */
 void Replication::maybe_commit() {
   if (n_.role_ != Role::kLeader) return;
   uint64_t lo = n_.commit_index_ + 1;
@@ -129,25 +138,37 @@ void Replication::maybe_commit() {
       ok = n_.membership_.quorate_at(n_.membership_.voter_ids(), cand);
     }
     if (!ok) continue;
-    if (auto e = n_.log_.entry(cand); e && e->term == n_.term_) {
-      best = cand;
+    auto e = n_.log_.entry(cand);
+    if (e && e->term == n_.term_) {
+      best = std::max(best, cand);  // 更新当前提交索引
       break;
     }
   }
+  // 更新当前提交索引
   if (best > n_.commit_index_) n_.commit_index_ = best;
 }
 
-void Replication::broadcast_heartbeat() {
+// 对每个 peer 推一轮（只入队；发网交给 Ready/Store）。
+// 掉窗→快照；有条目→AE；否则空 AE（probe/心跳）。
+void Replication::broadcast_replicate() {
+  // —— 0. 开场：上一轮因 inflight 满被挡的，本轮重试 ——
   n_.progress_.peer_send_blocked_.clear();
+
   for (const auto& p : n_.opts_.peers) {
+    // —— 1. 跳过自己 ——
     if (p.id == n_.opts_.self_id) continue;
+
+    // —— 2. 分支 A：next 掉出日志窗 → InstallSnapshot ——
     if (n_.progress_.next_index_[p.id] < n_.log_.first_index()) {
+      // 2.1 嵌入模式且没有 snap_provider，发不了快照
       if (!n_.opts_.external_io && !n_.snap_provider_) {
         SKV_WARN << "shard=" << n_.opts_.shard_id << " peer=" << p.id
                  << " behind compact window but no snap_provider; skip InstallSnapshot";
         continue;
       }
+      // 2.2 快照已在途，勿重复发
       if (n_.progress_.snap_inflight_.count(p.id)) continue;
+      // 2.3 距上次发快照太近，限流
       if (n_.opts_.snapshot_min_interval_ms > 0) {
         const auto now = std::chrono::steady_clock::now();
         auto it = last_snap_sent_.find(p.id);
@@ -156,17 +177,20 @@ void Replication::broadcast_heartbeat() {
           continue;
         }
       }
-
+      // 2.4 在途配额满 → 本轮挡住，下一轮再试
       if (!try_inc_inflight(p.id)) {
         n_.progress_.peer_send_blocked_.insert(p.id);
         continue;
       }
+
+      // 2.5 记下快照在途，拼 last_idx/term + 成员表
       n_.progress_.snap_inflight_.insert(p.id);
-      uint64_t last_idx =
-          n_.last_applied_ > 0 ? n_.last_applied_ : (n_.log_.first_index() - 1);
+      uint64_t last_idx = n_.last_applied_ > 0 ? n_.last_applied_ : (n_.log_.first_index() - 1);
       uint64_t last_term = n_.log_.snapshot_term();
       if (auto e = n_.log_.entry(last_idx)) last_term = e->term;
       const std::string conf_csv = encode_peers_csv(n_.opts_.peers);
+
+      // 2.6 入队：external_io 只塞 meta 壳（blob 给 SnapWorker）；否则当场打包
       if (n_.opts_.external_io) {
         SnapshotMeta meta;
         meta.index = last_idx;
@@ -186,11 +210,14 @@ void Replication::broadcast_heartbeat() {
                  << " last_idx=" << last_idx << " bytes=" << data.size()
                  << " conf_peers=" << n_.opts_.peers.size();
       }
+      // 2.7 记发送时间与计数；此人本轮不再走 AE
       last_snap_sent_[p.id] = std::chrono::steady_clock::now();
       ++snapshot_send_count_;
       continue;
     }
 
+    // —— 3. 分支 B：仍在日志窗 → AppendEntries ——
+    // 3.1 对齐点 prev = next-1（及其 term；边界用 snapshot_term）
     uint64_t prev = n_.progress_.next_index_[p.id] > 0 ? n_.progress_.next_index_[p.id] - 1 : 0;
     uint64_t prev_term = 0;
     if (prev == n_.log_.first_index() - 1) {
@@ -198,8 +225,10 @@ void Replication::broadcast_heartbeat() {
     } else if (auto e = n_.log_.entry(prev)) {
       prev_term = e->term;
     }
+    // 3.2 从 next 取一批条目（条数/字节上限）
     auto ents = n_.log_.entries_from(n_.progress_.next_index_[p.id], n_.opts_.max_ae_entries,
                                      n_.opts_.max_ae_bytes);
+    // 3.3 空批次 = probe/心跳；有条目则占 inflight
     const bool probe = ents.empty();
     if (probe) {
       if (n_.progress_.probe_inflight_.count(p.id)) continue;
@@ -208,6 +237,7 @@ void Replication::broadcast_heartbeat() {
       n_.progress_.peer_send_blocked_.insert(p.id);
       continue;
     }
+    // 3.4 组 payload 并入队 AppendEntries
     std::ostringstream oss;
     oss << n_.term_ << '|' << prev << '|' << prev_term << '|' << n_.commit_index_ << '|'
         << ents.size();
@@ -216,6 +246,7 @@ void Replication::broadcast_heartbeat() {
     }
     n_.ready_pump_.enqueue(p.id, "AppendEntries", oss.str());
   }
+  // —— 4. 结束：真正发网在 flush_transport / Store take_ready ——
 }
 
 void Replication::on_append_entries(const std::string& from, uint64_t term, uint64_t prev_idx,
@@ -261,14 +292,14 @@ void Replication::on_append_entries_reply_locked(const std::string& from, uint64
     n_.apply_.apply_committed();
     n_.log_persist_.persist_locked();
     if (n_.progress_.next_index_[from] <= n_.log_.last_index()) {
-      need_bcast_ = true;
-      maybe_broadcast();
+      need_replicate_ = true;
+      maybe_replicate();
     }
   } else {
     n_.election_.note_peer_progress(from);
     if (n_.progress_.next_index_[from] > 0) --n_.progress_.next_index_[from];
-    broadcast_heartbeat();
-    need_bcast_ = false;
+    broadcast_replicate();
+    need_replicate_ = false;
   }
 }
 
@@ -308,8 +339,8 @@ void Replication::on_install_snapshot(const std::string& from, uint64_t term, ui
     for (const auto& p : n_.opts_.peers) {
       if (n_.opts_.on_peer_addr && !p.address.empty()) n_.opts_.on_peer_addr(p.id, p.address);
     }
-    SKV_INFO << "shard=" << n_.opts_.shard_id << " snapshot restored conf peers="
-             << n_.opts_.peers.size();
+    SKV_INFO << "shard=" << n_.opts_.shard_id
+             << " snapshot restored conf peers=" << n_.opts_.peers.size();
   }
   n_.log_.compact_to(last_index, last_term);
   if (n_.commit_index_ < last_index) n_.commit_index_ = last_index;
@@ -340,11 +371,11 @@ void Replication::on_install_snapshot_reply_locked(const std::string& from, uint
     maybe_commit();
     n_.apply_.apply_committed();
     n_.log_persist_.persist_locked();
-    need_bcast_ = true;
+    need_replicate_ = true;
   } else {
     n_.election_.note_peer_progress(from);
     n_.progress_.next_index_[from] = 0;
-    need_bcast_ = true;
+    need_replicate_ = true;
   }
 }
 

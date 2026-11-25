@@ -3,7 +3,7 @@
 本仓库角色、Storage 内部模块与 Phase 状态。  
 实现细节见 [MULTI_RAFT_PRODUCTION.md](../production/MULTI_RAFT_PRODUCTION.md)；整体拓扑见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
-**结论（一句话）**：Region + Multi-Raft + 单 Store RocksDB + Scheduler / RaftKV / Store 邮箱；Storage 写路径固定 raftstore Ready；Meta 调度深度与 Coprocessor 仍是简化版。
+**结论（一句话）**：Region + Multi-Raft + 单 Store RocksDB + Scheduler / Store 邮箱；写经 `Store::async_write` → Ready；Meta 调度深度与 Coprocessor 仍是简化版。
 
 ---
 
@@ -40,7 +40,7 @@ Meta Raft ×3（路由 + TSO/GC + Scaler/Scheduler）
 |------|--------|------|
 | 客户端 | Go Client + `skv` | 无 SQL；路由/重试在 Gateway |
 | 元数据 | **Meta**（Raft×3） | 一体式控制面 |
-| 数据节点 | **StorageNode** | 单进程组装 Scheduler / RaftKV / Store / 引擎 |
+| 数据节点 | **StorageNode** | 单进程组装 Scheduler / MultiRaft(Store) / 引擎 |
 | KV 引擎 | `ShardEngineManager` → `data_dir/kv` | 单 Store 一份 DB；Region 靠 `KeyRange` |
 | Raft 日志 | `RaftEngine` + `RaftLogBatch` | Storage=`DbRaftEngine`；Meta/UT=`FileRaftEngine` |
 
@@ -49,7 +49,7 @@ Meta Raft ×3（路由 + TSO/GC + Scaler/Scheduler）
 | 模块 | 本仓库 | 说明 |
 |------|--------|------|
 | 调度 latch | `StorageNode` + `storage/scheduler/` | Latch 简化版 |
-| 写入口 | `storage/raftkv.hpp` | propose / 读；经 Store Ready 外提 |
+| 写入口 | `raftstore::Store::async_write` | propose + request_ready；经 Ready 外提 |
 | Peer / Apply | `raftstore::Peer` + `Store` 双 mailbox | 双 FSM 形 |
 | 批处理 | `raftstore::BatchSystem` | 跨 Region Apply 展平 + `write_batch` |
 | Ready | `RaftNode` + `external_io` | Storage **仅** raftstore Ready 外提 |
@@ -75,11 +75,12 @@ Meta Raft ×3（路由 + TSO/GC + Scaler/Scheduler）
 
 ```
 Client → gRPC Gateway → Storage gRPC → StorageNode
-  → Scheduler(latch) → RaftKV → RaftNode(external_io)
+  → Scheduler(latch) → Store::async_write → RaftNode(external_io)
   → Store Ready → persist_fn / transport_fn / Apply mailbox → 单 Store RocksDB
 ```
 
-入站 Raft：`StorageNode::handle_raft_*` → `Store::apply_inbound_raft`（禁止直调协议状态机）。
+入站 Raft：`StorageNode::handle_raft_*` → `Store::apply_inbound_raft`（禁止直调协议状态机）。  
+职责约定：Storage 管真实数据；共识内聚在 `openkv_raft` → [flows/54-storage-raft-boundary](../flows/54-storage-raft-boundary.md)。
 
 ---
 
@@ -90,7 +91,7 @@ Client → gRPC Gateway → Storage gRPC → StorageNode
 | S0 单 Store RocksDB | 完成 | `data_dir/kv`；`migrate_legacy_shards_if_needed` |
 | S1 Ready 写路径 | 完成 | Storage 固定 Ready 外提 |
 | S2 Router + Hibernate | 完成 | `apply_inbound_raft`；Hibernate 默开；Snap→SnapWorker |
-| S3 Scheduler + RaftKV + WB | 完成 | latch + RaftKV；Apply 合并点 |
+| S3 Scheduler + Store 写入口 + WB | 完成 | latch + `Store::async_write`；Apply 合并点 |
 | S4 gRPC | 完成 | 全链路强制 gRPC |
 | S5 调度 + Coprocessor | 完成 | 主动扫描迁移；`ADMIN_COP` |
 

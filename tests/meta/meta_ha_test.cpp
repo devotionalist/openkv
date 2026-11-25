@@ -15,26 +15,26 @@
 // @file meta_ha_test.cpp
 // Meta 单节点 Raft（rf=1）与命令编解码；多进程 HA 由故障演练覆盖。
 
-#include "openkv/meta/meta_fsm.hpp"
-#include "openkv/meta/meta_node.hpp"
-
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <filesystem>
 #include <future>
 #include <thread>
-#include <unistd.h>
+
+#include "openkv/meta/meta_fsm.hpp"
+#include "openkv/meta/meta_node.hpp"
 
 using openkv::ClusterBootstrap;
-using openkv::meta::MetaCommand;
-using openkv::meta::MetaOp;
-using openkv::meta::MetaNode;
-using openkv::meta::NodeInfo;
-using openkv::meta::NodeRole;
 using openkv::meta::apply_meta_command;
 using openkv::meta::decode_meta_command;
 using openkv::meta::encode_meta_command;
+using openkv::meta::MetaCommand;
+using openkv::meta::MetaNode;
+using openkv::meta::MetaOp;
+using openkv::meta::NodeInfo;
+using openkv::meta::NodeRole;
 
 TEST(MetaFsmTest, RoundTripRegister) {
   MetaCommand c;
@@ -101,8 +101,7 @@ TEST(MetaHaTest, FsmSnapSurvivesRestart) {
   namespace fs = std::filesystem;
   const auto dir = fs::temp_directory_path() /
                    ("skv_meta_fsm_" + std::to_string(::getpid()) + "_" +
-                    std::to_string(
-                        std::chrono::steady_clock::now().time_since_epoch().count()));
+                    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   fs::remove_all(dir);
   fs::create_directories(dir);
 
@@ -232,9 +231,8 @@ TEST(MetaHaTest, WatchRouteAsyncAndActivatePrecheck) {
   {
     std::promise<openkv::meta::RoutingTable> done;
     auto fut = done.get_future();
-    srv.watch_route_async(0, 5000, [&done](openkv::meta::RoutingTable rt) {
-      done.set_value(std::move(rt));
-    });
+    srv.watch_route_async(
+        0, 5000, [&done](openkv::meta::RoutingTable rt) { done.set_value(std::move(rt)); });
     ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_GE(fut.get().version, base.version);
   }
@@ -243,8 +241,9 @@ TEST(MetaHaTest, WatchRouteAsyncAndActivatePrecheck) {
   {
     std::promise<openkv::meta::RoutingTable> done;
     auto fut = done.get_future();
-    srv.watch_route_async(base.version, 5000,
-                           [&done](openkv::meta::RoutingTable rt) { done.set_value(std::move(rt)); });
+    srv.watch_route_async(base.version, 5000, [&done](openkv::meta::RoutingTable rt) {
+      done.set_value(std::move(rt));
+    });
     std::promise<std::string> bump_done;
     auto bump_fut = bump_done.get_future();
     srv.bump_route_async([&bump_done](std::string line) { bump_done.set_value(std::move(line)); });
@@ -259,7 +258,7 @@ TEST(MetaHaTest, WatchRouteAsyncAndActivatePrecheck) {
     std::promise<std::string> done;
     auto fut = done.get_future();
     srv.activate_or_join_async(false, "no-such-node",
-                                [&done](std::string line) { done.set_value(std::move(line)); });
+                               [&done](std::string line) { done.set_value(std::move(line)); });
     ASSERT_EQ(fut.wait_for(std::chrono::seconds(1)), std::future_status::ready);
     EXPECT_EQ(fut.get(), "ERR unknown_node");
   }
@@ -269,7 +268,7 @@ TEST(MetaHaTest, WatchRouteAsyncAndActivatePrecheck) {
     std::promise<std::string> done;
     auto fut = done.get_future();
     srv.get_scale_task_async("missing-task",
-                              [&done](std::string line) { done.set_value(std::move(line)); });
+                             [&done](std::string line) { done.set_value(std::move(line)); });
     ASSERT_EQ(fut.wait_for(std::chrono::seconds(1)), std::future_status::ready);
     EXPECT_EQ(fut.get(), "ERR no_task");
   }

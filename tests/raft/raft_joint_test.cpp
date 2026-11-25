@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/raft/core/raft_node.hpp"
-
 #include <gtest/gtest.h>
 
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "openkv/raft/core/raft_node.hpp"
 
 using openkv::raft::ConfChange;
 using openkv::raft::RaftNode;

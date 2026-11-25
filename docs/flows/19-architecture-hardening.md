@@ -15,9 +15,9 @@
 
 | 主题 | 行为 |
 |------|------|
-| 写等待 | `RaftKV::async_write` → propose + `drive_ready`；`ProposalQueue` **CV / wait_async** 等 `invoke`（无 5ms tick 空转） |
+| 写等待 | `Store::async_write` → propose + `drive_ready`；`IndexWaiter` **CV / wait_async** 等 `invoke`（无 5ms tick 空转） |
 | Latch | 唯一入口 `lock_key_async`；事务/CAS **持到 apply**；非 CAS Raw Put/Delete **跳过**（见 [27](27-raw-vs-txn.md)）；Admin `propose_encoded` 同 API |
-| 死双轨清理 | 已删 `RaftKV::sync_write` / `ProposalQueue::take` / Gateway `alloc_ts`；`process_ready_legacy`→`process_ready`；`Peer::legacy`→`raft_node` |
+| 死双轨清理 | 已删 `RaftKV` 壳 / `IndexWaiter::take` / Gateway `alloc_ts`；写入口为 `Store::async_write` |
 | 线性读追上 | `RaftNode::wait_applied` + `flush_ready` tick；替代 `sleep_for(2ms)` 自旋 |
 | txn GC | `maybe_txn_gc` 改 `*_async`，tick 线程不再同步等 apply |
 | 廉价 size | RocksDB `GetApproximateSizes` + `estimate-num-keys`；`pick_split_key` 近似对半 |
@@ -35,7 +35,7 @@ flowchart LR
   LA --> R
   R --> A[apply invoke]
   A --> U[latch unlock]
-  A --> W[ProposalQueue wake]
+  A --> W[IndexWaiter wake]
 ```
 
 ---
@@ -52,6 +52,6 @@ flowchart LR
 
 | ID | 命令 / 期望 |
 |----|-------------|
-| H1 | `ctest -R 'ApproxAndPickSplit\|ProposalQueue\|LatchAsync\|LatchHold\|MetaWatch\|OnePc'` PASS |
+| H1 | `ctest -R 'ApproxAndPickSplit\|IndexWaiter\|LatchAsync\|LatchHold\|MetaWatch\|OnePc'` PASS |
 | H2 | 本文与 `ARCHITECTURE` / `RANGE_SHARDING` 一致 |
 | H3 | put bench `fail=0`；无 Meta HB Deadline 风暴 |

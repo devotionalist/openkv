@@ -17,12 +17,12 @@
 
 #pragma once
 
-#include "openkv/protocol.hpp"
-
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+
+#include "openkv/protocol.hpp"
 
 namespace openkv::storage {
 
@@ -124,9 +124,7 @@ struct InflightGuard {
   ReqClass cls{ReqClass::kBypass};
   bool held{false};
 
-  InflightGuard(InflightGate& g, ReqClass c) : gate(&g), cls(c) {
-    held = gate->try_enter(cls);
-  }
+  InflightGuard(InflightGate& g, ReqClass c) : gate(&g), cls(c) { held = gate->try_enter(cls); }
   ~InflightGuard() {
     if (held && gate) gate->leave(cls);
   }

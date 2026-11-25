@@ -4,6 +4,13 @@
 
 This repository is public. External contributors submit changes **only via pull requests**. Direct pushes to `master`, and creating tags / releases, are reserved for the repository owner (`@devotionalist`).
 
+## C++ conventions
+
+- **Language**: C++20 (`CMAKE_CXX_STANDARD` / `make show-std`)
+- **Style**: [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html); formatting via root `.clang-format`
+- **Commands**: `make format` (rewrite) / `make format-check` (dry-run)
+- Comments may be plain Chinese; identifiers stay English. Do not mass-reformat the tree without need.
+
 ## Who can do what
 
 | Action | Contributors | Owner (`@devotionalist`) |

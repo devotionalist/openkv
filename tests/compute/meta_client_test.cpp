@@ -15,15 +15,15 @@
 // @file meta_client_test.cpp
 // parse_redirect / TSO 默认配置 / ActiveTs（队列语义见 ts_range_queue_test）。
 
-#include "openkv/compute/active_ts.hpp"
-#include "openkv/compute/grpc_channel.hpp"
-#include "openkv/compute/tso.hpp"
-
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <limits>
 #include <thread>
+
+#include "openkv/compute/active_ts.hpp"
+#include "openkv/compute/grpc_channel.hpp"
+#include "openkv/compute/tso.hpp"
 
 using openkv::compute::ActiveTsTracker;
 using openkv::compute::parse_redirect;

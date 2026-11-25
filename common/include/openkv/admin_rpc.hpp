@@ -16,10 +16,7 @@
 // Storage AdminService 类型化调用。
 #pragma once
 
-#include "openkv/codec.hpp"
-#include "openkv/grpc_auth.hpp"
-#include "openkv/grpc_keepalive.hpp"
-#include "openkv/protocol.hpp"
+#include <grpcpp/grpcpp.h>
 
 #include <chrono>
 #include <functional>
@@ -30,7 +27,10 @@
 #include <string_view>
 #include <vector>
 
-#include <grpcpp/grpcpp.h>
+#include "openkv/codec.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_keepalive.hpp"
+#include "openkv/protocol.hpp"
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
@@ -63,8 +63,8 @@ inline std::string admin_follow_redirect_body(std::string_view body) {
 }
 
 /// 将历史 ADMIN_* / PING / STATS 行映射为 AdminService 类型化 RPC；返回与旧行协议兼容的正文。
-inline std::string admin_typed_call(std::string_view addr, std::string_view req, std::string_view token,
-                                    int timeout_ms) {
+inline std::string admin_typed_call(std::string_view addr, std::string_view req,
+                                    std::string_view token, int timeout_ms) {
   auto parts = admin_split_ws(req);
   if (parts.empty()) throw std::runtime_error("admin empty");
   const std::string& op = parts[0];

@@ -13,23 +13,9 @@
 // limitations under the License.
 
 // @file storage_node.hpp
-// 存储节点：Multi-Raft（多副本）+ 分片引擎 + Raft TCP 传输。
+// 存储节点：Multi-Raft（多副本）+ 分片引擎；出站传输归 MultiRaft。
 
 #pragma once
-
-#include "openkv/config.hpp"
-#include "openkv/peer_counter.hpp"
-#include "openkv/raft/core/multi_raft.hpp"
-#include "openkv/raft/util/snap_stream.hpp"
-#include "openkv/region.hpp"
-#include "openkv/storage/kv_engine.hpp"
-#include "openkv/storage/proposal_queue.hpp"
-#include "openkv/storage/raftkv.hpp"
-#include "openkv/raft/engine/db_raft_engine.hpp"
-#include "openkv/storage/scheduler.hpp"
-#include "openkv/storage/coprocessor.hpp"
-#include "openkv/storage/watch_hub.hpp"
-#include "openkv/raft/net/grpc_transport.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -44,6 +30,20 @@
 #include <utility>
 #include <vector>
 
+#include "openkv/config.hpp"
+#include "openkv/peer_counter.hpp"
+#include "openkv/raft/core/multi_raft.hpp"
+#include "openkv/raft/core/types.hpp"
+#include "openkv/raft/engine/db_raft_engine.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
+#include "openkv/raftstore/index_waiter.hpp"
+#include "openkv/region.hpp"
+#include "openkv/storage/coprocessor.hpp"
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/latency_hist.hpp"
+#include "openkv/storage/scheduler.hpp"
+#include "openkv/storage/watch_hub.hpp"
+
 namespace openkv::storage {
 
 class StorageNode {
@@ -56,18 +56,19 @@ class StorageNode {
 
   void on_apply(uint32_t shard_id, uint64_t index, const std::string& data);
   /// 同 Region 一批 committed entries：可批的 ONEPC/Put/Delete 合并为一次 WriteBatch。
-  void on_apply_entries(uint32_t shard_id, const std::vector<raft::LogEntry>& entries);
+  void on_apply_entries(uint32_t shard_id, const std::vector<openkv::raft::LogEntry>& entries);
 
   /// 阻塞至 apply invoke 或超时。tick 用于等待期间推进 Ready。
-  ProposalQueue::WaitOutcome wait_apply(uint64_t index, std::chrono::milliseconds timeout,
-                                        const std::function<void()>& tick = {});
+  openkv::raftstore::IndexWaiter::WaitOutcome wait_apply(uint64_t index,
+                                                         std::chrono::milliseconds timeout,
+                                                         const std::function<void()>& tick = {});
 
   /// 异步等 apply：不占调用线程；回调在 invoke / 超时线程上。
   void wait_apply_async(uint64_t index, std::chrono::milliseconds timeout,
-                        ProposalQueue::CompleteCb cb);
+                        openkv::raftstore::IndexWaiter::CompleteCb cb);
 
-  ProposalQueue& proposals() { return proposals_; }
-  const ProposalQueue& proposals() const { return proposals_; }
+  /// propose→apply 等待延迟 + 超时（Prometheus）。
+  std::string apply_wait_prometheus() const;
 
   bool add_learner(uint32_t shard_id, const raft::Peer& peer);
   bool promote_learner(uint32_t shard_id, const std::string& peer_id);
@@ -88,15 +89,15 @@ class StorageNode {
 
   raft::MultiRaft& multi_raft() { return *multi_raft_; }
   ShardEngineManager& engines() { return *engines_; }
-  /// `start()` 后必有；写路径直接用，勿再判空兜底 propose。
-  RaftKV& raftkv() { return *raftkv_; }
-  /// `start()` 后必有；与 raftkv 同生命周期。
+  /// `start()` 后必有；propose 走 multi_raft().store().async_write。
   Scheduler& scheduler() { return *scheduler_; }
   WatchHub& watch_hub() { return watch_hub_; }
   /// Coprocessor：对本机 Region range scan（key/value 前缀、keys_only、count_only）。
   CoprocessorResponse coprocessor_execute(uint32_t region_id, const CoprocessorRequest& req);
   const NodeConfig& config() const { return cfg_; }
-  raft::GrpcRaftTransport& transport() { return transport_; }
+  /// 出站 gRPC（`start()` 后；归属 MultiRaft）。
+  raft::GrpcRaftTransport& transport() { return multi_raft_->transport(); }
+  const raft::GrpcRaftTransport& transport() const { return multi_raft_->transport(); }
 
   /// TCP 入站 Raft RPC。
   std::string handle_raft_vote(uint32_t shard, const std::string& from, uint64_t term,
@@ -105,7 +106,7 @@ class StorageNode {
                                    uint64_t last_idx, uint64_t last_term);
   std::string handle_raft_append(uint32_t shard, const std::string& from, uint64_t term,
                                  uint64_t prev_idx, uint64_t prev_term, uint64_t leader_commit,
-                                 const std::vector<raft::LogEntry>& entries);
+                                 const std::vector<openkv::raft::LogEntry>& entries);
   std::string handle_raft_snapshot(uint32_t shard, const std::string& from, uint64_t term,
                                    uint64_t last_idx, uint64_t last_term, std::string_view data);
   /// 流式快照分片：RAFT_SNAPC；未收齐返回 OK SNAPC，收齐后同 handle_raft_snapshot。
@@ -181,10 +182,8 @@ class StorageNode {
   /// 共享 RaftEngine（data_dir/raft RocksDB）。
   std::shared_ptr<raft::DbRaftEngine> raft_engine_;
   std::unique_ptr<raft::MultiRaft> multi_raft_;
-  std::unique_ptr<RaftKV> raftkv_;
   std::unique_ptr<Scheduler> scheduler_;
   WatchHub watch_hub_;
-  raft::GrpcRaftTransport transport_;
   raft::SnapStreamBuffer snap_buf_;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> meta_out_{0};  // 本节点 → Meta 出站 RPC
@@ -193,9 +192,9 @@ class StorageNode {
   std::thread split_thread_;
   std::thread hb_thread_;
   std::vector<raft::Peer> bootstrap_peers_;
-  size_t auto_split_keys_{256000};              // 默认约 256k keys；SKV_SPLIT_KEYS=0 关
-  size_t auto_split_bytes_{96ull << 20};        // 96MiB；SKV_SPLIT_BYTES=0 关
-  size_t auto_merge_keys_{0};                   // 0=关；SKV_MERGE_KEYS
+  size_t auto_split_keys_{256000};        // 默认约 256k keys；SKV_SPLIT_KEYS=0 关
+  size_t auto_split_bytes_{96ull << 20};  // 96MiB；SKV_SPLIT_BYTES=0 关
+  size_t auto_merge_keys_{0};             // 0=关；SKV_MERGE_KEYS
   std::mutex split_mu_;
   std::condition_variable split_cv_;
   std::deque<uint32_t> split_queue_;
@@ -234,11 +233,11 @@ class StorageNode {
   uint64_t load_epoch_from_engine(uint32_t region_id);
   void publish_apply_result(uint64_t index, std::string error);
 
-  ProposalQueue proposals_;
+  openkv::raftstore::IndexWaiter index_waiter_;
+  LatencyHistogram apply_wait_hist_;
 
   void maybe_auto_merge(uint32_t region_id);
-  bool meta_suggest_place(std::vector<std::string>* out,
-                          const std::vector<std::string>& avoid);
+  bool meta_suggest_place(std::vector<std::string>* out, const std::vector<std::string>& avoid);
   bool meta_merge(uint32_t left, uint32_t right);
   bool meta_find_merge_right(uint32_t left, uint32_t* right_out);
   bool meta_list_storage(std::unordered_map<std::string, std::string>* id_to_addr);

@@ -17,12 +17,11 @@
 
 #include "openkv/config.hpp"
 
-#include <toml.hpp>
-
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <toml.hpp>
 #include <unordered_map>
 #include <vector>
 
@@ -91,22 +90,14 @@ std::unordered_map<std::string, std::string> parse_toml_file(const std::string& 
     }
   };
   static const char* kKeys[] = {
-      "node_id",
-      "listen_addr",
-      "advertise_addr",
-      "meta_addr",
-      "data_dir",
-      "shard_count",
-      "replica_factor",
-      "raft_election_timeout_ms",
-      "raft_heartbeat_ms",
-      "rocksdb_write_buffer_mb",
-      "persist_sync",
-      "raft_peers",
-      "bootstrap_regions",
-      "raft_compact_threshold",
-      "storage_peers",
-      "compute_peers",
+      "node_id",           "listen_addr",
+      "advertise_addr",    "meta_addr",
+      "data_dir",          "shard_count",
+      "replica_factor",    "raft_election_timeout_ms",
+      "raft_heartbeat_ms", "rocksdb_write_buffer_mb",
+      "persist_sync",      "raft_peers",
+      "bootstrap_regions", "raft_compact_threshold",
+      "storage_peers",     "compute_peers",
       "meta_peers",
   };
   for (const char* k : kKeys) put(k);

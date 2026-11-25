@@ -16,11 +16,11 @@
 
 #include "openkv/raft/util/raft_fault_inject.hpp"
 
-#include "openkv/protocol.hpp"
-
 #include <algorithm>
 #include <cstdlib>
 #include <string>
+
+#include "openkv/protocol.hpp"
 
 namespace openkv::raft {
 namespace {

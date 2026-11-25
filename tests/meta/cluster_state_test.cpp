@@ -56,7 +56,7 @@ TEST(ClusterStateTest, GcSafePointAdvancesAndRespectsMinStart) {
   EXPECT_EQ(safe1, base + 100 - 10);
   st.report_min_start_ts(50);
   // 已到 safe1，hint 不能回退水位；再 alloc 后仍受 hint 上界约束
-  st.alloc_ts(50);  // next = base+150
+  st.alloc_ts(50);                              // next = base+150
   EXPECT_EQ(st.advance_gc_safe_ts(10), safe1);  // candidate 被 hint 压到 50 < safe1 → 不前进
   st.report_min_start_ts(base + 1000);
   EXPECT_EQ(st.advance_gc_safe_ts(10), base + 150 - 10);
@@ -67,7 +67,7 @@ TEST(ClusterStateTest, MinStartAggregatesReporters) {
   st.report_min_start_ts(100, "gw");
   st.report_min_start_ts(40, "storage-0");
   st.report_min_start_ts(std::numeric_limits<uint64_t>::max(), "gw");  // gw 无活跃
-  EXPECT_EQ(st.min_start_ts_hint(), 40u);  // 仍受 storage 约束
+  EXPECT_EQ(st.min_start_ts_hint(), 40u);                              // 仍受 storage 约束
 }
 
 TEST(ClusterStateTest, BootstrapRangeOneRegion) {
@@ -90,8 +90,8 @@ TEST(ClusterStateTest, LocateAndSplit) {
   auto right = st.split_region(0, "m");
   ASSERT_TRUE(right);
   EXPECT_EQ(*right, 1u);
-  EXPECT_EQ(*st.locate("a"), 0u);    // < m → left
-  EXPECT_EQ(*st.locate("m"), 1u);    // >= m → right
+  EXPECT_EQ(*st.locate("a"), 0u);  // < m → left
+  EXPECT_EQ(*st.locate("m"), 1u);  // >= m → right
   EXPECT_EQ(*st.locate("zzz"), 1u);
   auto rt = st.routing_table();
   EXPECT_EQ(rt.regions.size(), 2u);

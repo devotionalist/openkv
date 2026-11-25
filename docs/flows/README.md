@@ -44,7 +44,7 @@ SDK / skv / Web
 gateway_node（无状态：路由 · TSO 批缓存 · 重试 · Watch 轮询）
       │  gRPC Store / Admin / Meta（类型化）
       ▼
-StorageNode × N（Scheduler latch → RaftKV → raftstore Ready → RocksDB）
+StorageNode × N（Scheduler latch → Store::async_write → Ready → RocksDB）
       ▲
       │  HEARTBEAT / SPLIT / PLACE / GET_ROUTE / GET_TS …
       ▼
@@ -63,7 +63,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 
 | 流程 | 文件 | 要点 |
 |------|------|------|
-| 写入 Put / Delete | [01-write-put.md](01-write-put.md) | Locate → ONEPC → 多数派 → apply → ProposalQueue |
+| 写入 Put / Delete | [01-write-put.md](01-write-put.md) | Locate → ONEPC → 多数派 → apply → IndexWaiter |
 | **1PC vs 2PC** | [37-onepc-vs-2pc.md](37-onepc-vs-2pc.md) | ONEPC 单 key；Prewrite→Commit 多 key；MVCC L/D/W |
 | **Percolator MVCC** | [41-percolator-mvcc.md](41-percolator-mvcc.md) | 解决什么；L/D/W；TSO；读冲突；与 Raw 边界 |
 | Raw vs Txn | [27-raw-vs-txn.md](27-raw-vs-txn.md) | RawPut/Get/Delete 无 TSO；与 Put 同 key 勿混用 |
@@ -92,6 +92,7 @@ Meta Raft × 3（ClusterState · TSO · Scaler / RegionScheduler）
 | **Propose→ACK 落盘保证** | [36-propose-ack-durability.md](36-propose-ack-durability.md) | 调用链；ACK=apply；persist 先于 apply |
 | Storage 启动 | [07-storage-startup.md](07-storage-startup.md) | MultiRaft 工厂、WAL、tick、gRPC listen |
 | 故障恢复 | [04-fault-recovery.md](04-fault-recovery.md) | load WAL → AE 追赶 / InstallSnapshot |
+| 海量快照迁移（限制） | [42-massive-snapshot-migration.md](42-massive-snapshot-migration.md) | 逻辑 dump 过大；Checkpoint≠InstallSnapshot |
 | Raft 协议核故障场景 | [40-raft-module-fault-tests.md](40-raft-module-fault-tests.md) | 本机内存多节点 A–H；`make raft-fault-local` |
 | 进程优雅关机 | [31-graceful-shutdown.md](31-graceful-shutdown.md) | SIGTERM：拒新 RPC + 排空在途 |
 | Meta HA | [05-meta-ha.md](05-meta-ha.md) | Meta×3、管控命令、TSO |
@@ -130,10 +131,22 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | 架构硬化 | [19-architecture-hardening.md](19-architecture-hardening.md) | CV 等 apply、latch 持到 apply、approx split、Meta CV |
 | 写路径批处理 | [23-write-path-batching.md](23-write-path-batching.md) | Ready group commit、apply WriteBatch、多 Region |
 | 耐久：Raft vs KV | [24-persist-raft-vs-kv.md](24-persist-raft-vs-kv.md) | 默认 data=Raft sync / KV 异步 |
-| RaftNode 协作类 | [39-raft-node-collaborators.md](39-raft-node-collaborators.md) | Election…Apply / LinearRead / ReadyPump |
+| RaftNode 协作类 | [39-raft-node-collaborators.md](39-raft-node-collaborators.md) | Election…Apply / LinearRead / ReadyPump；详解 43–52 |
+| ProgressTracker | [43-progress-tracker.md](43-progress-tracker.md) | Leader per-peer next/match/inflight |
+| Election | [44-election.md](44-election.md) | 角色、PreVote/Vote、CheckQuorum |
+| Membership | [45-membership.md](45-membership.md) | Joint、ConfChange、多数派 |
+| Replication | [46-replication.md](46-replication.md) | AE、commit、InstallSnapshot |
+| LogPersist | [47-log-persist.md](47-log-persist.md) | HardState+日志写 RaftEngine |
+| Apply | [48-apply.md](48-apply.md) | 状态机、compact、本地 FSM 快照 |
+| LinearRead | [49-linear-read.md](49-linear-read.md) | 租约读 / ReadIndex |
+| ReadyPump | [50-ready-pump.md](50-ready-pump.md) | 出站攒批、take_ready、唤醒 |
+| ReadyIo | [51-ready-io.md](51-ready-io.md) | Ready 侧 HS/unstable/committed/snap 缓冲 |
+| Ready | [52-ready.md](52-ready.md) | 一轮协议输出结构（无 IO） |
+| Raft 日志窗 | [53-raft-log-window.md](53-raft-log-window.md) | first/last、compact、掉窗→快照、AE 批量上限 |
+| Storage↔Raft 边界 | [54-storage-raft-boundary.md](54-storage-raft-boundary.md) | Storage 只读写数据；共识内聚 raft |
 | 写路径三刀 | [25-write-path-knives.md](25-write-path-knives.md) | Ready 攒批、二进制 ONEPC、workers 8/8 |
 | Raftstore schedule | [26-raftstore-schedule-pipeline.md](26-raftstore-schedule-pipeline.md) | schedule 唤醒 + drain-until-empty |
-| 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、ONEPC WriteBatch、BatchSystem CV |
+| 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、N9 大快照迁移、ONEPC WriteBatch |
 | 全接口压测 | [17-gateway-api-bench.md](17-gateway-api-bench.md) | `api-bench-all.sh` / skill `openkv-api-bench`；改完必跑；基线记 TEST_CASES |
 
 生产写路径总图：[COMPONENT_MAP §3](../architecture/COMPONENT_MAP.md) · [MULTI_RAFT_PRODUCTION](../production/MULTI_RAFT_PRODUCTION.md)

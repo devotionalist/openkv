@@ -3,7 +3,7 @@
 依据：`COMPONENT_MAP` / `META_PRODUCTION` / `STORE_PRODUCTION` / `MULTI_RAFT_PRODUCTION` 与近期缺口。  
 文档总目录（默认英文）：[English](./en/README.md) · [中文](./zh/README.md)。更新：2026-11-12。
 
-近期已交付（勿重复）：ProposalQueue · ONEPC · Region auto-split · recover_local_regions · 架构硬化见 [flows/19-architecture-hardening.md](flows/19-architecture-hardening.md)。
+近期已交付（勿重复）：IndexWaiter · ONEPC · Region auto-split · recover_local_regions · 架构硬化见 [flows/19-architecture-hardening.md](flows/19-architecture-hardening.md)。
 
 ---
 

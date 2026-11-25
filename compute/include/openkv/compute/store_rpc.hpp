@@ -17,14 +17,14 @@
 
 #pragma once
 
-#include "openkv/compute/grpc_channel.hpp"
-
 #include <cstdint>
 #include <functional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "openkv/compute/grpc_channel.hpp"
 
 namespace openkv::compute {
 
@@ -55,7 +55,8 @@ void store_admin_ping(const std::string& addr, int timeout_ms = 3000);
 
 /// 异步 AdminService.SetEpoch。
 void store_admin_set_epoch_async(const std::string& addr, uint32_t region_id, uint64_t epoch,
-                                 int timeout_ms, std::function<void(grpc::Status, std::string error)> cb);
+                                 int timeout_ms,
+                                 std::function<void(grpc::Status, std::string error)> cb);
 
 /// StoreService.Propose 结果（ONEPC / PREWRITE / COMMIT / … 共用）。
 struct ProposeOnePcResult {
@@ -241,8 +242,8 @@ struct StoreWatchPollResult {
   std::string error;
 };
 
-void store_watch_poll_async(const std::string& addr, uint32_t shard_id, uint64_t since, int32_t limit,
-                            int timeout_ms,
+void store_watch_poll_async(const std::string& addr, uint32_t shard_id, uint64_t since,
+                            int32_t limit, int timeout_ms,
                             std::function<void(grpc::Status, StoreWatchPollResult)> cb);
 
 }  // namespace openkv::compute

@@ -20,15 +20,15 @@
 
 #pragma once
 
-#include "openkv/raft/core/types.hpp"
-#include "openkv/raft/engine/raft_wire.hpp"
-
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "openkv/raft/core/types.hpp"
+#include "openkv/raft/engine/raft_wire.hpp"
 
 namespace openkv::raft::log_file {
 

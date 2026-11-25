@@ -23,8 +23,8 @@ namespace skv {
 
 struct Component {
   std::string name;
-  std::string addr;   // host:port for health
-  std::string conf;   // relative to root, empty for gateway
+  std::string addr;  // host:port for health
+  std::string conf;  // relative to root, empty for gateway
 };
 
 std::string find_root();

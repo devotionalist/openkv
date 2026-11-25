@@ -17,7 +17,7 @@
 
 #pragma once
 
-#include "openkv/compute/router.hpp"
+#include <grpcpp/grpcpp.h>
 
 #include <cstdint>
 #include <functional>
@@ -26,7 +26,7 @@
 #include <utility>
 #include <vector>
 
-#include <grpcpp/grpcpp.h>
+#include "openkv/compute/router.hpp"
 
 namespace openkv::compute {
 

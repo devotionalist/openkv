@@ -15,10 +15,6 @@
 // @file raftstore_test.cpp
 // Store / Router / Hibernate / Apply 队列 QoS 烟雾。
 
-#include "openkv/raft/engine/file_raft_engine.hpp"
-#include "openkv/raftstore/snap_worker.hpp"
-#include "openkv/raftstore/store.hpp"
-
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -27,6 +23,10 @@
 #include <memory>
 #include <stdexcept>
 #include <thread>
+
+#include "openkv/raft/engine/file_raft_engine.hpp"
+#include "openkv/raftstore/snap_worker.hpp"
+#include "openkv/raftstore/store.hpp"
 
 using openkv::raft::FileRaftEngine;
 using openkv::raft::RaftNode;
@@ -49,8 +49,7 @@ TEST(RaftstoreTest, StoreTickElectsLeader) {
     o.peers = {{"n0", "a", false}};
     o.election_timeout_ms = 100;
     o.heartbeat_ms = 40;
-    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {},
-                                      [](auto&&...) {});
+    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {}, [](auto&&...) {});
   });
   store.start();
   store.get_or_create(1);
@@ -77,8 +76,7 @@ TEST(RaftstoreTest, HibernateSkipsTickUntilWake) {
     o.heartbeat_ms = 1000;
     o.check_quorum = false;
     o.enable_pre_vote = false;
-    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {},
-                                      [](auto&&...) {});
+    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {}, [](auto&&...) {});
   });
   store.start();
   auto& n = store.get_or_create(9);
@@ -325,8 +323,7 @@ TEST(RaftstoreTest, ApplyQosFlag) {
     o.shard_id = shard;
     o.self_id = "n0";
     o.peers = {{"n0", "a", false}};
-    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {},
-                                      [](auto&&...) {});
+    return std::make_shared<RaftNode>(o, [](uint64_t, const std::string&) {}, [](auto&&...) {});
   });
   store.start();
   store.get_or_create(3);

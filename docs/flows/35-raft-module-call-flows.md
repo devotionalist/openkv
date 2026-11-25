@@ -18,7 +18,7 @@
 flowchart TB
   subgraph storage_layer["storage/"]
     SN[StorageNode]
-    RKV[RaftKV]
+    RKV[Store::async_write]
     RRE[DbRaftEngine]
     RS[RaftService gRPC 入站]
   end
@@ -78,12 +78,12 @@ flowchart TB
 
 ## 2. 短写执行流程（Propose → 落盘 → Apply）
 
-客户端 Put/RawPut → Gateway → Storage `StoreService` → `RaftKV::async_write`。
+客户端 Put/RawPut → Gateway → Storage `StoreService` → `Store::async_write`。
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant KV as RaftKV
+  participant KV as Store
   participant RN as RaftNode
   participant Log as RaftLog内存
   participant St as Store
@@ -117,7 +117,7 @@ sequenceDiagram
 
 | 步骤 | 位置 |
 |------|------|
-| propose + request_ready | `storage/src/raftkv.cpp` · `RaftKV::async_write` |
+| propose + request_ready | `raft/src/raftstore/store.cpp` · `Store::async_write` |
 | 攒批 | `raft/src/raftstore/store.cpp` · `request_ready` / `coalesce_loop` |
 | 批末 Ready | `Store::on_raft_batch` → `process_ready` |
 | 落盘 | `raft/src/raft_node.cpp` · `persist_ready` |
@@ -198,14 +198,14 @@ File 引擎布局与追加契约见 [ARCHITECTURE.md §5](../../raft/ARCHITECTUR
 - 单 Region 热点：固定落在同一 raft/apply worker；fsync 经 `PersistWorker` 与**其它 Region** 步进重叠（同 Region 仍 `persist_inflight` 串行）。
 - `persist_sync=data`：Raft Engine sync；业务 KV apply 异步（[24](24-persist-raft-vs-kv.md)）。
 - `SKV_PERSIST_WORKERS`（默认 2；0=同步落盘在 raft worker）。
-- `external_io` 下 propose 不等 apply；可见性靠 Apply / ProposalQueue。
+- `external_io` 下 propose 不等 apply；可见性靠 Apply / IndexWaiter。
 
 ## 验收
 
 | ID | 标准 |
 |----|------|
 | F1 | 本节图与 `raft/README.md` 文件表一致 |
-| F2 | 从 `RaftKV::async_write` 能跳到 `persist_ready` / `consume` |
+| F2 | 从 `Store::async_write` 能跳到 `persist_ready` / `consume` |
 | F3 | 热路径源码有行内注释 |
 
 未跑 `-mode all`：纯文档。

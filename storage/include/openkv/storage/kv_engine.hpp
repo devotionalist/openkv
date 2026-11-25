@@ -21,9 +21,6 @@
 
 #pragma once
 
-#include "openkv/raft/engine/sync_mode.hpp"
-#include "openkv/region.hpp"
-
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -34,6 +31,9 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+
+#include "openkv/raft/engine/sync_mode.hpp"
+#include "openkv/region.hpp"
 
 namespace openkv::storage {
 
@@ -71,9 +71,8 @@ class KvEngine {
   /// 批量写；puts 为 (key,value,revision[,expire_at_ms])，缺省 expire=0。
   bool write_batch(const std::vector<std::tuple<std::string, std::string, uint64_t>>& puts,
                    const std::vector<std::string>& dels);
-  bool write_batch(
-      const std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>>& puts,
-      const std::vector<std::string>& dels);
+  bool write_batch(const std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>>& puts,
+                   const std::vector<std::string>& dels);
   /// hide_expired=true（默认）：过期 key 视为不存在。
   std::optional<KvRecord> get(std::string_view key, bool hide_expired = true) const;
   /// 催促 TTL CompactionFilter 回收。
@@ -144,8 +143,7 @@ class KvEngine {
 /// get_or_create(any) 返回同一引擎；share_with 为 no-op 成功。
 class ShardEngineManager {
  public:
-  explicit ShardEngineManager(std::string data_dir,
-                              raft::SyncMode sync = raft::SyncMode::kData);
+  explicit ShardEngineManager(std::string data_dir, raft::SyncMode sync = raft::SyncMode::kData);
 
   KvEngine& get_or_create(uint32_t shard_id);
   KvEngine* get(uint32_t shard_id);
@@ -159,14 +157,13 @@ class ShardEngineManager {
   void migrate_legacy_shards_if_needed();
 
  private:
+  void ensure_shared_locked();  // 确保共享锁
 
-  void ensure_shared_locked(); // 确保共享锁
-
-  std::string data_dir_; // 数据目录
-  raft::SyncMode sync_; // 同步模式
-  mutable std::mutex mu_; // 互斥锁
-  std::shared_ptr<KvEngine> shared_; // 共享引擎
-  std::unordered_map<uint32_t, std::shared_ptr<KvEngine>> engines_; // 引擎映射
+  std::string data_dir_;                                             // 数据目录
+  raft::SyncMode sync_;                                              // 同步模式
+  mutable std::mutex mu_;                                            // 互斥锁
+  std::shared_ptr<KvEngine> shared_;                                 // 共享引擎
+  std::unordered_map<uint32_t, std::shared_ptr<KvEngine>> engines_;  // 引擎映射
 };
 
 }  // namespace openkv::storage

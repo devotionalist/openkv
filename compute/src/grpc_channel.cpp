@@ -17,13 +17,13 @@
 
 #include "openkv/compute/grpc_channel.hpp"
 
-#include "openkv/admin_acl.hpp"
-#include "openkv/grpc_auth.hpp"
-#include "openkv/grpc_keepalive.hpp"
-
 #include <chrono>
 #include <mutex>
 #include <unordered_map>
+
+#include "openkv/admin_acl.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/grpc_keepalive.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -100,8 +100,8 @@ std::shared_ptr<::meta::v1::MetaService::Stub> cached_meta_stub(const std::strin
   std::lock_guard<std::mutex> lock(g_ch_mu);
   auto it = g_meta_stubs.find(addr);
   if (it != g_meta_stubs.end() && it->second) return it->second;
-  auto stub =
-      std::shared_ptr<::meta::v1::MetaService::Stub>(::meta::v1::MetaService::NewStub(channel_locked(addr)));
+  auto stub = std::shared_ptr<::meta::v1::MetaService::Stub>(
+      ::meta::v1::MetaService::NewStub(channel_locked(addr)));
   g_meta_stubs[addr] = stub;
   return stub;
 }

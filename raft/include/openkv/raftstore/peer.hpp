@@ -19,10 +19,6 @@
 
 #pragma once
 
-#include "openkv/raft/core/raft_node.hpp"
-#include "openkv/raft/core/ready.hpp"
-#include "openkv/region.hpp"
-
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -31,14 +27,18 @@
 #include <string>
 #include <vector>
 
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/core/ready.hpp"
+#include "openkv/region.hpp"
+
 namespace openkv::raftstore {
 
 struct PeerMeta {
-  uint32_t region_id{0};// 区域ID
-  openkv::KeyRange range;// 范围
-  uint64_t epoch{0};// 任期
-  std::string leader_id;// 领导者ID
-  std::vector<raft::Peer> peers;// 节点列表
+  uint32_t region_id{0};          // 区域ID
+  openkv::KeyRange range;         // 范围
+  uint64_t epoch{0};              // 任期
+  std::string leader_id;          // 领导者ID
+  std::vector<raft::Peer> peers;  // 节点列表
 };
 
 // 运行时 Peer：持有 external_io RaftNode（Ready 由 Store 外提）。
@@ -53,6 +53,7 @@ class Peer {
   raft::RaftNode* raft_node() { return node_.get(); }
   std::shared_ptr<raft::RaftNode> raft_node_shared() { return node_; }
 
+  // 是否休眠
   bool hibernating() const { return hibernating_.load(std::memory_order_relaxed); }
   // 设置是否休眠
   void set_hibernating(bool v) { hibernating_.store(v, std::memory_order_relaxed); }

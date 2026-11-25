@@ -18,17 +18,17 @@
 
 #include "openkv/raft/engine/file_raft_engine.hpp"
 
-#include "openkv/logging.hpp"
-#include "openkv/raft/log/raft_log.hpp"
-#include "openkv/raft/log/raft_log_file.hpp"
-#include "openkv/raft/engine/sync_mode.hpp"
-
 #include <fcntl.h>
 #include <unistd.h>
 
 #include <fstream>
 #include <string_view>
 #include <unordered_map>
+
+#include "openkv/logging.hpp"
+#include "openkv/raft/engine/sync_mode.hpp"
+#include "openkv/raft/log/raft_log.hpp"
+#include "openkv/raft/log/raft_log_file.hpp"
 
 namespace openkv::raft {
 namespace fs = std::filesystem;
@@ -86,7 +86,7 @@ bool atomic_replace(const fs::path& tmp, const fs::path& final_path) {
 }  // namespace
 
 FileRaftEngine::GroupPaths FileRaftEngine::GroupPaths::for_group(const fs::path& root,
-                                                                uint64_t group_id) {
+                                                                 uint64_t group_id) {
   GroupPaths p;
   p.dir = root / ("g" + std::to_string(group_id));
   p.state = p.dir / "raft_state";
@@ -276,9 +276,7 @@ bool FileRaftEngine::append_log_unlocked(const GroupPaths& p, const std::vector<
   return true;
 }
 
-size_t FileRaftEngine::approx_entry_bytes(const LogEntry& e) {
-  return e.data.size() + 40;
-}
+size_t FileRaftEngine::approx_entry_bytes(const LogEntry& e) { return e.data.size() + 40; }
 
 RaftLocalState FileRaftEngine::merge_state(const GroupMut& mut, const std::vector<LogEntry>& ents,
                                            const RaftLocalState* existing) {
@@ -333,8 +331,7 @@ size_t FileRaftEngine::apply_group_mut_unlocked(uint64_t group_id, GroupMut& mut
 
   if (!mut.state && !log_touched) return bytes;
 
-  const RaftLocalState st =
-      merge_state(mut, ents, had_state ? &existing_st : nullptr);
+  const RaftLocalState st = merge_state(mut, ents, had_state ? &existing_st : nullptr);
   if (!write_state_unlocked(p, st, sync)) return 0;
   bytes += 64;
 

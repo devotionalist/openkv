@@ -15,16 +15,16 @@
 // @file main.cpp
 // Storage 进程入口：主端口 gRPC（Store/Raft/Admin）。
 
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <thread>
+
 #include "openkv/logging.hpp"
 #include "openkv/metrics_http.hpp"
 #include "openkv/storage/grpc_server.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/store_service.hpp"
-
-#include <atomic>
-#include <chrono>
-#include <csignal>
-#include <thread>
 
 namespace {
 std::atomic<bool> g_stop{false};
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
 
   MetricsHttpServer metrics_http;
   metrics_http.start(metrics_addr_from_env(), [&facade] {
-    return facade.metrics().prometheus_text() + facade.node().proposals().prometheus_text();
+    return facade.metrics().prometheus_text() + facade.node().apply_wait_prometheus();
   });
 
   while (!g_stop) {

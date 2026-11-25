@@ -23,17 +23,6 @@
 
 #pragma once
 
-#include "openkv/admin_acl.hpp"
-#include "openkv/config.hpp"
-#include "openkv/meta/cluster_state.hpp"
-#include "openkv/meta/meta_fsm.hpp"
-#include "openkv/meta/region_scheduler.hpp"
-#include "openkv/meta/scaler.hpp"
-#include "openkv/peer_counter.hpp"
-#include "openkv/raft/net/grpc_transport.hpp"
-#include "openkv/raft/core/raft_node.hpp"
-#include "openkv/raft/util/snap_stream.hpp"
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -46,6 +35,17 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "openkv/admin_acl.hpp"
+#include "openkv/config.hpp"
+#include "openkv/meta/cluster_state.hpp"
+#include "openkv/meta/meta_fsm.hpp"
+#include "openkv/meta/region_scheduler.hpp"
+#include "openkv/meta/scaler.hpp"
+#include "openkv/peer_counter.hpp"
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/net/grpc_transport.hpp"
+#include "openkv/raft/util/snap_stream.hpp"
 
 namespace openkv::meta {
 
@@ -146,8 +146,8 @@ class MetaNode {
     uint64_t requests{0}, gw{0}, store{0}, raft{0}, sync{0}, admin{0}, client{0};
     uint64_t meta_out{0}, to_store{0}, to_meta{0};
     uint64_t route_ver{0}, next_ts{0}, tso_alloc{0}, watch_waits{0}, migrates{0};
-    std::vector<std::pair<std::string, uint64_t>> peer_raft, peer_sync, peer_raft_out, peer_sync_out,
-        peer_store;
+    std::vector<std::pair<std::string, uint64_t>> peer_raft, peer_sync, peer_raft_out,
+        peer_sync_out, peer_store;
   };
   StatsSnapshot stats_snapshot() const;
 
@@ -171,23 +171,23 @@ class MetaNode {
   /// 唤醒到期 / 版本已新的 watch_route_async 回调；force_all 用于 stop。
   void fire_route_watches(bool force_all = false);
 
-  ClusterBootstrap bootstrap_;              ///< 启动配置副本
-  std::string self_id_;                     ///< 本 Meta 节点 ID
-  std::string listen_addr_;                 ///< gRPC 监听 host:port
-  std::unique_ptr<ClusterState> state_;     ///< 权威集群状态
-  std::unique_ptr<Scaler> scaler_;          ///< 在线扩容编排（start 后创建）
-  std::unique_ptr<RegionScheduler> scheduler_; ///< Region 迁移调度（start 后创建）
-  std::unique_ptr<raft::RaftNode> raft_;    ///< Meta 单组 Raft
-  raft::GrpcRaftTransport transport_;      ///< 向其他 Meta 发 Raft（gRPC）
-  raft::SnapStreamBuffer snap_buf_;         ///< 入站分片快照拼装缓冲
-  std::vector<raft::Peer> peers_;           ///< Meta Raft 同伴列表
+  ClusterBootstrap bootstrap_;                  ///< 启动配置副本
+  std::string self_id_;                         ///< 本 Meta 节点 ID
+  std::string listen_addr_;                     ///< gRPC 监听 host:port
+  std::unique_ptr<ClusterState> state_;         ///< 权威集群状态
+  std::unique_ptr<Scaler> scaler_;              ///< 在线扩容编排（start 后创建）
+  std::unique_ptr<RegionScheduler> scheduler_;  ///< Region 迁移调度（start 后创建）
+  std::unique_ptr<raft::RaftNode> raft_;        ///< Meta 单组 Raft
+  raft::GrpcRaftTransport transport_;           ///< 向其他 Meta 发 Raft（gRPC）
+  raft::SnapStreamBuffer snap_buf_;             ///< 入站分片快照拼装缓冲
+  std::vector<raft::Peer> peers_;               ///< Meta Raft 同伴列表
 
-  std::atomic<bool> running_{false};        ///< start/stop 门闩
-  std::thread tick_thread_;                 ///< tick_loop
+  std::atomic<bool> running_{false};                   ///< start/stop 门闩
+  std::thread tick_thread_;                            ///< tick_loop
   std::unique_ptr<class MetaGrpcServer> grpc_server_;  ///< 默认 gRPC 监听
-  mutable std::mutex apply_mu_;             ///< propose 等待 apply 的条件同步
-  std::condition_variable apply_cv_;        ///< apply / AllocTs 唤醒（替 sleep 轮询）
-  uint64_t last_applied_wait_{0};           ///< 已观察到的 apply index（配合等待）
+  mutable std::mutex apply_mu_;                        ///< propose 等待 apply 的条件同步
+  std::condition_variable apply_cv_;                   ///< apply / AllocTs 唤醒（替 sleep 轮询）
+  uint64_t last_applied_wait_{0};                      ///< 已观察到的 apply index（配合等待）
   /// AllocTs apply 结果：raft index → 分配起点（避免 GET_TS 跨 Raft 等待持锁）。
   std::unordered_map<uint64_t, uint64_t> ts_alloc_by_index_;
   /// 异步 GET_TS waiters：raft index → 回调列表
@@ -198,9 +198,9 @@ class MetaNode {
     std::function<std::string()> make_ok;
   };
   std::unordered_map<uint64_t, std::vector<ApplyWaiter>> apply_waiters_;
-  mutable std::mutex route_mu_;             ///< WATCH_ROUTE
+  mutable std::mutex route_mu_;  ///< WATCH_ROUTE
   std::condition_variable route_cv_;
-  uint64_t route_version_notify_{0};        ///< 最近一次路由版本（on_apply 更新）
+  uint64_t route_version_notify_{0};  ///< 最近一次路由版本（on_apply 更新）
   /// gRPC watch_route_async 挂起表（行协议仍用 route_cv_）。
   struct RouteWatch {
     uint64_t id{0};
@@ -210,25 +210,25 @@ class MetaNode {
   };
   std::vector<RouteWatch> route_watches_;
   std::atomic<uint64_t> route_watch_seq_{0};
-  uint32_t gc_advance_ticks_{0};            ///< tick 计数：满则 Leader ADVANCE_SAFE_POINT
-  uint32_t stale_sweep_ticks_{0};           ///< tick 计数：满则 Leader SWEEP_STALE
-  bool was_leader_{false};                  ///< 用于检测新晋 Leader，宽限租约
-  uint32_t leader_lease_grace_ticks_{0};    ///< 新 Leader 前若干 tick 不 sweep Offline
-  uint32_t store_ttl_ms_{10000};            ///< Storage 心跳超时（SKV_META_STORE_TTL_MS）
-  std::string admin_token_;                 ///< SKV_ADMIN_TOKEN；空 = ACL 关闭
+  uint32_t gc_advance_ticks_{0};          ///< tick 计数：满则 Leader ADVANCE_SAFE_POINT
+  uint32_t stale_sweep_ticks_{0};         ///< tick 计数：满则 Leader SWEEP_STALE
+  bool was_leader_{false};                ///< 用于检测新晋 Leader，宽限租约
+  uint32_t leader_lease_grace_ticks_{0};  ///< 新 Leader 前若干 tick 不 sweep Offline
+  uint32_t store_ttl_ms_{10000};          ///< Storage 心跳超时（SKV_META_STORE_TTL_MS）
+  std::string admin_token_;               ///< SKV_ADMIN_TOKEN；空 = ACL 关闭
 
   // ---- 入站流量计数（STATS / METRICS）----
-  std::atomic<uint64_t> req_total_{0};      ///< 入站请求总数（含分类累计）
-  std::atomic<uint64_t> req_gw_{0};         ///< Gateway：ROUTE / TSO / LOCATE …
-  std::atomic<uint64_t> req_store_{0};      ///< Storage：HEARTBEAT / REGISTER …
-  std::atomic<uint64_t> req_raft_{0};       ///< Meta Raft 心跳 / 投票
-  std::atomic<uint64_t> req_sync_{0};       ///< Meta Raft 带日志复制 / 快照
-  std::atomic<uint64_t> req_admin_{0};      ///< 运维：SPLIT / PLACE / LIST …
-  PeerCounter peer_raft_;                   ///< 按 from 统计 Raft 入站
-  PeerCounter peer_sync_;                   ///< 按 from 统计同步入站
-  PeerCounter peer_store_;                  ///< HEARTBEAT/REGISTER 来源 node_id
-  std::atomic<uint64_t> tso_alloc_total_{0};///< 累计分配的时间戳个数
-  std::atomic<uint64_t> route_watch_waits_{0}; ///< WATCH_ROUTE 阻塞等待次数
+  std::atomic<uint64_t> req_total_{0};          ///< 入站请求总数（含分类累计）
+  std::atomic<uint64_t> req_gw_{0};             ///< Gateway：ROUTE / TSO / LOCATE …
+  std::atomic<uint64_t> req_store_{0};          ///< Storage：HEARTBEAT / REGISTER …
+  std::atomic<uint64_t> req_raft_{0};           ///< Meta Raft 心跳 / 投票
+  std::atomic<uint64_t> req_sync_{0};           ///< Meta Raft 带日志复制 / 快照
+  std::atomic<uint64_t> req_admin_{0};          ///< 运维：SPLIT / PLACE / LIST …
+  PeerCounter peer_raft_;                       ///< 按 from 统计 Raft 入站
+  PeerCounter peer_sync_;                       ///< 按 from 统计同步入站
+  PeerCounter peer_store_;                      ///< HEARTBEAT/REGISTER 来源 node_id
+  std::atomic<uint64_t> tso_alloc_total_{0};    ///< 累计分配的时间戳个数
+  std::atomic<uint64_t> route_watch_waits_{0};  ///< WATCH_ROUTE 阻塞等待次数
 };
 
 }  // namespace openkv::meta

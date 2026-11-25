@@ -19,8 +19,6 @@
 
 #pragma once
 
-#include "openkv/raftstore/msg.hpp"
-
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -28,6 +26,8 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+
+#include "openkv/raftstore/msg.hpp"
 
 namespace openkv::raftstore {
 

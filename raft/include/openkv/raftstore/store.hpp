@@ -15,17 +15,12 @@
 // @file store.hpp
 // 职责：raftstore **入口**——Router + BatchSystem + Peer 表 + StoreMeta + SnapWorker。
 // 架构：所有入站 Raft RPC / Tick / propose 后的 Ready 都汇聚于此；组 commit（ready_coalesce_*）。
-// 协作：MultiRaft 持有 Store；persist_fn→RaftNode::persist_ready；apply_*→KV；transport_fn→gRPC。
+// 协作：MultiRaft 持有 Store；persist_fn→RaftNode::persist_ready；apply_*→KV；
+//       transport_fn→调用方注入的发送能力（生产为 GrpcRaftTransport::bind；快照改包在 Store
+//       内完成）。
 // 注意：handle_raft_* 禁止绕过 Store 直调 RaftNode::on_*；入站用 apply_inbound_raft。
 
 #pragma once
-
-#include "openkv/raftstore/batch_system.hpp"
-#include "openkv/raftstore/peer.hpp"
-#include "openkv/raftstore/persist_worker.hpp"
-#include "openkv/raftstore/router.hpp"
-#include "openkv/raftstore/snap_worker.hpp"
-#include "openkv/raftstore/store_meta.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -36,6 +31,13 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#include "openkv/raftstore/batch_system.hpp"
+#include "openkv/raftstore/peer.hpp"
+#include "openkv/raftstore/persist_worker.hpp"
+#include "openkv/raftstore/router.hpp"
+#include "openkv/raftstore/snap_worker.hpp"
+#include "openkv/raftstore/store_meta.hpp"
 
 namespace openkv::raftstore {
 
@@ -63,14 +65,18 @@ class Store {
   using NodeFactory = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
   // 应用函数
   using ApplyFn = std::function<void(uint32_t region_id, uint64_t index, const std::string& data)>;
-  // 应用批处理函数： 同 Region 一批 committed entries（可合并 WriteBatch）；未设置则退回逐条 ApplyFn。
-  using ApplyBatchFn = std::function<void(uint32_t region_id, const std::vector<raft::LogEntry>& entries)>;
+  // 应用批处理函数： 同 Region 一批 committed entries（可合并 WriteBatch）；未设置则退回逐条
+  // ApplyFn。
+  using ApplyBatchFn =
+      std::function<void(uint32_t region_id, const std::vector<raft::LogEntry>& entries)>;
   // 持久化函数
   using PersistFn = std::function<void(uint32_t region_id, const raft::Ready& rd)>;
   // 传输函数
-  using TransportFn = std::function<void(uint32_t region_id, const std::string& to, const std::string& type, const std::string& payload)>;
+  using TransportFn = std::function<void(uint32_t region_id, const std::string& to,
+                                         const std::string& type, const std::string& payload)>;
   // 快照提供函数
-  using SnapProviderFn = std::function<std::string(uint32_t region_id, uint64_t* last_idx, uint64_t* last_term)>;
+  using SnapProviderFn =
+      std::function<std::string(uint32_t region_id, uint64_t* last_idx, uint64_t* last_term)>;
   // 重新加载函数
   using ReloadFn = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
 
@@ -101,6 +107,10 @@ class Store {
   void drive_ready(uint32_t region_id);
   /// propose 热路径：按 ready_coalesce_n/ms 攒批后再 drive_ready（group commit）。
   void request_ready(uint32_t region_id);
+  /// 写入口：Leader propose + request_ready；不等 apply（由调用方 wait_apply*）。
+  /// 失败时写 error：no_region / not_leader / propose_failed。
+  bool async_write(uint32_t region_id, std::string data, uint64_t* assigned_index,
+                   std::string* error = nullptr);
 
   raft::RaftNode* get(uint32_t region_id);
   std::shared_ptr<raft::RaftNode> get_shared(uint32_t region_id);
@@ -142,39 +152,39 @@ class Store {
   void wake_peer(Peer& peer);
   std::shared_ptr<Peer> peer_locked(uint32_t region_id);
   raft::RaftNode* peer_node(Peer& peer);
-  bool persist_pipeline_enabled() const {
+  bool persist_pipeline_enabled() const {  // 是否启用持久化流水线
     return persist_ && opts_.persist_workers > 0;
   }
 
   Options opts_;
-  NodeFactory factory_;
-  ApplyFn apply_fn_;
-  ApplyBatchFn apply_batch_fn_;
-  PersistFn persist_fn_;
-  TransportFn transport_fn_;
-  SnapProviderFn snap_provider_;
-  ReloadFn reload_fn_;
+  NodeFactory factory_;           // 节点工厂
+  ApplyFn apply_fn_;              // 应用函数
+  ApplyBatchFn apply_batch_fn_;   // 应用批处理函数
+  PersistFn persist_fn_;          // 持久化函数
+  TransportFn transport_fn_;      // 传输函数
+  SnapProviderFn snap_provider_;  // 快照提供函数
+  ReloadFn reload_fn_;            // 重新加载函数
 
-  std::shared_ptr<Router> router_;
-  std::unique_ptr<BatchSystem> batch_;
-  std::unique_ptr<SnapWorker> snap_;
-  std::unique_ptr<PersistWorker> persist_;
-  StoreMeta meta_;
+  std::shared_ptr<Router> router_;          // 路由器
+  std::unique_ptr<BatchSystem> batch_;      // 批处理系统
+  std::unique_ptr<SnapWorker> snap_;        // 快照工作器
+  std::unique_ptr<PersistWorker> persist_;  // 持久化工作器
+  StoreMeta meta_;                          // 存储元数据
 
-  mutable std::mutex mu_;
-  std::unordered_map<uint32_t, std::shared_ptr<Peer>> peers_;
+  mutable std::mutex mu_;                                      // 互斥锁
+  std::unordered_map<uint32_t, std::shared_ptr<Peer>> peers_;  // 节点表
 
-  struct CoalesceState {
-    uint32_t pending{0};
-    bool armed{false};
-    std::chrono::steady_clock::time_point deadline{};
+  struct CoalesceState {                               // 攒批状态
+    uint32_t pending{0};                               // 待处理数量
+    bool armed{false};                                 // 是否已触发
+    std::chrono::steady_clock::time_point deadline{};  // 截止时间
   };
-  void coalesce_loop();
-  std::mutex coalesce_mu_;
-  std::condition_variable coalesce_cv_;
-  std::unordered_map<uint32_t, CoalesceState> coalesce_;
-  std::atomic<bool> coalesce_running_{false};
-  std::thread coalesce_thr_;
-};
+  void coalesce_loop();                                   // 攒批循环
+  std::mutex coalesce_mu_;                                // 攒批互斥锁
+  std::condition_variable coalesce_cv_;                   // 攒批条件变量
+  std::unordered_map<uint32_t, CoalesceState> coalesce_;  // 攒批表
+  std::atomic<bool> coalesce_running_{false};             // 攒批运行状态
+  std::thread coalesce_thr_;                              // 攒批线程
+};  // 攒批状态
 
 }  // namespace openkv::raftstore

@@ -40,7 +40,8 @@ class TsRangeQueue {
       uint64_t t = tail_.load(std::memory_order_relaxed);
       const uint64_t h = head_.load(std::memory_order_acquire);
       if (t - h >= Cap) return false;
-      if (!tail_.compare_exchange_weak(t, t + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+      if (!tail_.compare_exchange_weak(t, t + 1, std::memory_order_acq_rel,
+                                       std::memory_order_relaxed)) {
         continue;
       }
       Slot& s = slots_[t & (Cap - 1)];
@@ -72,7 +73,8 @@ class TsRangeQueue {
         // 生产者尚未发布，或槽已退役但 head 未推进。
         if (h + 1 <= t) {
           uint64_t expect = h;
-          head_.compare_exchange_weak(expect, h + 1, std::memory_order_acq_rel, std::memory_order_relaxed);
+          head_.compare_exchange_weak(expect, h + 1, std::memory_order_acq_rel,
+                                      std::memory_order_relaxed);
         }
         continue;
       }
@@ -84,12 +86,14 @@ class TsRangeQueue {
       }
       if (cur + static_cast<uint64_t>(n) > end) {
         // 丢弃不足以满足 n 的队头碎片。
-        if (s.next.compare_exchange_weak(cur, end, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+        if (s.next.compare_exchange_weak(cur, end, std::memory_order_acq_rel,
+                                         std::memory_order_relaxed)) {
           cached_.fetch_sub(end - cur, std::memory_order_relaxed);
         }
         continue;
       }
-      if (s.next.compare_exchange_weak(cur, cur + n, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+      if (s.next.compare_exchange_weak(cur, cur + n, std::memory_order_acq_rel,
+                                       std::memory_order_relaxed)) {
         cached_.fetch_sub(n, std::memory_order_relaxed);
         if (out_start) *out_start = cur;
         if (cur + n >= end) retire_head(h, s);
@@ -109,7 +113,8 @@ class TsRangeQueue {
 
   void retire_head(uint64_t h, Slot& s) {
     uint64_t expect = h;
-    if (head_.compare_exchange_strong(expect, h + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+    if (head_.compare_exchange_strong(expect, h + 1, std::memory_order_acq_rel,
+                                      std::memory_order_relaxed)) {
       s.end.store(0, std::memory_order_release);
       s.next.store(0, std::memory_order_relaxed);
     }

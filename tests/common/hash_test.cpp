@@ -31,9 +31,7 @@ TEST(HashTest, Fnv1aStable) {
   EXPECT_NE(fnv1a64("a"), fnv1a64("b"));
 }
 
-TEST(HashTest, EmptyKey) {
-  EXPECT_EQ(fnv1a64(""), 14695981039346656037ULL);
-}
+TEST(HashTest, EmptyKey) { EXPECT_EQ(fnv1a64(""), 14695981039346656037ULL); }
 
 TEST(HashTest, ShardOfRange) {
   constexpr uint32_t kShards = 8;
@@ -43,9 +41,7 @@ TEST(HashTest, ShardOfRange) {
   }
 }
 
-TEST(HashTest, ShardOfZeroCount) {
-  EXPECT_EQ(shard_of("any", 0), 0u);
-}
+TEST(HashTest, ShardOfZeroCount) { EXPECT_EQ(shard_of("any", 0), 0u); }
 
 TEST(HashTest, ShardDistributionNotCollapsed) {
   std::set<uint32_t> seen;

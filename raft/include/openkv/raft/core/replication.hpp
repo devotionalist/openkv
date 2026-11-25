@@ -17,14 +17,14 @@
 
 #pragma once
 
-#include "openkv/raft/core/types.hpp"
-
 #include <chrono>
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include "openkv/raft/core/types.hpp"
 
 namespace openkv::raft {
 
@@ -35,26 +35,32 @@ class Replication {
  public:
   explicit Replication(RaftNode& node) : n_(node) {}
 
-  void broadcast_heartbeat();
-  void maybe_broadcast();
+  /// 向各 peer 推送：有日志发 AE，空则 probe/心跳，掉窗则 InstallSnapshot。
+  void broadcast_replicate();
+  /// need_replicate_ 时才推一轮（Leader）。
+  void maybe_replicate();
   void maybe_commit();
 
+  // 减少inflight
   void dec_inflight(const std::string& peer_id);
+  // 尝试增加inflight
   bool try_inc_inflight(const std::string& peer_id);
 
-  /// 入站 AE（已持锁）。
+  // 入站 AE（已持锁）。
   void on_append_entries(const std::string& from, uint64_t term, uint64_t prev_idx,
                          uint64_t prev_term, const std::vector<LogEntry>& entries,
                          uint64_t leader_commit, bool* success, uint64_t* match_index);
-  /// 入站 AE 应答（已持锁；调用方负责 flush/notify）。
+  // 入站 AE 应答（已持锁；调用方负责 flush/notify）。
   void on_append_entries_reply_locked(const std::string& from, uint64_t term, bool success,
                                       uint64_t match_index);
+  // 入站快照
   void on_install_snapshot(const std::string& from, uint64_t term, uint64_t last_index,
                            uint64_t last_term, std::string_view data, bool* success);
+  // 入站快照应答（已持锁；调用方负责 flush/notify）。
   void on_install_snapshot_reply_locked(const std::string& from, uint64_t term, bool success,
                                         uint64_t match_index);
 
-  bool need_bcast_{false};  ///< 有人请求尽快广播一轮
+  bool need_replicate_{false};  ///< 有人请求尽快再推一轮复制
   std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_snap_sent_;
   uint64_t snapshot_send_count_{0};
 

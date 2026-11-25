@@ -37,8 +37,6 @@
 
 #include "openkv/storage/kv_engine.hpp"
 
-#include "openkv/logging.hpp"
-
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -47,6 +45,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+
+#include "openkv/logging.hpp"
 
 namespace openkv::storage {
 namespace {
@@ -190,7 +190,6 @@ void KvEngine::set_sync_mode(raft::SyncMode m) {
   refresh_write_options();
 }
 
-
 void KvEngine::migrate_legacy_default_cf() {
   rocksdb::WriteBatch put_batch;
   rocksdb::WriteBatch del_batch;
@@ -257,8 +256,7 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
 
   rocksdb::DB* raw = nullptr;
   std::vector<rocksdb::ColumnFamilyHandle*> handles;
-  const rocksdb::Status st =
-      rocksdb::DB::Open(options, path.string(), descriptors, &handles, &raw);
+  const rocksdb::Status st = rocksdb::DB::Open(options, path.string(), descriptors, &handles, &raw);
   if (!st.ok()) {
     throw std::runtime_error("rocksdb open failed: " + st.ToString());
   }
@@ -275,8 +273,7 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
   refresh_write_options();
   migrate_legacy_default_cf();
   SKV_INFO << "rocksdb opened shard=" << shard_id_ << " path=" << path
-           << " store_level=" << (store_level_ ? 1 : 0)
-           << " sync=" << raft::sync_mode_name(sync_)
+           << " store_level=" << (store_level_ ? 1 : 0) << " sync=" << raft::sync_mode_name(sync_)
            << " kv_write_sync=" << (raft::kv_apply_sync(sync_) ? 1 : 0)
            << " cfs=default,lock,data,write";
 }
@@ -395,7 +392,8 @@ void KvEngine::scan_prefix(
   }
 }
 
-void KvEngine::for_each(const std::function<bool(std::string_view key, const KvRecord&)>& fn) const {
+void KvEngine::for_each(
+    const std::function<bool(std::string_view key, const KvRecord&)>& fn) const {
   for (auto* cf : rocks_->all) {
     std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
@@ -526,7 +524,8 @@ bool KvEngine::create_checkpoint(std::string_view dest_dir) const {
       }
       std::filesystem::remove(dest);
     }
-    // libc++: path("foo").has_parent_path()==true 但 parent_path() 为空串，create_directories("") 会抛。
+    // libc++: path("foo").has_parent_path()==true 但 parent_path() 为空串，create_directories("")
+    // 会抛。
     if (dest.has_parent_path() && !dest.parent_path().empty()) {
       std::filesystem::create_directories(dest.parent_path());
     }
@@ -573,8 +572,8 @@ bool KvEngine::restore_from_checkpoint(std::string_view src_dir) {
 
   rocksdb::DB* raw = nullptr;
   std::vector<rocksdb::ColumnFamilyHandle*> handles;
-  auto st = rocksdb::DB::OpenForReadOnly(options, std::string(src_dir), descriptors, &handles,
-                                         &raw, /*error_if_wal_file_exists=*/false);
+  auto st = rocksdb::DB::OpenForReadOnly(options, std::string(src_dir), descriptors, &handles, &raw,
+                                         /*error_if_wal_file_exists=*/false);
   if (!st.ok()) {
     // 兼容仅 default 的旧 checkpoint
     handles.clear();
@@ -619,8 +618,7 @@ bool KvEngine::restore_from_checkpoint(std::string_view src_dir) {
     SKV_WARN << "restore put: " << st.ToString();
     return false;
   }
-  SKV_INFO << "restore_from_checkpoint shard=" << shard_id_ << " keys=" << n
-           << " src=" << src_dir;
+  SKV_INFO << "restore_from_checkpoint shard=" << shard_id_ << " keys=" << n << " src=" << src_dir;
   return true;
 }
 
@@ -781,9 +779,7 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
   return moved;
 }
 
-size_t KvEngine::migrate_all(KvEngine& dst) {
-  return migrate_ge(dst, std::string());
-}
+size_t KvEngine::migrate_all(KvEngine& dst) { return migrate_ge(dst, std::string()); }
 
 #else
 // =============================================================================
@@ -807,8 +803,7 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
   }
   std::filesystem::create_directories(db_path());
   SKV_WARN << "RocksDB not linked; using in-memory engine for shard=" << shard_id_
-           << " store_level=" << (store_level_ ? 1 : 0)
-           << " sync=" << raft::sync_mode_name(sync_);
+           << " store_level=" << (store_level_ ? 1 : 0) << " sync=" << raft::sync_mode_name(sync_);
 }
 
 KvEngine::~KvEngine() = default;
@@ -895,7 +890,8 @@ void KvEngine::scan_prefix(
   }
 }
 
-void KvEngine::for_each(const std::function<bool(std::string_view key, const KvRecord&)>& fn) const {
+void KvEngine::for_each(
+    const std::function<bool(std::string_view key, const KvRecord&)>& fn) const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<std::pair<std::string, KvRecord>> items(mem_.begin(), mem_.end());
   std::sort(items.begin(), items.end(),
@@ -993,15 +989,15 @@ void KvEngine::apply_snapshot(std::string_view data, const openkv::KeyRange& ran
   }
   size_t i = 0;
   while (i < data.size()) {
-    auto a = data.find('\0', i);       // key 结束
+    auto a = data.find('\0', i);  // key 结束
     if (a == std::string_view::npos) {
       break;
     }
-    auto b = data.find('\0', a + 1);   // revision 结束
+    auto b = data.find('\0', a + 1);  // revision 结束
     if (b == std::string_view::npos) {
       break;
     }
-    auto c = data.find('\0', b + 1);   // value 结束
+    auto c = data.find('\0', b + 1);  // value 结束
     if (c == std::string_view::npos) {
       break;
     }
@@ -1035,8 +1031,8 @@ size_t KvEngine::approx_bytes(const openkv::KeyRange& range) const {
   size_t n = 0;
   for (const auto& [k, r] : mem_) {
     const auto pos = k.find('\0');
-    std::string_view u = pos == std::string::npos ? std::string_view(k)
-                                                  : std::string_view(k).substr(0, pos);
+    std::string_view u =
+        pos == std::string::npos ? std::string_view(k) : std::string_view(k).substr(0, pos);
     if (u.compare(0, 8, "\xff\xffskv/") == 0) continue;
     if (!range.contains(u)) continue;
     n += k.size() + r.value.size() + sizeof(r.revision);
@@ -1094,9 +1090,7 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
   return moved.size();
 }
 
-size_t KvEngine::migrate_all(KvEngine& dst) {
-  return migrate_ge(dst, std::string());
-}
+size_t KvEngine::migrate_all(KvEngine& dst) { return migrate_ge(dst, std::string()); }
 
 #endif  // OPENKV_HAS_ROCKSDB
 

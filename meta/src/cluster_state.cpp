@@ -18,9 +18,6 @@
 // 所有公开写方法内部加 mu_；须由 Meta Raft apply 路径调用以保证多副本一致。
 
 #include "openkv/meta/cluster_state.hpp"
-#include "openkv/codec.hpp"
-
-#include "openkv/logging.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -28,6 +25,9 @@
 #include <limits>
 #include <sstream>
 #include <unordered_set>
+
+#include "openkv/codec.hpp"
+#include "openkv/logging.hpp"
 
 namespace openkv::meta {
 namespace {
@@ -40,8 +40,6 @@ int64_t now_ms() {
              std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
-
-
 
 std::vector<std::string> split_pipe(std::string_view s) {
   std::vector<std::string> parts;
@@ -101,8 +99,8 @@ void ClusterState::bootstrap_range(uint32_t replica_factor,
 std::string ClusterState::register_node(NodeInfo node) {
   std::lock_guard<std::mutex> lock(mu_);
   if (node.node_id.empty()) {
-    node.node_id = (node.role == NodeRole::kCompute ? "compute-" : "storage-") +
-                   std::to_string(nodes_.size());
+    node.node_id =
+        (node.role == NodeRole::kCompute ? "compute-" : "storage-") + std::to_string(nodes_.size());
   }
   auto it = nodes_.find(node.node_id);
   if (it != nodes_.end()) {
@@ -366,8 +364,8 @@ size_t ClusterState::sweep_stale(int64_t ttl_ms) {
       }
     }
     ++n;
-    SKV_WARN << "store stale → Offline id=" << id << " last_hb_age_ms="
-             << (now - node.last_heartbeat_ms);
+    SKV_WARN << "store stale → Offline id=" << id
+             << " last_hb_age_ms=" << (now - node.last_heartbeat_ms);
   }
   if (n > 0) {
     ++route_.version;
@@ -490,8 +488,7 @@ void ClusterState::bump_route_version() {
 
 // 左保留 [start,split)，右新建 [split,end)；右副本默认继承或用 peer_ids。
 std::optional<openkv::RegionId> ClusterState::split_region(
-    openkv::RegionId region_id, std::string split_key,
-    const std::vector<std::string>& peer_ids) {
+    openkv::RegionId region_id, std::string split_key, const std::vector<std::string>& peer_ids) {
   std::lock_guard<std::mutex> lock(mu_);
   auto* left = mutable_region(region_id);
   if (!left) return std::nullopt;
@@ -544,14 +541,13 @@ bool ClusterState::merge_regions(openkv::RegionId left_id, openkv::RegionId righ
 
   left->range.end_key = right->range.end_key;
   ++left->epoch;
-  route_.regions.erase(
-      std::remove_if(route_.regions.begin(), route_.regions.end(),
-                     [&](const RegionInfo& r) { return r.region_id == right_id; }),
-      route_.regions.end());
+  route_.regions.erase(std::remove_if(route_.regions.begin(), route_.regions.end(),
+                                      [&](const RegionInfo& r) { return r.region_id == right_id; }),
+                       route_.regions.end());
   route_.shard_count = static_cast<uint32_t>(route_.regions.size());
   ++route_.version;
-  SKV_INFO << "merge regions left=" << left_id << " right=" << right_id
-           << " epoch=" << left->epoch << " route_ver=" << route_.version;
+  SKV_INFO << "merge regions left=" << left_id << " right=" << right_id << " epoch=" << left->epoch
+           << " route_ver=" << route_.version;
   return true;
 }
 
@@ -727,8 +723,7 @@ std::optional<std::pair<uint32_t, std::vector<std::string>>> ClusterState::sugge
   return std::nullopt;
 }
 
-std::optional<openkv::RegionId> ClusterState::adjacent_right(
-    openkv::RegionId left_id) const {
+std::optional<openkv::RegionId> ClusterState::adjacent_right(openkv::RegionId left_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   const RegionInfo* left = nullptr;
   for (const auto& r : route_.regions) {
@@ -759,10 +754,10 @@ uint64_t ClusterState::alloc_ts(uint32_t count) {
   if (count > 10000) count = 10000;  // T1：单次批上限，防误配打爆
   // Meta 硬重启丢快照时 next_ts_ 可能回退到 1，而 Storage MVCC 仍留有更高
   // commit_ts → 全面 write_conflict。用墙钟 ms 作下界（只升不降）。
-  const uint64_t wall = static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::system_clock::now().time_since_epoch())
-          .count());
+  const uint64_t wall =
+      static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count());
   if (next_ts_ < wall) next_ts_ = wall;
   const uint64_t start = next_ts_;
   next_ts_ += count;
@@ -857,7 +852,8 @@ std::string ClusterState::serialize() const {
   // S2：尾部可选迁移任务（旧 MSK1 无此段也能 load）
   oss << '|' << migrates_.size();
   for (const auto& [_, m] : migrates_) {
-    oss << '|' << m.task_id << '|' << m.region_id << '|' << m.state << '|' << m.desired_peers.size();
+    oss << '|' << m.task_id << '|' << m.region_id << '|' << m.state << '|'
+        << m.desired_peers.size();
     for (const auto& p : m.desired_peers) oss << '|' << p;
   }
   return oss.str();

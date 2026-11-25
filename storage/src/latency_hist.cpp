@@ -14,11 +14,11 @@
 
 #include "openkv/storage/latency_hist.hpp"
 
-#include "openkv/logging.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+
+#include "openkv/logging.hpp"
 
 namespace openkv::storage {
 

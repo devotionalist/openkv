@@ -23,28 +23,26 @@
 
 #pragma once
 
-#include "openkv/compute/active_ts.hpp"
-#include "openkv/compute/router.hpp"
-#include "openkv/compute/store_rpc.hpp"
-#include "openkv/compute/tso.hpp"
-#include "openkv/work_pool.hpp"
-
-#include <optional>
-
-#include "kv/v1/ds.grpc.pb.h"
-#include "kv/v1/kv.grpc.pb.h"
-
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include "kv/v1/ds.grpc.pb.h"
+#include "kv/v1/kv.grpc.pb.h"
+#include "openkv/compute/active_ts.hpp"
+#include "openkv/compute/router.hpp"
+#include "openkv/compute/store_rpc.hpp"
+#include "openkv/compute/tso.hpp"
+#include "openkv/work_pool.hpp"
 
 namespace openkv::compute {
 
@@ -196,8 +194,7 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
   grpc::ServerUnaryReactor* SRem(grpc::CallbackServerContext*, const kv::v1::SRemRequest*,
                                  kv::v1::SRemResponse*) override;
   /// Set 成员是否存在。
-  grpc::ServerUnaryReactor* SIsMember(grpc::CallbackServerContext*,
-                                      const kv::v1::SIsMemberRequest*,
+  grpc::ServerUnaryReactor* SIsMember(grpc::CallbackServerContext*, const kv::v1::SIsMemberRequest*,
                                       kv::v1::SIsMemberResponse*) override;
   /// Set 基数。
   grpc::ServerUnaryReactor* SCard(grpc::CallbackServerContext*, const kv::v1::SCardRequest*,
@@ -274,8 +271,8 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
   /// 尝试顺序：leader_hint 优先，再 Router.replica_addrs，再 boot storage_addrs。
   std::vector<std::string> try_order(uint32_t region);
   /// 挑下一个可拨地址；skip 里是本轮已失败/已跳过的副本。
-  std::optional<std::string> pick_leader_addr(
-      uint32_t region, const std::unordered_set<std::string>& skip = {});
+  std::optional<std::string> pick_leader_addr(uint32_t region,
+                                              const std::unordered_set<std::string>& skip = {});
   /// 记住 not_leader 后的真实 leader 地址。
   void remember_leader(uint32_t region, const std::string& addr);
   /// 清掉该 Region 的 leader_hint（路由刷新后）。
@@ -387,12 +384,16 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
                       std::function<void(grpc::Status)> done, int attempt = 0);
 
   /// Hash / Set / List / ZSet 异步 Bodies（CQ 安全）。
-  void HSetAsync(const kv::v1::HSetRequest*, kv::v1::HSetResponse*, std::function<void(grpc::Status)>);
-  void HGetAsync(const kv::v1::HGetRequest*, kv::v1::HGetResponse*, std::function<void(grpc::Status)>);
-  void HDelAsync(const kv::v1::HDelRequest*, kv::v1::HDelResponse*, std::function<void(grpc::Status)>);
+  void HSetAsync(const kv::v1::HSetRequest*, kv::v1::HSetResponse*,
+                 std::function<void(grpc::Status)>);
+  void HGetAsync(const kv::v1::HGetRequest*, kv::v1::HGetResponse*,
+                 std::function<void(grpc::Status)>);
+  void HDelAsync(const kv::v1::HDelRequest*, kv::v1::HDelResponse*,
+                 std::function<void(grpc::Status)>);
   void HExistsAsync(const kv::v1::HExistsRequest*, kv::v1::HExistsResponse*,
                     std::function<void(grpc::Status)>);
-  void HLenAsync(const kv::v1::HLenRequest*, kv::v1::HLenResponse*, std::function<void(grpc::Status)>);
+  void HLenAsync(const kv::v1::HLenRequest*, kv::v1::HLenResponse*,
+                 std::function<void(grpc::Status)>);
   void HGetAllAsync(const kv::v1::HGetAllRequest*, kv::v1::HGetAllResponse*,
                     std::function<void(grpc::Status)>);
   void HKeysAsync(const kv::v1::HKeysRequest*, kv::v1::HKeysResponse*,
@@ -401,8 +402,10 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
                   std::function<void(grpc::Status)>);
   void HMGetAsync(const kv::v1::HMGetRequest*, kv::v1::HMGetResponse*,
                   std::function<void(grpc::Status)>);
-  void SAddAsync(const kv::v1::SAddRequest*, kv::v1::SAddResponse*, std::function<void(grpc::Status)>);
-  void SRemAsync(const kv::v1::SRemRequest*, kv::v1::SRemResponse*, std::function<void(grpc::Status)>);
+  void SAddAsync(const kv::v1::SAddRequest*, kv::v1::SAddResponse*,
+                 std::function<void(grpc::Status)>);
+  void SRemAsync(const kv::v1::SRemRequest*, kv::v1::SRemResponse*,
+                 std::function<void(grpc::Status)>);
   void SIsMemberAsync(const kv::v1::SIsMemberRequest*, kv::v1::SIsMemberResponse*,
                       std::function<void(grpc::Status)>);
   void SCardAsync(const kv::v1::SCardRequest*, kv::v1::SCardResponse*,
@@ -413,15 +416,20 @@ class GatewayServer final : public kv::v1::KVService::CallbackService,
                   std::function<void(grpc::Status)>);
   void RPushAsync(const kv::v1::RPushRequest*, kv::v1::RPushResponse*,
                   std::function<void(grpc::Status)>);
-  void LPopAsync(const kv::v1::LPopRequest*, kv::v1::LPopResponse*, std::function<void(grpc::Status)>);
-  void RPopAsync(const kv::v1::RPopRequest*, kv::v1::RPopResponse*, std::function<void(grpc::Status)>);
-  void LLenAsync(const kv::v1::LLenRequest*, kv::v1::LLenResponse*, std::function<void(grpc::Status)>);
+  void LPopAsync(const kv::v1::LPopRequest*, kv::v1::LPopResponse*,
+                 std::function<void(grpc::Status)>);
+  void RPopAsync(const kv::v1::RPopRequest*, kv::v1::RPopResponse*,
+                 std::function<void(grpc::Status)>);
+  void LLenAsync(const kv::v1::LLenRequest*, kv::v1::LLenResponse*,
+                 std::function<void(grpc::Status)>);
   void LRangeAsync(const kv::v1::LRangeRequest*, kv::v1::LRangeResponse*,
                    std::function<void(grpc::Status)>);
   void LIndexAsync(const kv::v1::LIndexRequest*, kv::v1::LIndexResponse*,
                    std::function<void(grpc::Status)>);
-  void ZAddAsync(const kv::v1::ZAddRequest*, kv::v1::ZAddResponse*, std::function<void(grpc::Status)>);
-  void ZRemAsync(const kv::v1::ZRemRequest*, kv::v1::ZRemResponse*, std::function<void(grpc::Status)>);
+  void ZAddAsync(const kv::v1::ZAddRequest*, kv::v1::ZAddResponse*,
+                 std::function<void(grpc::Status)>);
+  void ZRemAsync(const kv::v1::ZRemRequest*, kv::v1::ZRemResponse*,
+                 std::function<void(grpc::Status)>);
   void ZScoreAsync(const kv::v1::ZScoreRequest*, kv::v1::ZScoreResponse*,
                    std::function<void(grpc::Status)>);
   void ZCardAsync(const kv::v1::ZCardRequest*, kv::v1::ZCardResponse*,

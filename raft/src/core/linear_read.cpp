@@ -17,12 +17,12 @@
 
 #include "openkv/raft/core/linear_read.hpp"
 
+#include <mutex>
+
 #include "openkv/raft/core/membership.hpp"
 #include "openkv/raft/core/raft_node.hpp"
 #include "openkv/raft/core/ready_pump.hpp"
 #include "openkv/raft/core/replication.hpp"
-
-#include <mutex>
 
 namespace openkv::raft {
 
@@ -33,8 +33,8 @@ bool LinearRead::lease_valid_locked() const {
 }
 
 void LinearRead::renew_lease_locked() {
-  lease_expire_ = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(n_.opts_.leader_lease_ms);
+  lease_expire_ =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(n_.opts_.leader_lease_ms);
 }
 
 void LinearRead::note_read_index_ack(const std::string& peer_id) {
@@ -59,14 +59,13 @@ bool LinearRead::read_index(uint64_t* read_commit, uint32_t timeout_ms) {
     pending_read_gen_ = ++read_index_gen_;
     read_index_acks_.clear();
     read_index_acks_.insert(n_.opts_.self_id);
-    n_.replication_.broadcast_heartbeat();
-    n_.replication_.need_bcast_ = false;
+    n_.replication_.broadcast_replicate();
+    n_.replication_.need_replicate_ = false;
   }
   n_.ready_pump_.flush_transport();
   {
     std::unique_lock<std::mutex> lock(n_.mu_);
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (pending_read_gen_ != 0) {
       if (read_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
         pending_read_gen_ = 0;

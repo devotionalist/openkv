@@ -17,8 +17,8 @@
 #include <gtest/gtest.h>
 
 using openkv::KeyRange;
-using openkv::RegionMeta;
 using openkv::locate_region;
+using openkv::RegionMeta;
 using openkv::sort_regions;
 
 TEST(RegionTest, ContainsAndInf) {

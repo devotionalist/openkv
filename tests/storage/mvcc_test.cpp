@@ -12,21 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/storage/kv_engine.hpp"
 #include "openkv/storage/mvcc.hpp"
-#include "openkv/storage/store_service.hpp"
 
 #include <gtest/gtest.h>
 
 #include <filesystem>
 
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/store_service.hpp"
+
+using openkv::storage::decode_prewrite_value;
+using openkv::storage::encode_prewrite_value;
 using openkv::storage::KvEngine;
 using openkv::storage::LockInfo;
 using openkv::storage::MvccOp;
 using openkv::storage::MvccStore;
 using openkv::storage::WriteInfo;
-using openkv::storage::decode_prewrite_value;
-using openkv::storage::encode_prewrite_value;
 
 TEST(MvccTest, LockRoundTrip) {
   LockInfo in;

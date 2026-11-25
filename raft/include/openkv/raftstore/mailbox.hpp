@@ -19,14 +19,14 @@
 
 #pragma once
 
-#include "openkv/raftstore/msg.hpp"
-
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <optional>
 #include <vector>
+
+#include "openkv/raftstore/msg.hpp"
 
 namespace openkv::raftstore {
 
@@ -35,6 +35,7 @@ class Mailbox {
  public:
   explicit Mailbox(size_t capacity = 4096) : capacity_(capacity == 0 ? 4096 : capacity) {}
 
+  /// 【非网络】只入本机邮箱队列；满则丢。真正出网见 Store::transport_fn_ → GrpcRaftTransport。
   bool try_send(T msg) {
     std::lock_guard<std::mutex> lk(mu_);
     if (closed_ || q_.size() >= capacity_) {
@@ -78,12 +79,12 @@ class Mailbox {
   }
 
  private:
-  size_t capacity_;
-  mutable std::mutex mu_;
-  std::condition_variable cv_;
-  std::deque<T> q_;
-  bool closed_{false};
-  uint64_t drop_count_{0};
+  size_t capacity_;             // 容量
+  mutable std::mutex mu_;       // 互斥锁
+  std::condition_variable cv_;  // 条件变量
+  std::deque<T> q_;             // 队列
+  bool closed_{false};          // 是否关闭
+  uint64_t drop_count_{0};      // 丢弃计数
 };
 
 }  // namespace openkv::raftstore

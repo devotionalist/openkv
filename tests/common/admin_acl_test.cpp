@@ -16,7 +16,6 @@
 // O1：Admin ACL 分类与连接级 AUTH（Meta handle_line）。
 
 #include "openkv/admin_acl.hpp"
-#include "openkv/meta/meta_node.hpp"
 
 #include <gtest/gtest.h>
 
@@ -24,10 +23,12 @@
 #include <cstdlib>
 #include <thread>
 
-using openkv::AdminSession;
-using openkv::ClusterBootstrap;
+#include "openkv/meta/meta_node.hpp"
+
 using openkv::admin_allowed;
 using openkv::admin_try_auth;
+using openkv::AdminSession;
+using openkv::ClusterBootstrap;
 using openkv::meta_needs_admin;
 using openkv::storage_needs_admin;
 using openkv::meta::MetaNode;

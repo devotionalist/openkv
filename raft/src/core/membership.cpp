@@ -17,13 +17,13 @@
 
 #include "openkv/raft/core/membership.hpp"
 
+#include <algorithm>
+#include <unordered_set>
+
 #include "openkv/logging.hpp"
 #include "openkv/raft/core/election.hpp"
 #include "openkv/raft/core/raft_node.hpp"
 #include "openkv/raft/core/replication.hpp"
-
-#include <algorithm>
-#include <unordered_set>
 
 namespace openkv::raft {
 
@@ -35,20 +35,41 @@ std::vector<std::string> Membership::voter_ids() const {
   return out;
 }
 
+/**
+ * @brief 计算多数派
+ *
+ * @param voters 投票者列表
+ * @return uint32_t 多数派
+ * @retval 0 失败
+ * @note 多数派是投票者列表的一半加一
+ */
 uint32_t Membership::majority_of(const std::vector<std::string>& voters) const {
-  size_t n = voters.empty() ? 1 : voters.size();
-  return static_cast<uint32_t>(n / 2 + 1);
+  size_t n = voters.empty() ? 1 : voters.size();  // 如果投票者列表为空，则返回1
+  return static_cast<uint32_t>(n / 2 + 1);        // 返回多数派
 }
 
-uint32_t Membership::majority() const {
-  if (in_joint_) {
-    return std::max(majority_of(joint_old_voters_), majority_of(joint_new_voters_));
+/**
+ * @brief 计算多数派
+ *
+ * @return 多数派
+ */
+uint32_t Membership::majority() const {  // 计算多数派
+  if (in_joint_) {                       // 如果处于联合配置状态
+    return std::max(majority_of(joint_old_voters_),
+                    majority_of(joint_new_voters_));  // 返回旧的多数派和新的多数派中的较大值
   }
-  return majority_of(voter_ids());
+  return majority_of(voter_ids());  // 返回投票者列表的多数派
 }
 
+/**
+ * @brief 检查多数派 是否满足
+ *
+ * @param voters 投票者列表
+ * @param index 索引
+ * @return 是否满足多数派
+ */
 bool Membership::quorate_at(const std::vector<std::string>& voters, uint64_t index) const {
-  uint32_t ok = 0;
+  uint32_t ok = 0;  // 满足多数派的投票者数量
   for (const auto& id : voters) {
     uint64_t m = 0;
     if (id == n_.opts_.self_id) {
@@ -64,12 +85,19 @@ bool Membership::quorate_at(const std::vector<std::string>& voters, uint64_t ind
   return ok >= majority_of(voters);
 }
 
+/**
+ * @brief 编码配置
+ *
+ * @param cc 配置
+ * @param out 输出
+ * @return 是否成功
+ */
 bool Membership::encode_conf(const ConfChange& cc, std::string* out) const {
-  out->clear();
-  out->push_back(static_cast<char>(0xFF));
+  out->clear();                             // 清空输出
+  out->push_back(static_cast<char>(0xFF));  // 添加FF
   if (cc.type == ConfChange::kEnterJoint) {
-    out->push_back(static_cast<char>(ConfChange::kEnterJoint));
-    out->push_back(static_cast<char>(cc.joint_change));
+    out->push_back(static_cast<char>(ConfChange::kEnterJoint));  // 添加EnterJoint
+    out->push_back(static_cast<char>(cc.joint_change));          // 添加joint_change
   } else {
     out->push_back(static_cast<char>(cc.type));
   }
@@ -96,9 +124,9 @@ bool Membership::decode_conf(std::string_view data, ConfChange* cc) {
   if (nul == std::string_view::npos) return false;
   cc->peer.id = std::string(data.substr(id_off, nul - id_off));
   cc->peer.address = std::string(data.substr(nul + 1));
-  cc->peer.learner = (cc->type == ConfChange::kAddLearner ||
-                      (cc->type == ConfChange::kEnterJoint &&
-                       cc->joint_change == ConfChange::kAddLearner));
+  cc->peer.learner =
+      (cc->type == ConfChange::kAddLearner ||
+       (cc->type == ConfChange::kEnterJoint && cc->joint_change == ConfChange::kAddLearner));
   return true;
 }
 
@@ -110,7 +138,7 @@ void Membership::maybe_auto_leave_joint() {
     ConfChange cc;
     if (decode_conf(e->data, &cc) && cc.type == ConfChange::kLeaveJoint) {
       leave_joint_inflight_ = true;
-      n_.replication_.need_bcast_ = true;
+      n_.replication_.need_replicate_ = true;
       return;
     }
   }
@@ -127,7 +155,7 @@ void Membership::maybe_auto_leave_joint() {
     if (auto e = n_.log_.entry(idx)) n_.ready_io_.ready_unstable_.push_back(*e);
   }
   n_.progress_.match_index_[n_.opts_.self_id] = idx;
-  n_.replication_.need_bcast_ = true;
+  n_.replication_.need_replicate_ = true;
   n_.persist_locked();
   SKV_INFO << "shard=" << n_.opts_.shard_id << " auto LeaveJoint proposed idx=" << idx;
 }
@@ -149,7 +177,8 @@ void Membership::apply_conf_entry(const LogEntry& e) {
       joint_new_voters_.clear();
       auto_leave_pending_ = false;
       leave_joint_inflight_ = false;
-      SKV_INFO << "shard=" << n_.opts_.shard_id << " left joint config voters=" << voter_ids().size();
+      SKV_INFO << "shard=" << n_.opts_.shard_id
+               << " left joint config voters=" << voter_ids().size();
     } else {
       leave_joint_inflight_ = false;
       auto_leave_pending_ = false;
@@ -225,7 +254,7 @@ void Membership::add_peer(const Peer& p) {
       if (mit == n_.progress_.match_index_.end() || mit->second == 0) {
         n_.progress_.next_index_[p.id] = 0;
         n_.progress_.match_index_[p.id] = 0;
-        n_.replication_.need_bcast_ = true;
+        n_.replication_.need_replicate_ = true;
       }
     }
     if (n_.opts_.on_peer_addr && !p.address.empty()) {
@@ -236,7 +265,7 @@ void Membership::add_peer(const Peer& p) {
   n_.opts_.peers.push_back(p);
   n_.progress_.next_index_[p.id] = 0;
   n_.progress_.match_index_[p.id] = 0;
-  if (n_.role_ == Role::kLeader) n_.replication_.need_bcast_ = true;
+  if (n_.role_ == Role::kLeader) n_.replication_.need_replicate_ = true;
   if (n_.opts_.on_peer_addr && !p.address.empty()) {
     n_.opts_.on_peer_addr(p.id, p.address);
   }

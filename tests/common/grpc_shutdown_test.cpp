@@ -16,12 +16,13 @@
 // SKV_GRPC_SHUTDOWN_MS 解析；graceful_grpc_shutdown(nullptr) 不崩。
 
 #include "openkv/grpc_shutdown.hpp"
-#include "openkv/protocol.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cstdlib>
 #include <string>
+
+#include "openkv/protocol.hpp"
 
 namespace {
 

@@ -40,7 +40,7 @@ stateDiagram-v2
 flowchart TB
   subgraph client_path["业务写"]
     GW[Gateway] --> SS[StoreService Propose]
-    SS --> RKV[RaftKV]
+    SS --> RKV[Store::async_write]
   end
 
   subgraph protocol["openkv::raft"]
@@ -190,7 +190,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
   autonumber
-  participant KV as RaftKV / MetaNode
+  participant KV as Store / MetaNode
   participant RN as RaftNode
   participant St as Store / BatchSystem
   participant Eng as RaftEngine

@@ -98,7 +98,7 @@
 | BatchSystem | `raftstore::BatchSystem` |
 | 单 Store RocksDB | `ShardEngineManager` → **`data_dir/kv` 一份引擎**；Region 靠 `KeyRange` |
 | Scheduler + latch | [`storage/scheduler.hpp`](../../storage/include/openkv/storage/scheduler.hpp) |
-| RaftKV | [`storage/raftkv.hpp`](../../storage/include/openkv/storage/raftkv.hpp) |
+| 写入口 | [`Store::async_write`](../../raft/include/openkv/raftstore/store.hpp) |
 | Hibernate | 默认 `hibernate_after_ms=5000` + 低频 cold tick |
 | Snap | `SnapWorker`（合并 / 重试 / Stats） |
 | StoreMeta | `raftstore::StoreMeta` |
@@ -107,7 +107,7 @@
 | Meta 调度 | `RegionScheduler::maybe_enqueue_from_scan`；`SKV_PD_AUTO_BALANCE=1` 主动 balance |
 | Coprocessor | [`storage/coprocessor.hpp`](../../storage/include/openkv/storage/coprocessor.hpp) + `ADMIN_COP` |
 
-`StorageNode`：组装 Store / RaftKV / Scheduler / 单 Store 引擎；写经 Scheduler→RaftKV→propose；入站 Raft 经 `Store::apply_inbound_raft`。
+`StorageNode`：组装 MultiRaft(Store) / Scheduler / 单 Store 引擎；写经 Scheduler→`Store::async_write`；入站 Raft 经 `Store::apply_inbound_raft`。
 
 ### Phase 状态（C + 单 Store RocksDB）
 
@@ -116,7 +116,7 @@
 | S0 单 Store RocksDB | 完成 | `data_dir/kv`；`migrate_legacy_shards_if_needed` |
 | S1 Ready 写路径 | 完成 | Storage 固定 Ready 外提（已移除双轨） |
 | S2 Router + Hibernate | 完成 | 入站 `apply_inbound_raft`；默认 `hibernate_after_ms=5000`；Snap→SnapWorker |
-| S3 Scheduler + RaftKV + WB | 完成 | latch + RaftKV；Apply 展平合并点 + `KvEngine::write_batch` |
+| S3 Scheduler + Store 写入口 + WB | 完成 | latch + `Store::async_write`；Apply 展平合并点 + `KvEngine::write_batch` |
 | S4 gRPC | 完成 | `GrpcRaftTransport` + C++ gRPC Server；IT 默认 gRPC |
 | S5 PD + Coprocessor | 完成 | 主动扫描迁移；Coprocessor UT；本文档 |
 

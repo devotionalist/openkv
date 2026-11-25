@@ -17,8 +17,6 @@
 // Reactor 经 enable_shared_from_this / weak_ptr 护住：客户端取消后 OnDone 删除
 // 对象时，在途 poll 回调不得再碰已释放的 reactor（曾致 gateway exit 139）。
 
-#include "openkv/compute/gateway_server.hpp"
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -27,6 +25,8 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+
+#include "openkv/compute/gateway_server.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -91,9 +91,8 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
 
   bool wait_drain() {
     std::unique_lock<std::mutex> lock(bridge_->mu);
-    bridge_->cv.wait(lock, [&] {
-      return bridge_->cancelled || bridge_->dead || bridge_->q.empty();
-    });
+    bridge_->cv.wait(lock,
+                     [&] { return bridge_->cancelled || bridge_->dead || bridge_->q.empty(); });
     return !bridge_->cancelled && !bridge_->dead;
   }
 
@@ -118,8 +117,8 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
         if (!bridge_->finished) {
           bridge_->finished = true;
           need_finish = true;
-          finish_st = grpc::Status(grpc::StatusCode::CANCELLED,
-                                   ok ? "cancelled" : "watch write failed");
+          finish_st =
+              grpc::Status(grpc::StatusCode::CANCELLED, ok ? "cancelled" : "watch write failed");
         }
       }
     }
@@ -258,14 +257,18 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
       if (st->self->pool_) {
         st->self->pool_->post([st]() {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          if (st->live()) (*st->poll_round)();
-          else st->stop();
+          if (st->live())
+            (*st->poll_round)();
+          else
+            st->stop();
         });
       } else {
         std::thread([st]() {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          if (st->live()) (*st->poll_round)();
-          else st->stop();
+          if (st->live())
+            (*st->poll_round)();
+          else
+            st->stop();
         }).detach();
       }
       return;
@@ -400,20 +403,18 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
       return;
     }
     hs->st->self->note_to_store(*addr_opt);
-    store_watch_head_async(*addr_opt, rid, 5000,
-                           [hs](grpc::Status sst, StoreWatchHeadResult out) {
-                             if (!hs->st->live()) {
-                               hs->st->stop();
-                               return;
-                             }
-                             if (sst.ok() && out.error.empty() && out.redirect_to.empty()) {
-                               if (out.revision > hs->st->since) hs->st->since = out.revision;
-                             } else if (!out.redirect_to.empty()) {
-                               hs->st->self->remember_leader(hs->st->regions[hs->idx - 1],
-                                                             out.redirect_to);
-                             }
-                             (*hs->step)();
-                           });
+    store_watch_head_async(*addr_opt, rid, 5000, [hs](grpc::Status sst, StoreWatchHeadResult out) {
+      if (!hs->st->live()) {
+        hs->st->stop();
+        return;
+      }
+      if (sst.ok() && out.error.empty() && out.redirect_to.empty()) {
+        if (out.revision > hs->st->since) hs->st->since = out.revision;
+      } else if (!out.redirect_to.empty()) {
+        hs->st->self->remember_leader(hs->st->regions[hs->idx - 1], out.redirect_to);
+      }
+      (*hs->step)();
+    });
   };
   (*hs->step)();
 }

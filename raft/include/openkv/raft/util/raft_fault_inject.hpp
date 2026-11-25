@@ -28,10 +28,10 @@
 namespace openkv::raft {
 
 struct RaftOutboundFault {
-  int drop_ae_pct{0};     ///< 0–100：AppendEntries 丢弃概率
-  int delay_ae_ms{0};     ///< AppendEntries 发送前额外睡眠
-  int drop_raft_pct{0};   ///< 0–100：任意出站 Raft 丢弃概率
-  int delay_raft_ms{0};   ///< 任意出站 Raft 发送前额外睡眠
+  int drop_ae_pct{0};    ///< 0–100：AppendEntries 丢弃概率
+  int delay_ae_ms{0};    ///< AppendEntries 发送前额外睡眠
+  int drop_raft_pct{0};  ///< 0–100：任意出站 Raft 丢弃概率
+  int delay_raft_ms{0};  ///< 任意出站 Raft 发送前额外睡眠
 
   static RaftOutboundFault from_env();
 

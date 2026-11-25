@@ -16,12 +16,10 @@
 // 在线扩容编排器（S1）：Learner 加入 → 追赶 → 提升 Voter → 路由版本 bump。
 //
 // 架构位置：Meta Leader 后台 worker 调用 Storage Leader 的 ConfChange 钩子
-//（AddLearnerFn / CatchUpFn / PromoteFn），状态机阶段写回 ScaleTask；
+// （AddLearnerFn / CatchUpFn / PromoteFn），状态机阶段写回 ScaleTask；
 // ClusterState 的 Learner/Promote/Bump 经 Meta Raft 提交。
 
 #pragma once
-
-#include "openkv/meta/cluster_state.hpp"
 
 #include <atomic>
 #include <functional>
@@ -31,6 +29,8 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#include "openkv/meta/cluster_state.hpp"
 
 namespace openkv::meta {
 
@@ -47,12 +47,12 @@ enum class ScaleTaskState {
 
 /// 一次 scale-out 任务的运行时视图（内存；不入 ClusterState 快照）。
 struct ScaleTask {
-  std::string task_id;                           ///< 任务唯一 ID（seq 生成）
-  ScaleTaskState state{ScaleTaskState::kPending};///< 当前阶段
-  std::string new_node_id;                       ///< 新加入的 Storage 节点 ID
-  std::vector<uint32_t> shard_ids;               ///< 要扩的 Region 列表（空=全部分片）
-  std::string error;                             ///< 失败原因（仅 kFailed）
-  double progress{0.0};                          ///< 0~1 进度提示（UI/运维）
+  std::string task_id;                             ///< 任务唯一 ID（seq 生成）
+  ScaleTaskState state{ScaleTaskState::kPending};  ///< 当前阶段
+  std::string new_node_id;                         ///< 新加入的 Storage 节点 ID
+  std::vector<uint32_t> shard_ids;                 ///< 要扩的 Region 列表（空=全部分片）
+  std::string error;                               ///< 失败原因（仅 kFailed）
+  double progress{0.0};                            ///< 0~1 进度提示（UI/运维）
 };
 
 /// 向某 Region 的 Storage Leader 下发 AddLearner ConfChange。
@@ -100,18 +100,18 @@ class Scaler {
   bool overlaps_inflight_locked(const std::string& node_id,
                                 const std::vector<uint32_t>& shard_ids) const;
 
-  ClusterState& state_;              ///< 非拥有：节点/路由只读查询
-  AddLearnerFn add_learner_;         ///< ConfChange：加 Learner
-  PromoteFn promote_;                ///< ConfChange：提升 Voter
-  BumpRouteFn bump_;                 ///< 完成后 bump 路由
-  CatchUpFn catch_up_;               ///< 追赶检查（可空）
-  std::function<bool()> is_leader_;  ///< Leader 门闩（可空）
-  mutable std::mutex mu_;            ///< 保护 tasks_ / queue_
+  ClusterState& state_;                               ///< 非拥有：节点/路由只读查询
+  AddLearnerFn add_learner_;                          ///< ConfChange：加 Learner
+  PromoteFn promote_;                                 ///< ConfChange：提升 Voter
+  BumpRouteFn bump_;                                  ///< 完成后 bump 路由
+  CatchUpFn catch_up_;                                ///< 追赶检查（可空）
+  std::function<bool()> is_leader_;                   ///< Leader 门闩（可空）
+  mutable std::mutex mu_;                             ///< 保护 tasks_ / queue_
   std::unordered_map<std::string, ScaleTask> tasks_;  ///< task_id → 任务
-  std::vector<std::string> queue_;   ///< FIFO：未完成 task_id 顺序
-  std::atomic<bool> running_{false}; ///< worker 运行标志
-  std::thread worker_;               ///< 后台推进线程
-  std::atomic<uint64_t> task_seq_{0};///< 生成 task_id 的序号
+  std::vector<std::string> queue_;                    ///< FIFO：未完成 task_id 顺序
+  std::atomic<bool> running_{false};                  ///< worker 运行标志
+  std::thread worker_;                                ///< 后台推进线程
+  std::atomic<uint64_t> task_seq_{0};                 ///< 生成 task_id 的序号
 };
 
 }  // namespace openkv::meta

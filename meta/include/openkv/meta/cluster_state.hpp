@@ -19,8 +19,6 @@
 
 #pragma once
 
-#include "openkv/region.hpp"
-
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -29,6 +27,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include "openkv/region.hpp"
 
 namespace openkv::meta {
 
@@ -48,27 +48,27 @@ enum class NodeState { kJoining, kActive, kDraining, kOffline, kTombstone };
 
 /// 集群中一个 Meta/Storage/Compute 节点的描述。
 struct NodeInfo {
-  std::string node_id;                 ///< 全局唯一 ID（如 storage-0）
-  NodeRole role{NodeRole::kStorage};   ///< 角色：计算或存储
-  std::string address;                 ///< 可拨号地址 host:port（TCP 线协议）
-  NodeState state{NodeState::kJoining};///< 当前生命周期状态
-  int64_t last_heartbeat_ms{0};        ///< 最近一次心跳墙钟毫秒（用于 H2 sweep）
+  std::string node_id;                   ///< 全局唯一 ID（如 storage-0）
+  NodeRole role{NodeRole::kStorage};     ///< 角色：计算或存储
+  std::string address;                   ///< 可拨号地址 host:port（TCP 线协议）
+  NodeState state{NodeState::kJoining};  ///< 当前生命周期状态
+  int64_t last_heartbeat_ms{0};          ///< 最近一次心跳墙钟毫秒（用于 H2 sweep）
 };
 
 /// Region 上的一个 Raft 副本（voter 或 learner）。
 struct Replica {
-  std::string node_id;   ///< 所在 Storage 节点 ID
-  std::string address;   ///< 该节点地址（路由下发给 Gateway/客户端）
-  bool is_leader{false}; ///< 是否为该 Region 当前 Leader（由心跳刷新）
-  bool is_learner{false};///< true=Learner（只复制不投票）；false=Voter
+  std::string node_id;     ///< 所在 Storage 节点 ID
+  std::string address;     ///< 该节点地址（路由下发给 Gateway/客户端）
+  bool is_leader{false};   ///< 是否为该 Region 当前 Leader（由心跳刷新）
+  bool is_learner{false};  ///< true=Learner（只复制不投票）；false=Voter
 };
 
 /// 一个有序 key 区间 + 副本集，对应一组 Multi-Raft。
 struct RegionInfo {
-  openkv::RegionId region_id{0}; ///< Region 编号（全局递增分配）
-  openkv::KeyRange range;        ///< [start, end) 有序区间；空 start/end 表示 ±∞
-  std::vector<Replica> replicas;    ///< 副本列表（含 Leader / Learner 标记）
-  uint64_t epoch{1};  ///< split/merge/place 后递增；Txn/Admin 用于 stale epoch 校验
+  openkv::RegionId region_id{0};  ///< Region 编号（全局递增分配）
+  openkv::KeyRange range;         ///< [start, end) 有序区间；空 start/end 表示 ±∞
+  std::vector<Replica> replicas;  ///< 副本列表（含 Leader / Learner 标记）
+  uint64_t epoch{1};              ///< split/merge/place 后递增；Txn/Admin 用于 stale epoch 校验
 };
 
 /// Gateway / 客户端可见的路由快照。
@@ -76,15 +76,15 @@ struct RoutingTable {
   uint64_t version{0};  ///< 路由版本；WATCH_ROUTE / 缓存失效依赖此值单调递增
   /// 兼容字段：等于 regions.size()（历史名 shard_count，Hash 时代遗留）。
   uint32_t shard_count{0};
-  std::vector<RegionInfo> regions; ///< 全量 Region 列表（无序亦可，locate 按 range）
+  std::vector<RegionInfo> regions;  ///< 全量 Region 列表（无序亦可，locate 按 range）
 };
 
 /// S2：可随 ClusterState 快照 / Raft 恢复的迁移任务摘要。
 struct PersistMigrate {
-  std::string task_id;                  ///< 任务 ID（与 RegionScheduler 一致）
-  uint32_t region_id{0};                ///< 目标 Region
-  int state{0};                         ///< MigrateState 整型快照
-  std::vector<std::string> desired_peers;///< 期望最终副本 node_id 集合
+  std::string task_id;                     ///< 任务 ID（与 RegionScheduler 一致）
+  uint32_t region_id{0};                   ///< 目标 Region
+  int state{0};                            ///< MigrateState 整型快照
+  std::vector<std::string> desired_peers;  ///< 期望最终副本 node_id 集合
 };
 
 /// Meta 权威内存状态。线程安全（内部 mu_）；快照经 serialize/load_snapshot。
@@ -142,7 +142,7 @@ class ClusterState {
 
   /// 为迁出 avoid 上的副本构造 RF 目标集：保留非 avoid 的现有 voter，再从轻载 Active 补齐。
   std::vector<std::string> suggest_replace_away(uint32_t region_id,
-                                                 const std::vector<std::string>& avoid) const;
+                                                const std::vector<std::string>& avoid) const;
 
   /// Balance：若某 Active Store 过载，返回 (region_id, desired_peers)；否则 nullopt。
   std::optional<std::pair<uint32_t, std::vector<std::string>>> suggest_balance_move() const;
@@ -173,9 +173,8 @@ class ClusterState {
 
   /// 在 split_key 处分裂 region；成功返回新（右）RegionId，失败返回 nullopt。
   /// 右 Region 默认继承左副本集；若 peer_ids 非空则使用指定副本（须已在 nodes_）。
-  std::optional<openkv::RegionId> split_region(openkv::RegionId region_id,
-                                                  std::string split_key,
-                                                  const std::vector<std::string>& peer_ids = {});
+  std::optional<openkv::RegionId> split_region(openkv::RegionId region_id, std::string split_key,
+                                               const std::vector<std::string>& peer_ids = {});
 
   /// 合并相邻 Region：要求 left.end == right.start；成功后删除 right，扩展 left.end。
   bool merge_regions(openkv::RegionId left_id, openkv::RegionId right_id);
@@ -187,8 +186,7 @@ class ClusterState {
   std::optional<openkv::RegionId> locate(std::string_view key) const;
 
   /// 选 RF 个负载最低的 Active Storage；avoid 中的节点降权（分裂打散用）。
-  std::vector<std::string> suggest_placement(
-      const std::vector<std::string>& avoid = {}) const;
+  std::vector<std::string> suggest_placement(const std::vector<std::string>& avoid = {}) const;
 
   /// 若存在右邻接 Region（left.end == right.start）返回其 id。
   /// left.end 为空（+∞）时无右邻，返回 nullopt。
@@ -224,16 +222,16 @@ class ClusterState {
   /// 可变 Region 指针（调用方已持 mu_）。
   RegionInfo* mutable_region(openkv::RegionId id);
 
-  mutable std::mutex mu_;                                    ///< 保护下列全部字段
-  std::unordered_map<std::string, NodeInfo> nodes_;          ///< node_id → 节点
-  RoutingTable route_;                                       ///< 权威路由表
-  uint32_t replica_factor_{3};                                ///< 目标 RF
-  openkv::RegionId next_region_id_{1};                    ///< 下一个可分配 RegionId
-  uint64_t next_ts_{1};  ///< Percolator 逻辑时钟，从 1 起；alloc_ts 递增
-  uint64_t gc_safe_ts_{0};                                   ///< 已发布的 GC 水位
-  uint64_t min_start_ts_hint_{std::numeric_limits<uint64_t>::max()}; ///< 聚合后的活跃下限
+  mutable std::mutex mu_;                            ///< 保护下列全部字段
+  std::unordered_map<std::string, NodeInfo> nodes_;  ///< node_id → 节点
+  RoutingTable route_;                               ///< 权威路由表
+  uint32_t replica_factor_{3};                       ///< 目标 RF
+  openkv::RegionId next_region_id_{1};               ///< 下一个可分配 RegionId
+  uint64_t next_ts_{1};     ///< Percolator 逻辑时钟，从 1 起；alloc_ts 递增
+  uint64_t gc_safe_ts_{0};  ///< 已发布的 GC 水位
+  uint64_t min_start_ts_hint_{std::numeric_limits<uint64_t>::max()};  ///< 聚合后的活跃下限
   uint64_t gc_retain_ts_{1000};  ///< safe ≈ next_ts - retain（可被 hint 压低）
-  std::unordered_map<std::string, PersistMigrate> migrates_; ///< task_id → 持久化迁移
+  std::unordered_map<std::string, PersistMigrate> migrates_;       ///< task_id → 持久化迁移
   std::unordered_map<std::string, uint64_t> min_start_reporters_;  ///< T2：reporter → min_start
 };
 

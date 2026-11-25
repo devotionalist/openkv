@@ -28,7 +28,7 @@
 | `Store::request_ready` | propose 热路径攒批（`SKV_READY_COALESCE_*`）后再 `drive_ready`；见 [25](25-write-path-knives.md) |
 | `Store::on_raft_batch` | 同批 Tick/Wake/Msg **只 `process_ready` 一次** |
 | `BatchSystem` schedule | Router 投递唤醒 worker + drain-until-empty；见 [26](26-raftstore-schedule-pipeline.md) |
-| `RaftKV::async_write` | propose 后 `request_ready`；`flush_ready` 仍强制 `drive_ready` |
+| `Store::async_write` | propose 后 `request_ready`；`flush_ready` 仍强制 `drive_ready` |
 | `RaftNode::persist_ready` | 持锁组 batch；`persist_io_mu_` 下 consume/sync；再推进 `stable_*`（只前进） |
 | `PersistWorker`（默认 2） | raft worker 提交落盘后可处理**其它 Region**；同 Region 仍串行（`persist_inflight` → `kPersistDone` 再发 AE/apply）。`SKV_PERSIST_WORKERS=0` 回退同步。入站 RPC 始终同步落盘再回包 |
 

@@ -1,6 +1,6 @@
 # Propose → ACK：调用链与落盘保证
 
-**状态：** 与源码对齐（`RaftKV` / `Store` / `RaftNode::persist_ready` / `ProposalQueue`）  
+**状态：** 与源码对齐（`Store::async_write` / `Store` / `RaftNode::persist_ready` / `IndexWaiter`）  
 **相关：** [01-write-put](01-write-put.md) · [23-write-path-batching](23-write-path-batching.md) · [24-persist-raft-vs-kv](24-persist-raft-vs-kv.md) · [35-raft-module-call-flows](35-raft-module-call-flows.md) · [raft/ARCHITECTURE.md](../../raft/ARCHITECTURE.md)
 
 ---
@@ -34,12 +34,12 @@
 sequenceDiagram
   participant C as Client / Gateway
   participant SF as StoreFacade / StoreService
-  participant KV as RaftKV
+  participant KV as Store
   participant RN as RaftNode
   participant ST as Store
   participant BS as BatchSystem
   participant Eng as DbRaftEngine
-  participant PQ as ProposalQueue
+  participant PQ as IndexWaiter
 
   C->>SF: Propose / ONEPC / RawPut
   SF->>KV: async_write(region, data)
@@ -66,14 +66,14 @@ sequenceDiagram
 | 步骤 | 位置 |
 |------|------|
 | 写入口（挂 waiter） | `storage/src/store_service.cpp`：`async_write` 后 `wait_apply_async` |
-| propose + 登记 Ready | `storage/src/raftkv.cpp`：`RaftKV::async_write` |
+| propose + 登记 Ready | `raft/src/raftstore/store.cpp`：`Store::async_write` |
 | 内存追加 | `raft/src/raft_node.cpp`：`RaftNode::propose` → `log_.append` |
 | 攒批唤醒 | `raft/src/raftstore/store.cpp`：`request_ready` → `drive_ready` |
 | 批末 Ready | 同文件：`on_raft_batch` → `process_ready` |
 | persist 接线 | `raft/src/raftstore/store.cpp`：默认 `get(rid)->persist_ready`（可 `set_persist_fn` 覆盖） |
 | 组 batch + 写盘 | `raft/src/core/raft_node.cpp`：`build_engine_batch_locked` → `engine_->consume` |
 | 生产 Engine | `raft/src/engine/db_raft_engine.cpp`：`DbRaftEngine::consume` |
-| 唤醒客户端 | `ProposalQueue::invoke` ← apply 路径 |
+| 唤醒客户端 | `IndexWaiter::invoke` ← apply 路径 |
 
 ---
 
@@ -169,8 +169,8 @@ entries_（内存）
 | API / 返回点 | 是否保证 Raft 已 sync |
 |--------------|----------------------|
 | `RaftNode::propose` 返回 true | 否（仅内存 + 脏标记） |
-| `RaftKV::async_write` 返回 true | 否（已 request_ready，未等 Ready） |
-| `ProposalQueue` / `wait_apply*` 成功 | **是**（apply 在 persist 之后） |
+| `Store::async_write` 返回 true | 否（已 request_ready，未等 Ready） |
+| `IndexWaiter` / `wait_apply*` 成功 | **是**（apply 在 persist 之后） |
 | gRPC Propose/Put 成功 Finish | **是**（挂在 wait_apply 上） |
 
 ---

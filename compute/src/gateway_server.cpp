@@ -23,10 +23,6 @@
 
 #include "openkv/compute/gateway_server.hpp"
 
-#include "openkv/codec.hpp"
-#include "openkv/compute/meta_client.hpp"
-#include "openkv/logging.hpp"
-
 #include <chrono>
 #include <cstdlib>
 #include <functional>
@@ -36,6 +32,10 @@
 #include <thread>
 #include <unordered_set>
 #include <vector>
+
+#include "openkv/codec.hpp"
+#include "openkv/compute/meta_client.hpp"
+#include "openkv/logging.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -258,8 +258,7 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
   }
   auto addr_opt = pick_leader_addr(region, *skipped);
   if (!addr_opt) {
-    on_done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"), false, "no storage", "",
-            "");
+    on_done(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no storage"), false, "no storage", "", "");
     return;
   }
   const std::string addr = *addr_opt;
@@ -269,9 +268,9 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
     // Leader/Follower 进程被杀：传输失败或打到死人超时。必须清 hint、跳过、换副本。
     if (!sst.ok()) {
       const std::string msg = sst.error_message();
-      const bool transport_fail =
-          store_skip_err(msg) || sst.error_code() == grpc::StatusCode::UNAVAILABLE ||
-          sst.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED;
+      const bool transport_fail = store_skip_err(msg) ||
+                                  sst.error_code() == grpc::StatusCode::UNAVAILABLE ||
+                                  sst.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED;
       if (transport_fail && attempt + 1 < 4) {
         clear_leader_hint(region);
         skipped->insert(addr);
@@ -408,16 +407,16 @@ void GatewayServer::route_watch_loop() {
 /// 异步申请 start/commit_ts（alloc_async(2)），失败走 on_err，成功回调 cont。
 void GatewayServer::with_start_commit_ts(std::function<void(grpc::Status)> on_err,
                                          std::function<void(uint64_t, uint64_t)> cont) {
-                                          
   note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
 
-  ts_.alloc_async(2, [on_err = std::move(on_err), cont = std::move(cont)](grpc::Status st,uint64_t start) {
-    if (!st.ok()) {
-      if (on_err) on_err(st);
-      return;
-    }
-    cont(start, start + 1);
-  });
+  ts_.alloc_async(
+      2, [on_err = std::move(on_err), cont = std::move(cont)](grpc::Status st, uint64_t start) {
+        if (!st.ok()) {
+          if (on_err) on_err(st);
+          return;
+        }
+        cont(start, start + 1);
+      });
 }
 
 // Async 热路径重试入口：用回调续跑而非 sleep+continue。
@@ -460,88 +459,87 @@ void GatewayServer::put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutRespo
     done(grpc::Status(grpc::StatusCode::ABORTED, "put: retries_exhausted"));
     return;
   }
-  with_start_commit_ts(
-      done, [this, req, resp, attempt, done](uint64_t start, uint64_t commit_ts) {
-        active_ts_.add(start);
-        int64_t expire_at = 0;
-        if (req->ttl_ms() > 0) {
-          expire_at = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count() +
-                      req->ttl_ms();
-        }
-        const uint32_t region = region_of(req->key());
-        const uint64_t epoch = epoch_of(region);
-        auto got = std::make_shared<ProposeOnePcResult>();
-        with_store_async(
-            region, 0,
-            [this, req, start, commit_ts, expire_at, region, epoch, got](
-                const std::string& addr,
-                std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) {
-              ProposeOnePcArgs args;
-              args.shard_id = region;
-              args.key = req->key();
-              args.value = req->value();
-              args.start_ts = start;
-              args.commit_ts = commit_ts;
-              args.primary = req->key();
-              args.mvcc_op = 0;
-              args.epoch = epoch;
-              args.cas = req->cas();
-              args.expected_revision = req->expected_revision();
-              args.expire_at_ms = expire_at;
-              store_propose_onepc_async(
-                  addr, std::move(args), 15000,
-                  [on_rpc = std::move(on_rpc), got](grpc::Status sst, ProposeOnePcResult out) {
-                    if (!sst.ok()) {
-                      on_rpc(sst, false, sst.error_message(), "");
-                      return;
-                    }
-                    if (out.cas_failed || contains(out.error, "cas_failed")) {
-                      *got = std::move(out);
-                      on_rpc(grpc::Status::OK, true, "__cas__", "");
-                      return;
-                    }
-                    if (out.ok) {
-                      *got = std::move(out);
-                      on_rpc(grpc::Status::OK, true, "", "");
-                      return;
-                    }
-                    on_rpc(grpc::Status::OK, false, out.error, out.redirect_to);
-                  });
-            },
-            [this, req, resp, attempt, start, region, done, got](
-                grpc::Status sst, bool ok, std::string body, std::string /*redirect*/,
-                std::string /*addr*/) {
-              active_ts_.remove(start);
-              if (!sst.ok()) {
-                done(sst);
-                return;
-              }
-              if (ok && body == "__cas__") {
-                resp->set_ok(false);
-                resp->set_cas_failed(true);
-                resp->set_current_revision(got->current_revision != 0
-                                               ? got->current_revision
-                                               : parse_cas_current_rev(got->error));
-                done(grpc::Status::OK);
-                return;
-              }
-              if (ok) {
-                resp->set_ok(true);
-                resp->set_revision(got->revision);
-                done(grpc::Status::OK);
-                return;
-              }
-              if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/true,
-                                    [this, req, resp, attempt, done] {
-                                      put_async_cb(req, resp, attempt + 1, done);
-                                    })) {
-                return;
-              }
-              done(grpc::Status(grpc::StatusCode::ABORTED, "put: " + body));
-            });
-      });
+  with_start_commit_ts(done, [this, req, resp, attempt, done](uint64_t start, uint64_t commit_ts) {
+    active_ts_.add(start);
+    int64_t expire_at = 0;
+    if (req->ttl_ms() > 0) {
+      expire_at = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count() +
+                  req->ttl_ms();
+    }
+    const uint32_t region = region_of(req->key());
+    const uint64_t epoch = epoch_of(region);
+    auto got = std::make_shared<ProposeOnePcResult>();
+    with_store_async(
+        region, 0,
+        [this, req, start, commit_ts, expire_at, region, epoch, got](
+            const std::string& addr,
+            std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) {
+          ProposeOnePcArgs args;
+          args.shard_id = region;
+          args.key = req->key();
+          args.value = req->value();
+          args.start_ts = start;
+          args.commit_ts = commit_ts;
+          args.primary = req->key();
+          args.mvcc_op = 0;
+          args.epoch = epoch;
+          args.cas = req->cas();
+          args.expected_revision = req->expected_revision();
+          args.expire_at_ms = expire_at;
+          store_propose_onepc_async(
+              addr, std::move(args), 15000,
+              [on_rpc = std::move(on_rpc), got](grpc::Status sst, ProposeOnePcResult out) {
+                if (!sst.ok()) {
+                  on_rpc(sst, false, sst.error_message(), "");
+                  return;
+                }
+                if (out.cas_failed || contains(out.error, "cas_failed")) {
+                  *got = std::move(out);
+                  on_rpc(grpc::Status::OK, true, "__cas__", "");
+                  return;
+                }
+                if (out.ok) {
+                  *got = std::move(out);
+                  on_rpc(grpc::Status::OK, true, "", "");
+                  return;
+                }
+                on_rpc(grpc::Status::OK, false, out.error, out.redirect_to);
+              });
+        },
+        [this, req, resp, attempt, start, region, done, got](
+            grpc::Status sst, bool ok, std::string body, std::string /*redirect*/,
+            std::string /*addr*/) {
+          active_ts_.remove(start);
+          if (!sst.ok()) {
+            done(sst);
+            return;
+          }
+          if (ok && body == "__cas__") {
+            resp->set_ok(false);
+            resp->set_cas_failed(true);
+            resp->set_current_revision(got->current_revision != 0
+                                           ? got->current_revision
+                                           : parse_cas_current_rev(got->error));
+            done(grpc::Status::OK);
+            return;
+          }
+          if (ok) {
+            resp->set_ok(true);
+            resp->set_revision(got->revision);
+            done(grpc::Status::OK);
+            return;
+          }
+          if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/true,
+                                [this, req, resp, attempt, done] {
+                                  put_async_cb(req, resp, attempt + 1, done);
+                                })) {
+            return;
+          }
+          done(grpc::Status(grpc::StatusCode::ABORTED, "put: " + body));
+        });
+  });
 }
 
 /// 事务平面 Delete 异步：alloc_async → ONEPC(op=delete)；可重试错误经 retry_async_write 续跑。
@@ -578,7 +576,7 @@ void GatewayServer::delete_async(const kv::v1::DeleteRequest* req, kv::v1::Delet
         store_propose_onepc_async(
             addr, std::move(args), 15000,
             [this, req, resp, reactor, attempt, start, region, addr](grpc::Status sst,
-                                                                    ProposeOnePcResult out) {
+                                                                     ProposeOnePcResult out) {
               active_ts_.remove(start);
               if (!sst.ok()) {
                 reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
@@ -671,9 +669,9 @@ void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetRespo
             if (contains(body, "locked")) {
               LockedError le = parse_locked_error(body);
               resolve_blocking_lock_async(req->key(), le,
-                                         [this, req, resp, attempt, done](grpc::Status) {
-                                           get_async_cb(req, resp, attempt + 1, done);
-                                         });
+                                          [this, req, resp, attempt, done](grpc::Status) {
+                                            get_async_cb(req, resp, attempt + 1, done);
+                                          });
               return;
             }
             // not_leader / splitting 已在 with_store_async 内换副本；仍失败则抬外层 attempt。
@@ -883,22 +881,22 @@ void GatewayServer::raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawG
       [this, req, region, got](
           const std::string& addr,
           std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) {
-        store_get_async(
-            addr, region, req->key(), req->linearizable(), /*start_ts=*/0, 15000,
-            [on_rpc = std::move(on_rpc), got](grpc::Status sst, StoreGetResult out) {
-              if (!sst.ok()) {
-                on_rpc(sst, false, sst.error_message(), "");
-                return;
-              }
-              if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
-                  contains(out.error, "splitting") || contains(out.error, "epoch_not_match")) {
-                on_rpc(grpc::Status::OK, false,
-                       out.error.empty() ? "not_leader" : out.error, out.redirect_to);
-                return;
-              }
-              *got = std::move(out);
-              on_rpc(grpc::Status::OK, true, "", "");
-            });
+        store_get_async(addr, region, req->key(), req->linearizable(), /*start_ts=*/0, 15000,
+                        [on_rpc = std::move(on_rpc), got](grpc::Status sst, StoreGetResult out) {
+                          if (!sst.ok()) {
+                            on_rpc(sst, false, sst.error_message(), "");
+                            return;
+                          }
+                          if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
+                              contains(out.error, "splitting") ||
+                              contains(out.error, "epoch_not_match")) {
+                            on_rpc(grpc::Status::OK, false,
+                                   out.error.empty() ? "not_leader" : out.error, out.redirect_to);
+                            return;
+                          }
+                          *got = std::move(out);
+                          on_rpc(grpc::Status::OK, true, "", "");
+                        });
       },
       [this, req, resp, reactor, attempt, got](grpc::Status sst, bool ok, std::string body,
                                                std::string /*redirect*/, std::string /*addr*/) {
@@ -1255,14 +1253,14 @@ grpc::ServerUnaryReactor* GatewayServer::TxnCheckStatus(grpc::CallbackServerCont
 }
 
 // 展开 DS RPC 入口：各 Name → Name##Async。
-#define GW_DS_WRAP(Name)                                                                          \
-  grpc::ServerUnaryReactor* GatewayServer::Name(grpc::CallbackServerContext* ctx,                  \
-                                                const kv::v1::Name##Request* req,                  \
-                                                kv::v1::Name##Response* resp) {                   \
-    auto* reactor = ctx->DefaultReactor();                                                        \
-    note_client_rpc();                                                                            \
-    Name##Async(req, resp, [reactor](grpc::Status st) { reactor->Finish(st); });                  \
-    return reactor;                                                                               \
+#define GW_DS_WRAP(Name)                                                          \
+  grpc::ServerUnaryReactor* GatewayServer::Name(grpc::CallbackServerContext* ctx, \
+                                                const kv::v1::Name##Request* req, \
+                                                kv::v1::Name##Response* resp) {   \
+    auto* reactor = ctx->DefaultReactor();                                        \
+    note_client_rpc();                                                            \
+    Name##Async(req, resp, [reactor](grpc::Status st) { reactor->Finish(st); });  \
+    return reactor;                                                               \
   }
 
 GW_DS_WRAP(HSet)
@@ -1294,4 +1292,3 @@ GW_DS_WRAP(ZRange)
 #undef GW_DS_WRAP
 
 }  // namespace openkv::compute
-

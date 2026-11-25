@@ -18,10 +18,10 @@
 #include "openkv/config.hpp"
 
 #include <gtest/gtest.h>
-
-#include <fstream>
-#include <filesystem>
 #include <unistd.h>
+
+#include <filesystem>
+#include <fstream>
 
 namespace fs = std::filesystem;
 

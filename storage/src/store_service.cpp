@@ -18,16 +18,16 @@
 
 #include "openkv/storage/store_service.hpp"
 
-#include "openkv/codec.hpp"
-#include "openkv/logging.hpp"
-#include "openkv/storage/mvcc.hpp"
-#include "openkv/storage/raftkv.hpp"
-
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <memory>
+
+#include "openkv/codec.hpp"
+#include "openkv/logging.hpp"
+#include "openkv/raftstore/store.hpp"
+#include "openkv/storage/mvcc.hpp"
 
 namespace {
 struct ScopedRegionTimer {
@@ -199,7 +199,8 @@ std::string encode_command(const Command& cmd) {
   out.append(cmd.value);
   if (cmd.cas) {
     out.push_back(static_cast<char>(1));
-    out.append(reinterpret_cast<const char*>(&cmd.expected_revision), sizeof(cmd.expected_revision));
+    out.append(reinterpret_cast<const char*>(&cmd.expected_revision),
+               sizeof(cmd.expected_revision));
   }
   return out;
 }
@@ -310,12 +311,11 @@ namespace {
 bool ensure_applied_catchup(StorageNode& node, raft::RaftNode* group, uint32_t shard_id,
                             uint64_t read_ci) {
   // ---- Leader 线性读：ReadIndex 拿到 commit 点后，等到 last_applied ≥ read_ci。
-  // 1) 已追上则立即成功；2) 否则 CV 等待，等待期间 flush_ready 推进 Ready（无 sleep 自旋）。
+  // 1) 已追上则立即成功；2) 否则 CV 等待，等待期间 drive_ready 推进 Ready（无 sleep 自旋）。
   if (!group) return false;
   if (group->soft_state().last_applied >= read_ci) return true;
-  return group->wait_applied(read_ci, 400, [&] {
-    node.raftkv().flush_ready(shard_id);
-  });
+  return group->wait_applied(read_ci, 400,
+                             [&] { node.multi_raft().store().drive_ready(shard_id); });
 }
 
 void fill_cas_meta(ProposeResult& pr) {
@@ -329,7 +329,8 @@ void fill_cas_meta(ProposeResult& pr) {
 }
 
 ProposeResult finish_propose(StorageNode& node, uint64_t idx,
-                             const ProposalQueue::WaitOutcome& outcome, uint64_t latch_tok) {
+                             const openkv::raftstore::IndexWaiter::WaitOutcome& outcome,
+                             uint64_t latch_tok) {
   // apply 收尾：unlock latch → 填 ProposeResult（超时 / 业务错 / 成功）。
   node.scheduler().unlock(latch_tok);
   ProposeResult r;
@@ -351,7 +352,8 @@ ProposeResult finish_propose(StorageNode& node, uint64_t idx,
 
 void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
                                 std::function<void(ProposeResult)> cb, uint64_t expected_epoch) {
-  // ---- 入口：异步 Propose；本函数不阻塞等 apply，结果经 cb 回传（gRPC Finish / 同步 propose 的 future）。
+  // ---- 入口：异步 Propose；本函数不阻塞等 apply，结果经 cb 回传（gRPC Finish / 同步 propose 的
+  // future）。
   if (!cb) return;
 
   // 1) 延迟直方图：shared_ptr 保证临时 StoreFacade（如 txn GC）析构后，apply 回调仍能 observe。
@@ -402,31 +404,27 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
 
   // 6) 占锁成功（或跳过 latch）后的续跑闭包。
   //    只捕获 StorageNode&（节点寿命覆盖异步路径）；禁止捕获 StoreFacade* this。
-  auto after_latch = [&node, shard_id, cmd, timer = std::move(timer), cb = std::move(cb)](
-                         uint64_t latch_tok) mutable {
-    // 6a) 写入门面：encode → RaftNode::propose（仅 append 日志拿 index）→ Store::request_ready 攒批。
-    //     此处返回 true 只表示已进日志+登记 Ready，不等于已落盘/复制/apply。
-    uint64_t idx = 0; // 需要拿到日志索引 用于下边的 wait_apply_async
+  auto after_latch = [&node, shard_id, cmd, timer = std::move(timer),
+                      cb = std::move(cb)](uint64_t latch_tok) mutable {
+    // 6a) Store::async_write：propose + request_ready；true 只表示已进日志+登记 Ready。
+    uint64_t idx = 0;  // 日志索引，供 wait_apply_async
     std::string perr;
-    // 异步写入raftkv
-    if (!node.raftkv().async_write(shard_id, encode_command(cmd), &idx, &perr)) {
+    if (!node.multi_raft().store().async_write(shard_id, encode_command(cmd), &idx, &perr)) {
       node.scheduler().unlock(latch_tok);  // propose 失败立即放锁
       ProposeResult r;
       r.error = perr.empty() ? "propose_failed" : std::move(perr);
       cb(std::move(r));
       return;
     }
-    // 等待apply
-    // 6b) 按 log index 挂 ProposalQueue waiter（≤5s）；
+    // 6b) 按 log index 挂 IndexWaiter（≤5s）；
     //     Ready→persist→复制→commit→apply→invoke 后唤醒；本线程不 tick、不自旋。
-    node.wait_apply_async(
-        idx, std::chrono::milliseconds(5000),
-        [&node, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
-            ProposalQueue::WaitOutcome outcome) mutable {
-          // 6c) finish_propose：unlock latch → 填 ProposeResult → 调 cb。
-          cb(finish_propose(node, idx, outcome, latch_tok));
-          timer.reset();  // 结束计时，写入 metrics
-        });
+    node.wait_apply_async(idx, std::chrono::milliseconds(5000),
+                          [&node, idx, latch_tok, timer = std::move(timer), cb = std::move(cb)](
+                              openkv::raftstore::IndexWaiter::WaitOutcome outcome) mutable {
+                            // 6c) finish_propose：unlock latch → 填 ProposeResult → 调 cb。
+                            cb(finish_propose(node, idx, outcome, latch_tok));
+                            timer.reset();  // 结束计时，写入 metrics
+                          });
   };
 
   // 7) 调度：Raw 非 CAS Put/Delete 跳过 latch（LWW，Raft apply 已串行）；其余先占锁再续跑。
@@ -435,11 +433,12 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     return;
   }
   // 获取锁key
-  const std::string latch_key = cmd_is_user_data_write(cmd.op)
-                                    ? cmd.key
-                                    : (std::string("op:") + std::to_string(static_cast<int>(cmd.op)));
+  const std::string latch_key =
+      cmd_is_user_data_write(cmd.op)
+          ? cmd.key
+          : (std::string("op:") + std::to_string(static_cast<int>(cmd.op)));
 
-  // 异步占锁，如果锁冲突，则入队，unlock 时再回调 after_latch。  
+  // 异步占锁，如果锁冲突，则入队，unlock 时再回调 after_latch。
   node.scheduler().lock_key_async(latch_key, std::move(after_latch));
 }
 
@@ -520,8 +519,8 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
     return;
   }
   auto locked_err = [](const LockInfo& lk) {
-    return "locked primary=" + openkv::to_hex(lk.primary) + " lock_ts=" +
-           std::to_string(lk.start_ts);
+    return "locked primary=" + openkv::to_hex(lk.primary) +
+           " lock_ts=" + std::to_string(lk.start_ts);
   };
   MvccStore mvcc(*eng);
   // 4) 已有任意锁 → 拒（1PC 不升级悲观锁）。
@@ -853,8 +852,8 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
   if (limit > 4096) limit = 4096;
   // 3) 扫引擎；truncated/next_key 供客户端续扫。
   auto range = node_.region_range(shard_id);
-  auto sr = MvccStore(*eng).txn_scan(start_key, end_key, start_after, start_ts, limit, keys_only,
-                                     range);
+  auto sr =
+      MvccStore(*eng).txn_scan(start_key, end_key, start_after, start_ts, limit, keys_only, range);
   r.pairs = std::move(sr.pairs);
   r.truncated = sr.truncated;
   r.next_key = std::move(sr.next_key);

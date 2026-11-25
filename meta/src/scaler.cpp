@@ -19,10 +19,10 @@
 
 #include "openkv/meta/scaler.hpp"
 
-#include "openkv/logging.hpp"
-
 #include <algorithm>
 #include <chrono>
+
+#include "openkv/logging.hpp"
 
 namespace openkv::meta {
 
@@ -162,13 +162,13 @@ int Scaler::cancel_inflight(const std::string& node_id, std::optional<uint32_t> 
     SKV_INFO << "scale-out cancelled task=" << id << " node=" << t.new_node_id;
   }
   queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
-                               [&](const std::string& tid) {
-                                 auto it = tasks_.find(tid);
-                                 if (it == tasks_.end()) return true;
-                                 return it->second.state == ScaleTaskState::kCompleted ||
-                                        it->second.state == ScaleTaskState::kFailed;
-                               }),
-              queue_.end());
+                              [&](const std::string& tid) {
+                                auto it = tasks_.find(tid);
+                                if (it == tasks_.end()) return true;
+                                return it->second.state == ScaleTaskState::kCompleted ||
+                                       it->second.state == ScaleTaskState::kFailed;
+                              }),
+               queue_.end());
   return n;
 }
 
@@ -252,8 +252,9 @@ void Scaler::advance(ScaleTask& task) {
         for (uint32_t sid : task.shard_ids) {
           if (catch_up_(sid, task.new_node_id)) ++ready;
         }
-        task.progress = 0.4 + 0.3 * (static_cast<double>(ready) /
-                                     static_cast<double>(std::max<size_t>(1, task.shard_ids.size())));
+        task.progress =
+            0.4 + 0.3 * (static_cast<double>(ready) /
+                         static_cast<double>(std::max<size_t>(1, task.shard_ids.size())));
         if (ready < task.shard_ids.size()) {
           return;  // 继续等
         }

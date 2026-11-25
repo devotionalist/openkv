@@ -15,17 +15,17 @@
 // @file scheduler_cop_test.cpp
 // Scheduler latch + Coprocessor + 单 Store 引擎烟雾。
 
-#include "openkv/storage/coprocessor.hpp"
-#include "openkv/storage/kv_engine.hpp"
-#include "openkv/storage/scheduler.hpp"
-
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <filesystem>
 #include <future>
 #include <thread>
-#include <unistd.h>
+
+#include "openkv/storage/coprocessor.hpp"
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/scheduler.hpp"
 
 namespace fs = std::filesystem;
 

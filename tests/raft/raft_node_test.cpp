@@ -15,7 +15,6 @@
 // @file raft_node_test.cpp
 // 测试单节点选举、propose/apply、ConfChange 与 Follower 消息处理。
 
-#include "openkv/raft/engine/file_raft_engine.hpp"
 #include "openkv/raft/core/raft_node.hpp"
 
 #include <gtest/gtest.h>
@@ -25,6 +24,8 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+
+#include "openkv/raft/engine/file_raft_engine.hpp"
 
 using openkv::raft::ConfChange;
 using openkv::raft::RaftNode;
@@ -184,11 +185,9 @@ TEST(RaftNodeTest, VoteAndAppendBetweenPeers) {
 
   // 简化：不通过 transport，直接调 handler
   RaftNode na(
-      oa, [&](uint64_t, const std::string& d) { applied_a.push_back(d); },
-      [](auto&&...) {});
+      oa, [&](uint64_t, const std::string& d) { applied_a.push_back(d); }, [](auto&&...) {});
   RaftNode nb(
-      ob, [&](uint64_t, const std::string& d) { applied_b.push_back(d); },
-      [](auto&&...) {});
+      ob, [&](uint64_t, const std::string& d) { applied_b.push_back(d); }, [](auto&&...) {});
 
   // a 发起投票
   bool granted = false;
@@ -252,8 +251,8 @@ TEST(RaftNodeTest, PersistReadyNoneIgnoresMustSync) {
                    ("okv_must_sync_none_" +
                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   fs::create_directories(dir);
-  auto engine = std::make_shared<openkv::raft::FileRaftEngine>(dir.string(),
-                                                               openkv::raft::SyncMode::kNone);
+  auto engine =
+      std::make_shared<openkv::raft::FileRaftEngine>(dir.string(), openkv::raft::SyncMode::kNone);
 
   RaftNode::Options opts;
   opts.external_io = true;
@@ -278,9 +277,9 @@ TEST(RaftNodeTest, PersistReadyNoneIgnoresMustSync) {
   EXPECT_TRUE(rd.must_sync || !rd.entries.empty());
   const auto t0 = std::chrono::steady_clock::now();
   node.persist_ready(rd);
-  const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-                      std::chrono::steady_clock::now() - t0)
-                      .count();
+  const auto us =
+      std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+          .count();
   EXPECT_LT(us, 50'000) << "persist_ready under none must not fsync; took " << us << "us";
   fs::remove_all(dir);
 }

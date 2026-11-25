@@ -9,7 +9,7 @@
 2. **线程角色**：  
    - **接收线程** = gRPC callback/CQ 线程（只投递 / 发起 async / `Finish`）  
    - **工作线程** = `WorkPool`（仅 Gateway Watch）+ BatchSystem / Transport worker  
-   - **完成回调** = client async / `ProposalQueue::invoke`（续跑状态机）
+   - **完成回调** = client async / `IndexWaiter::invoke`（续跑状态机）
 3. **热路径零同步等待**：接收线程与 gRPC reaction 上禁止 `stub->Foo()`、`future.get()`、`wait_apply`；下游一律 async stub 或 `propose_async`→`wait_async`。
 
 ## 目标
@@ -75,7 +75,7 @@ flowchart TB
 |----|------|------|
 | T1 | 设计本文 + ARCHITECTURE / 21 文档交叉引用 | **PASS** |
 | T2 | Gateway/Meta/Storage 热路径代码无同步 stub wait / `promise.get` 等 apply | **PASS** |
-| T3 | `ctest -R 'ProposalQueue\|OnePc\|TsoTest\|RouterTest\|StoreFacade'` PASS | **PASS** |
+| T3 | `ctest -R 'IndexWaiter\|OnePc\|TsoTest\|RouterTest\|StoreFacade'` PASS | **PASS** |
 | T4 | put bench fail=0；Storage/Meta 日志 `callback`；Gateway Watch 仍可见 `workers=` | **PASS**（见对话 bench） |
 
 ## 失败与回滚

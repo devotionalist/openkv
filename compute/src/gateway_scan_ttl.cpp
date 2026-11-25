@@ -15,11 +15,11 @@
 // @file gateway_scan_ttl.cpp
 // Scan / TTL / Expire / Persist：StoreService async + get/put_async RMW。
 
-#include "openkv/compute/gateway_server.hpp"
-
 #include <limits>
 #include <memory>
 #include <utility>
+
+#include "openkv/compute/gateway_server.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -99,8 +99,7 @@ void GatewayServer::scan_async(const kv::v1::ScanRequest* req, kv::v1::ScanRespo
         st->done(grpc::Status::OK);
         return;
       }
-      const uint32_t remain =
-          st->limit - static_cast<uint32_t>(st->resp->pairs_size());
+      const uint32_t remain = st->limit - static_cast<uint32_t>(st->resp->pairs_size());
       const uint32_t region_id = st->self->region_of(st->loc);
       auto snap = st->self->routes_.snapshot();
       if (snap.regions.empty()) {
@@ -163,26 +162,25 @@ void GatewayServer::scan_async(const kv::v1::ScanRequest* req, kv::v1::ScanRespo
           [args = std::move(args), part](
               const std::string& addr,
               std::function<void(grpc::Status, bool, std::string, std::string)> on_rpc) mutable {
-            store_scan_async(addr, std::move(args), 15000,
-                             [on_rpc = std::move(on_rpc), part](grpc::Status sst,
-                                                                StoreScanResult out) {
-                               if (!sst.ok()) {
-                                 on_rpc(sst, false, sst.error_message(), "");
-                                 return;
-                               }
-                               if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
-                                   contains(out.error, "splitting") ||
-                                   contains(out.error, "no_region")) {
-                                 on_rpc(grpc::Status::OK, false,
-                                        out.error.empty() ? "not_leader" : out.error,
-                                        out.redirect_to);
-                                 return;
-                               }
-                               *part = std::move(out);
-                               on_rpc(grpc::Status::OK, true, part->error, "");
-                             });
+            store_scan_async(
+                addr, std::move(args), 15000,
+                [on_rpc = std::move(on_rpc), part](grpc::Status sst, StoreScanResult out) {
+                  if (!sst.ok()) {
+                    on_rpc(sst, false, sst.error_message(), "");
+                    return;
+                  }
+                  if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
+                      contains(out.error, "splitting") || contains(out.error, "no_region")) {
+                    on_rpc(grpc::Status::OK, false, out.error.empty() ? "not_leader" : out.error,
+                           out.redirect_to);
+                    return;
+                  }
+                  *part = std::move(out);
+                  on_rpc(grpc::Status::OK, true, part->error, "");
+                });
           },
-          [st, part, reg_end](grpc::Status sst, bool ok, std::string err, std::string, std::string) {
+          [st, part, reg_end](grpc::Status sst, bool ok, std::string err, std::string,
+                              std::string) {
             if (!sst.ok()) {
               st->done(sst);
               return;
@@ -261,38 +259,39 @@ void GatewayServer::ttl_async(const kv::v1::TTLRequest* req, kv::v1::TTLResponse
       return;
     }
     note_to_store(*addr_opt);
-    store_ttl_async(
-        *addr_opt, region, req->key(), ts, linearizable, 15000,
-        [this, req, resp, attempt, region, done](grpc::Status sst, StoreTtlResult out) {
-          if (!sst.ok()) {
-            done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
-            return;
-          }
-          if (out.locked || contains(out.error, "locked")) {
-            LockedError le(out.lock_primary, out.lock_ts, out.error.empty() ? "locked" : out.error);
-            resolve_blocking_lock_async(req->key(), le, [this, req, resp, attempt, done](grpc::Status) {
-              ttl_async(req, resp, attempt + 1, done);
-            });
-            return;
-          }
-          if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
-              contains(out.error, "splitting")) {
-            if (!out.redirect_to.empty() && out.redirect_to != "no_region" &&
-                out.redirect_to != "key_not_in_region") {
-              remember_leader(region, out.redirect_to);
-            }
-            refresh_routes();
-            clear_leader_hint(region);
-            ttl_async(req, resp, attempt + 1, done);
-            return;
-          }
-          if (!out.error.empty()) {
-            done(grpc::Status(grpc::StatusCode::INTERNAL, out.error));
-            return;
-          }
-          resp->set_ttl_ms(out.ttl_ms);
-          done(grpc::Status::OK);
-        });
+    store_ttl_async(*addr_opt, region, req->key(), ts, linearizable, 15000,
+                    [this, req, resp, attempt, region, done](grpc::Status sst, StoreTtlResult out) {
+                      if (!sst.ok()) {
+                        done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
+                        return;
+                      }
+                      if (out.locked || contains(out.error, "locked")) {
+                        LockedError le(out.lock_primary, out.lock_ts,
+                                       out.error.empty() ? "locked" : out.error);
+                        resolve_blocking_lock_async(req->key(), le,
+                                                    [this, req, resp, attempt, done](grpc::Status) {
+                                                      ttl_async(req, resp, attempt + 1, done);
+                                                    });
+                        return;
+                      }
+                      if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
+                          contains(out.error, "splitting")) {
+                        if (!out.redirect_to.empty() && out.redirect_to != "no_region" &&
+                            out.redirect_to != "key_not_in_region") {
+                          remember_leader(region, out.redirect_to);
+                        }
+                        refresh_routes();
+                        clear_leader_hint(region);
+                        ttl_async(req, resp, attempt + 1, done);
+                        return;
+                      }
+                      if (!out.error.empty()) {
+                        done(grpc::Status(grpc::StatusCode::INTERNAL, out.error));
+                        return;
+                      }
+                      resp->set_ttl_ms(out.ttl_ms);
+                      done(grpc::Status::OK);
+                    });
   };
   if (!linearizable) {
     run(std::numeric_limits<uint64_t>::max());

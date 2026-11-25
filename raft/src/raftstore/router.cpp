@@ -35,26 +35,37 @@ std::shared_ptr<Router::ApplyMailbox> Router::register_apply(uint32_t region_id,
 
 void Router::deregister(uint32_t region_id) {
   std::lock_guard<std::mutex> lk(mu_);
-  if (auto it = peers_.find(region_id); it != peers_.end()) {
-    it->second->close();
-    peers_.erase(it);
+  auto pit = peers_.find(region_id);
+  if (pit != peers_.end()) {
+    pit->second->close();
+    peers_.erase(pit);
   }
-  if (auto it = applies_.find(region_id); it != applies_.end()) {
-    it->second->close();
-    applies_.erase(it);
+  auto ait = applies_.find(region_id);
+  if (ait != applies_.end()) {
+    ait->second->close();
+    applies_.erase(ait);
   }
 }
 
+/**
+ * @brief 发送raft消息
+ *
+ * @param region_id 区域id
+ * @param msg raft消息
+ * @return true 发送成功
+ * @return false 发送失败
+ */
 bool Router::send_raft(uint32_t region_id, PeerMsg msg) {
   std::shared_ptr<PeerMailbox> mb;
-  NotifyFn notify;
+  NotifyFn notify;  // 通知函数
   {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = peers_.find(region_id);
     if (it == peers_.end()) return false;
     mb = it->second;
-    notify = raft_notify_;
+    notify = raft_notify_;  // 设置通知
   }
+  // 【非网络】投递本机 Peer 邮箱 + schedule；出网在 Ready 之后。
   if (!mb->try_send(std::move(msg))) return false;
   if (notify) notify(region_id);
   return true;

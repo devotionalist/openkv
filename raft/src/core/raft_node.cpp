@@ -18,11 +18,11 @@
 
 #include "openkv/raft/core/raft_node.hpp"
 
-#include "openkv/logging.hpp"
-
 #include <algorithm>
 #include <random>
 #include <sstream>
+
+#include "openkv/logging.hpp"
 
 namespace openkv::raft {
 
@@ -206,6 +206,12 @@ bool RaftNode::wait_applied(uint64_t index, uint32_t timeout_ms,
   return apply_.wait_applied(index, timeout_ms, tick);
 }
 
+/**
+ * @brief 加载硬状态：加载硬状态是加载硬状态的外部io，用于加载硬状态的外部io。
+ *
+ * 如果使用外部io，则不加载硬状态。
+ * 否则，加载硬状态。
+ */
 void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<LogEntry>& entries) {
   std::lock_guard<std::mutex> lock(mu_);
   term_ = hs.term;
@@ -223,28 +229,31 @@ void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<L
 }
 
 // 提业务日志：true 只表示已 append 拿到 index，不等于已落盘/提交/apply。详见头文件。
-bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
+bool RaftNode::propose(std::string data, uint64_t* assigned_index) {  // 提议新日志
   {
     std::lock_guard<std::mutex> lock(mu_);
-    if (role_ != Role::kLeader) return false;
+    if (role_ != Role::kLeader) return false;  // 如果不是领导者，返回false
 
-    const uint64_t idx = log_.append(term_, std::move(data));
+    const uint64_t idx = log_.append(term_, std::move(data));  // 追加日志
     if (opts_.external_io) {
-      if (auto e = log_.entry(idx)) ready_io_.ready_unstable_.push_back(*e);
+      if (auto e = log_.entry(idx))
+        ready_io_.ready_unstable_.push_back(*e);  // 如果日志存在，追加到待发送队列
     }
-    progress_.match_index_[opts_.self_id] = idx;
-    if (assigned_index) *assigned_index = idx;
 
-    persist_locked();
-    replication_.need_bcast_ = true;
+    progress_.match_index_[opts_.self_id] = idx;  // 更新匹配索引
+    if (assigned_index) *assigned_index = idx;    // 更新分配索引
+
+    persist_locked();  // 持久化
+    replication_.need_replicate_ = true;
     // external_io 出站只走 Ready：本拍必须入队 AE，不能等 tick。
     // 嵌入路径才吃 coalesce_replication。
-    if (opts_.external_io || !opts_.coalesce_replication || membership_.majority() <= 1) {
-      replication_.maybe_broadcast();
+    if (opts_.external_io || !opts_.coalesce_replication ||
+        membership_.majority() <= 1) {  // 如果使用外部io，或者不合并复制，或者多数派小于等于1
+      replication_.maybe_replicate();
     }
-    replication_.maybe_commit();
-    apply_.apply_committed();
-    persist_locked();
+    replication_.maybe_commit();  // 提交
+    apply_.apply_committed();     // 应用提交
+    persist_locked();             // 持久化
   }
   ready_pump_.flush_transport();
   return true;
@@ -278,12 +287,11 @@ void RaftNode::tick() {
     if (role_ == Role::kLeader) {
       membership_.maybe_auto_leave_joint();
       ++election_.heartbeat_elapsed_;
-      const bool hb =
-          election_.heartbeat_elapsed_ * 100 >= static_cast<int>(opts_.heartbeat_ms);
-      if (hb || replication_.need_bcast_) {
+      const bool hb = election_.heartbeat_elapsed_ * 100 >= static_cast<int>(opts_.heartbeat_ms);
+      if (hb || replication_.need_replicate_) {
         if (hb) election_.heartbeat_elapsed_ = 0;
-        replication_.broadcast_heartbeat();
-        replication_.need_bcast_ = false;
+        replication_.broadcast_replicate();
+        replication_.need_replicate_ = false;
       }
       for (auto& [id, quiet] : election_.peer_quiet_ticks_) {
         // 快照在途 / 本轮发不出 AE：不涨 quiet（否则本机管道拥塞会被当成网络分区）
@@ -296,7 +304,7 @@ void RaftNode::tick() {
       if (election_.election_elapsed_ >= election_.election_timeout_ticks_) {
         election_.election_elapsed_ = 0;
         // 超时后必须丢掉陈旧 leader_id。否则 on_request_pre_vote 因
-        //「仍有 leader 且 elapsed 刚清零」互拒 PreVote，选主永久卡死（it-scale-live）。
+        // 「仍有 leader 且 elapsed 刚清零」互拒 PreVote，选主永久卡死（it-scale-live）。
         leader_id_.clear();
         if (opts_.enable_pre_vote) {
           election_.start_pre_vote();

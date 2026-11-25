@@ -17,10 +17,10 @@
 
 #include "openkv/raft/log/raft_log_file.hpp"
 
-#include "openkv/raft/engine/raft_engine.hpp"
-
 #include <algorithm>
 #include <cstdint>
+
+#include "openkv/raft/engine/raft_engine.hpp"
 
 namespace openkv::raft::log_file {
 namespace {
@@ -86,15 +86,15 @@ void apply_mutations(std::vector<LogEntry>* entries,
                      std::vector<LogEntry> appends) {
   if (!entries) return;
   for (const auto& [from, to] : cuts) {
-    entries->erase(std::remove_if(entries->begin(), entries->end(),
-                                  [&](const LogEntry& e) { return e.index >= from && e.index < to; }),
-                   entries->end());
-  }
-  for (auto& e : appends) {
     entries->erase(
         std::remove_if(entries->begin(), entries->end(),
-                       [&](const LogEntry& x) { return x.index == e.index; }),
+                       [&](const LogEntry& e) { return e.index >= from && e.index < to; }),
         entries->end());
+  }
+  for (auto& e : appends) {
+    entries->erase(std::remove_if(entries->begin(), entries->end(),
+                                  [&](const LogEntry& x) { return x.index == e.index; }),
+                   entries->end());
     entries->push_back(std::move(e));
   }
   std::sort(entries->begin(), entries->end(),

@@ -19,15 +19,15 @@
 
 #pragma once
 
-#include "openkv/raft/core/ready.hpp"
-#include "openkv/raft/core/types.hpp"
-#include "openkv/region.hpp"
-
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
 #include <vector>
+
+#include "openkv/raft/core/ready.hpp"
+#include "openkv/raft/core/types.hpp"
+#include "openkv/region.hpp"
 
 namespace openkv::raftstore {
 
@@ -36,9 +36,9 @@ struct TickMsg {};
 
 /// 入站或回环的 Raft RPC 载荷（type 如 AppendEntries / RequestVote / …）。
 struct RaftMessage {
-  std::string from; // 来源
-  std::string type; // 类型
-  std::string payload; // 负载
+  std::string from;     // 来源
+  std::string type;     // 类型
+  std::string payload;  // 负载
 };
 
 /// 带外控制：超时转让、探测不可达、propose 后 kWake、异步落盘完成 kPersistDone。
@@ -52,24 +52,24 @@ struct SignificantMsg {
 
 /// Apply 完成后回告 Raft worker（推进 applied / ConfChange 收尾）。
 struct ApplyRes {
-  uint32_t region_id{0}; // 区域ID
-  uint64_t applied_index{0}; // 已应用索引
-  bool conf_change{false}; // 是否配置变更
+  uint32_t region_id{0};      // 区域ID
+  uint64_t applied_index{0};  // 已应用索引
+  bool conf_change{false};    // 是否配置变更
 };
 
 /// 投递给 Apply worker 的已提交日志批；destroy=true 表示 Region 销毁清理。
 struct ApplyMsg {
-  uint32_t region_id{0}; // 区域ID
-  std::vector<raft::LogEntry> entries; // 日志条目
-  bool destroy{false}; // 是否销毁
+  uint32_t region_id{0};                // 区域ID
+  std::vector<raft::LogEntry> entries;  // 日志条目
+  bool destroy{false};                  // 是否销毁
 };
 
 /// 出站快照任务；data 空则 SnapWorker 调用 Provider 现场生成。
 struct SnapTask {
-  uint32_t region_id{0}; // 区域ID  
-  raft::SnapshotMeta meta; // 快照元数据
-  std::string data; // 数据
-  uint32_t attempt{0};  // 已失败次数；用于重试上限
+  uint32_t region_id{0};    // 区域ID
+  raft::SnapshotMeta meta;  // 快照元数据
+  std::string data;         // 数据
+  uint32_t attempt{0};      // 已失败次数；用于重试上限
 };
 
 /// Raft worker 邮箱元素。

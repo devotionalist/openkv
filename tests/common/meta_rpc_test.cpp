@@ -15,12 +15,12 @@
 // @file meta_rpc_test.cpp
 // format_routing_table_line 须与 MetaNode::format_route / Storage recover 解析一致。
 
-#include "openkv/codec.hpp"
 #include "openkv/meta_rpc.hpp"
 
 #include <gtest/gtest.h>
 
 #include "meta/v1/meta.pb.h"
+#include "openkv/codec.hpp"
 
 TEST(MetaRpcTest, FormatRoutingTableLineIncludesNrepComma) {
   ::meta::v1::RoutingTable rt;

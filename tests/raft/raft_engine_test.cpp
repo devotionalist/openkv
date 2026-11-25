@@ -15,15 +15,16 @@
 // @file raft_engine_test.cpp
 // FileRaftEngine：LogBatch 原子写 + 恢复。
 
-#include "openkv/raft/engine/file_raft_engine.hpp"
 #include "openkv/raft/engine/raft_engine.hpp"
-#include "openkv/raft/log/raft_log.hpp"
-#include "openkv/raft/log/raft_log_file.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <filesystem>
-#include <unistd.h>
+
+#include "openkv/raft/engine/file_raft_engine.hpp"
+#include "openkv/raft/log/raft_log.hpp"
+#include "openkv/raft/log/raft_log_file.hpp"
 
 namespace fs = std::filesystem;
 using openkv::raft::FileRaftEngine;

@@ -16,14 +16,15 @@
 // 测试 KvEngine put/get/del、快照往返与 ShardEngineManager 多分片。
 
 #include "openkv/storage/kv_engine.hpp"
-#include "openkv/region.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <filesystem>
 #include <thread>
-#include <unistd.h>
+
+#include "openkv/region.hpp"
 
 namespace fs = std::filesystem;
 using openkv::storage::KvEngine;
@@ -32,8 +33,8 @@ using openkv::storage::ShardEngineManager;
 class KvEngineTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    dir_ = fs::temp_directory_path() / ("skv_kv_" + std::to_string(::getpid()) + "_" +
-                                        std::to_string(counter_++));
+    dir_ = fs::temp_directory_path() /
+           ("skv_kv_" + std::to_string(::getpid()) + "_" + std::to_string(counter_++));
     fs::remove_all(dir_);
     fs::create_directories(dir_);
   }

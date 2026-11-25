@@ -32,6 +32,7 @@ cmake_minimum_required(VERSION 3.20)
 project(openkv VERSION 0.1.0 LANGUAGES CXX)
 
 # ---- 语言标准与 IDE 支持 ----------------------------------------------------
+# C++20；代码风格为 Google C++ Style（见仓库根 .clang-format / make format）。
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 生成 compile_commands.json，供 clangd / Cursor IntelliSense 使用

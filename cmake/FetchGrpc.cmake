@@ -55,6 +55,25 @@ find_package(gRPC CONFIG QUIET)
 if(Protobuf_FOUND AND gRPC_FOUND AND TARGET gRPC::grpc++ AND TARGET gRPC::grpc_cpp_plugin)
   set(_skv_grpc_ok TRUE)
   message(STATUS "OpenKV: using system Protobuf + gRPC")
+  # Homebrew 导入的 gRPC::grpc++ 有时不带可被 clangd 看到的 include；
+  # AppleClang 构建常靠隐式 /usr/local，LLVM clangd 则找不到 grpcpp.h → 满屏级联红线。
+  # 显式挂上，写入 compile_commands.json。
+  foreach(_cand IN ITEMS
+      "${_skv_brew_prefix}/opt/grpc/include"
+      "${_skv_brew_prefix}/include"
+      "/usr/local/opt/grpc/include"
+      "/usr/local/include"
+      "/opt/homebrew/opt/grpc/include"
+      "/opt/homebrew/include")
+    if(_cand AND EXISTS "${_cand}/grpcpp/grpcpp.h")
+      set_property(TARGET gRPC::grpc++ APPEND PROPERTY
+        INTERFACE_INCLUDE_DIRECTORIES "${_cand}")
+      set_property(TARGET gRPC::grpc++ APPEND PROPERTY
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_cand}")
+      message(STATUS "OpenKV: gRPC public includes += ${_cand}")
+      break()
+    endif()
+  endforeach()
 endif()
 
 if(NOT _skv_grpc_ok)

@@ -21,7 +21,7 @@ Client/Admin
     ▼
 StorageNode          —— 接线：gRPC/ExecLine、Region 元数据、Admin 编排
     ├── Scheduler    —— 仅 key latch
-    ├── RaftKV       —— propose / 线性读入口 → Store
+    └── Store::async_write —— propose / Ready 写入口
     └── Store (raftstore)
             ├── BatchSystem / Peer mailbox
             ├── Ready → persist / send / Apply

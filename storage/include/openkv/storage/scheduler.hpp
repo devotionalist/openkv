@@ -36,7 +36,6 @@ class Latches {
   void unlock(uint64_t token);
 
  private:
-
   // 是否可以持有锁
   bool can_hold_locked(const std::vector<std::string>& keys) const;
   // 授予锁
@@ -57,8 +56,7 @@ class Latches {
 
 class Scheduler {
  public:
-
-  // 释放锁  
+  // 释放锁
   void unlock(uint64_t latch_token) {
     if (latch_token != 0) latches_.unlock(latch_token);
   }

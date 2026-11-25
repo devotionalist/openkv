@@ -15,12 +15,11 @@
 // @file cluster.cpp
 #include "cluster.hpp"
 
-#include "tcp_line.hpp"
-
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <cstdlib>
@@ -30,7 +29,8 @@
 #include <optional>
 #include <sstream>
 #include <thread>
-#include <unistd.h>
+
+#include "tcp_line.hpp"
 
 namespace fs = std::filesystem;
 
@@ -173,8 +173,10 @@ int cmd_status(const std::string& root) {
     bool proc = pid && alive(*pid);
     bool port = tcp_reachable(c.addr, 250);
     const char* st = (proc && port) ? "UP" : (port ? "PORT_ONLY" : (proc ? "NO_PORT" : "DOWN"));
-    if (std::string(st) == "UP") ++up;
-    else ++down;
+    if (std::string(st) == "UP")
+      ++up;
+    else
+      ++down;
     std::cout << "  " << c.name << "\t" << st << "\t" << c.addr;
     if (pid) std::cout << "\tpid=" << *pid;
     std::cout << "\n";
@@ -212,8 +214,7 @@ int cmd_start(const std::string& root, bool fresh) {
   spawn_logged(root, "meta-0", {meta.string(), (fs::path(root) / "conf/bootstrap.conf").string()});
   spawn_logged(root, "meta-1", {meta.string(), (fs::path(root) / "conf/meta-1.conf").string()});
   spawn_logged(root, "meta-2", {meta.string(), (fs::path(root) / "conf/meta-2.conf").string()});
-  spawn_logged(root, "storage-0",
-               {stor.string(), (fs::path(root) / "conf/storage.conf").string()});
+  spawn_logged(root, "storage-0", {stor.string(), (fs::path(root) / "conf/storage.conf").string()});
   spawn_logged(root, "storage-1",
                {stor.string(), (fs::path(root) / "conf/storage-1.conf").string()});
   spawn_logged(root, "storage-2",
@@ -225,9 +226,9 @@ int cmd_start(const std::string& root, bool fresh) {
   spawn_logged(root, "storage-5",
                {stor.string(), (fs::path(root) / "conf/storage-5.conf").string()});
 
-  for (auto port : {"127.0.0.1:8500", "127.0.0.1:8501", "127.0.0.1:8502", "127.0.0.1:9100",
-                    "127.0.0.1:9101", "127.0.0.1:9102", "127.0.0.1:9103", "127.0.0.1:9104",
-                    "127.0.0.1:9105"}) {
+  for (auto port :
+       {"127.0.0.1:8500", "127.0.0.1:8501", "127.0.0.1:8502", "127.0.0.1:9100", "127.0.0.1:9101",
+        "127.0.0.1:9102", "127.0.0.1:9103", "127.0.0.1:9104", "127.0.0.1:9105"}) {
     if (!wait_port(port, 30)) {
       std::cerr << "timeout waiting " << port << "\n";
       return 1;
@@ -257,9 +258,9 @@ int cmd_start(const std::string& root, bool fresh) {
 
 int cmd_stop(const std::string& root) {
   // reverse order
-  const char* order[] = {"gateway-1",  "gateway",   "storage-0", "storage-1", "storage-2",
-                         "storage-3",  "storage-4", "storage-5", "meta-0",
-                         "meta-1",     "meta-2",    "supervisor"};
+  const char* order[] = {"gateway-1", "gateway",   "storage-0", "storage-1",
+                         "storage-2", "storage-3", "storage-4", "storage-5",
+                         "meta-0",    "meta-1",    "meta-2",    "supervisor"};
   for (auto* n : order) stop_pid(root, n, false);
   std::cout << "cluster stopped\n";
   return 0;
@@ -293,12 +294,12 @@ int cmd_restart(const std::string& root, const std::string& name) {
     if (!fs::exists(gw)) gw = bin / "compute" / "gateway_node";
     if (!fs::exists(gw)) gw = run_dir(root) / "compute-gateway";
     if (name == "gateway-1") {
-      spawn_logged(root, name,
-                   {gw.string(), "-listen", "0.0.0.0:19002", "-stats-listen", "127.0.0.1:19102",
-                    "-storages",
-                    "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
-                    "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105",
-                    "-metas", "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502"});
+      spawn_logged(
+          root, name,
+          {gw.string(), "-listen", "0.0.0.0:19002", "-stats-listen", "127.0.0.1:19102", "-storages",
+           "127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102,"
+           "127.0.0.1:9103,127.0.0.1:9104,127.0.0.1:9105",
+           "-metas", "127.0.0.1:8500,127.0.0.1:8501,127.0.0.1:8502"});
     } else {
       spawn_logged(root, name,
                    {gw.string(), "-listen", "0.0.0.0:19000", "-storages",

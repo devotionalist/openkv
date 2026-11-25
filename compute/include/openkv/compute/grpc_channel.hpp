@@ -17,11 +17,11 @@
 
 #pragma once
 
+#include <grpcpp/grpcpp.h>
+
 #include <memory>
 #include <string>
 #include <string_view>
-
-#include <grpcpp/grpcpp.h>
 
 #include "meta/v1/meta.grpc.pb.h"
 #include "storage/v1/storage.grpc.pb.h"

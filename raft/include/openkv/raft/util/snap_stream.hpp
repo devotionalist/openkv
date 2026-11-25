@@ -20,14 +20,14 @@
 
 #pragma once
 
-#include "openkv/codec.hpp"
-
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include "openkv/codec.hpp"
 
 namespace openkv::raft {
 

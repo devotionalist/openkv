@@ -17,15 +17,15 @@
 
 #include "openkv/metrics_http.hpp"
 
-#include "openkv/logging.hpp"
-#include "openkv/net/tcp_line_client.hpp"
-
 #include <httplib.h>
 
 #include <atomic>
 #include <cstdlib>
 #include <thread>
 #include <utility>
+
+#include "openkv/logging.hpp"
+#include "openkv/net/tcp_line_client.hpp"
 
 namespace openkv {
 
@@ -52,14 +52,15 @@ void MetricsHttpServer::start(std::string listen_addr, MetricsTextFn text_fn) {
   if (host.empty()) host = "0.0.0.0";
 
   impl_->srv = std::make_unique<httplib::Server>();
-  impl_->srv->Get("/metrics", [fn = std::move(text_fn)](const httplib::Request&, httplib::Response& res) {
-    try {
-      res.set_content(fn(), "text/plain; version=0.0.4; charset=utf-8");
-    } catch (const std::exception& e) {
-      res.status = 500;
-      res.set_content(std::string("error: ") + e.what(), "text/plain");
-    }
-  });
+  impl_->srv->Get("/metrics",
+                  [fn = std::move(text_fn)](const httplib::Request&, httplib::Response& res) {
+                    try {
+                      res.set_content(fn(), "text/plain; version=0.0.4; charset=utf-8");
+                    } catch (const std::exception& e) {
+                      res.status = 500;
+                      res.set_content(std::string("error: ") + e.what(), "text/plain");
+                    }
+                  });
   impl_->srv->Get("/healthz", [](const httplib::Request&, httplib::Response& res) {
     res.set_content("ok\n", "text/plain");
   });

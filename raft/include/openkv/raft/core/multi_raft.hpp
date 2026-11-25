@@ -13,20 +13,21 @@
 // limitations under the License.
 
 // @file multi_raft.hpp
-// 职责：本机多 Raft Group 门面（按 shard/region id）；内部完整委托 raftstore::Store。
+// 职责：本机多 Raft Group 门面（按 shard/region id）；委托 Store，并持有出站 gRPC。
 // 架构：薄封装——生命周期、tick、Ready 攒批、Hibernate 均在 Store / BatchSystem。
 // 协作：StorageNode 持有 MultiRaft；GroupFactory 构造各 shard 的 RaftNode。
 // 注意：新增调度参数请改 Store::Options，并在 multi_raft.cpp 映射。
 
 #pragma once
 
-#include "openkv/raft/core/raft_node.hpp"
-#include "openkv/region.hpp"
-
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
+
+#include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/net/grpc_transport.hpp"
+#include "openkv/region.hpp"
 
 namespace openkv::raftstore {
 class Store;
@@ -63,41 +64,33 @@ class MultiRaft {
 
   /// 未创建则返回 nullptr。
   RaftNode* get(uint32_t shard_id);
-  // 获取共享节点
   std::shared_ptr<RaftNode> get_shared(uint32_t shard_id);
-  // 获取或创建节点
   RaftNode& get_or_create(uint32_t shard_id);
-  // 删除节点
   bool erase(uint32_t shard_id);
-  // 获取节点
   std::shared_ptr<RaftNode> take(uint32_t shard_id);
-  // 标记热点
   void mark_hot(uint32_t shard_id);
   /// 经 Router 投递 Tick（BatchSystem Raft worker 处理）。
   void tick_all();
-  // 获取领导者区域列表
   std::vector<uint32_t> leader_shards() const;
-  // 获取所有区域列表
   std::vector<uint32_t> all_shards() const;
 
-  // 获取选项
   const Options& options() const { return opts_; }
-  // 获取存储
   raftstore::Store& store() { return *store_; }
-  // 获取存储
   const raftstore::Store& store() const { return *store_; }
+  /// 出站 gRPC（构造时已接到 Store 的 transport_fn）。
+  GrpcRaftTransport& transport() { return transport_; }
+  const GrpcRaftTransport& transport() const { return transport_; }
 
-  // 启动
+  /// start：先出站再 Store；stop：先 Store 再出站。
   void start();
-  // 停止
   void stop();
   /// 同步 Region range/epoch 到 StoreMeta / Peer。
-  // 更新节点元数据
   void update_peer_meta(uint32_t region_id, openkv::KeyRange range, uint64_t epoch);
 
  private:
   Options opts_;
-  std::unique_ptr<raftstore::Store> store_;// 存储
+  GrpcRaftTransport transport_;
+  std::unique_ptr<raftstore::Store> store_;
 };
 
 }  // namespace openkv::raft

@@ -51,8 +51,7 @@ class LogMessage {
 
 }  // namespace openkv
 
-#define SKV_LOG(level) \
-  ::openkv::LogMessage(::openkv::LogLevel::level, __FILE__, __LINE__)
+#define SKV_LOG(level) ::openkv::LogMessage(::openkv::LogLevel::level, __FILE__, __LINE__)
 #define SKV_INFO SKV_LOG(kInfo)
 #define SKV_WARN SKV_LOG(kWarn)
 #define SKV_ERROR SKV_LOG(kError)

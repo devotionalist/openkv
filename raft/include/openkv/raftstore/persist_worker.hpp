@@ -29,6 +29,11 @@
 
 namespace openkv::raftstore {
 
+/**
+ * @brief
+ *
+ * 持久化线程是持久化线程的外部io，用于持久化线程的外部io。
+ */
 class PersistWorker {
  public:
   using Job = std::function<void()>;
@@ -46,13 +51,13 @@ class PersistWorker {
  private:
   void loop();
 
-  size_t n_{1};
-  std::mutex mu_;
+  size_t n_{1};    // 线程数量
+  std::mutex mu_;  // 互斥锁
   std::condition_variable cv_;
-  std::deque<Job> q_;
-  std::vector<std::thread> threads_;
-  bool running_{false};
-  static constexpr size_t kMaxQueue = 4096;
+  std::deque<Job> q_;                        // 队列
+  std::vector<std::thread> threads_;         // 线程
+  bool running_{false};                      // 是否运行
+  static constexpr size_t kMaxQueue = 4096;  // 最大队列大小
 };
 
 }  // namespace openkv::raftstore

@@ -17,15 +17,15 @@
 
 #pragma once
 
-#include "openkv/logging.hpp"
-#include "openkv/protocol.hpp"
-
 #include <grpcpp/grpcpp.h>
 
 #include <chrono>
 #include <cstdlib>
 #include <memory>
 #include <string>
+
+#include "openkv/logging.hpp"
+#include "openkv/protocol.hpp"
 
 namespace openkv {
 
@@ -47,8 +47,7 @@ inline void graceful_grpc_shutdown(grpc::Server* server, int grace_ms = -1) {
   if (grace_ms == 0) {
     server->Shutdown();
   } else {
-    const auto deadline =
-        std::chrono::system_clock::now() + std::chrono::milliseconds(grace_ms);
+    const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(grace_ms);
     server->Shutdown(deadline);
   }
   server->Wait();

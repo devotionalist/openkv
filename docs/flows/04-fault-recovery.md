@@ -2,7 +2,9 @@
 
 **设计总览：** [DATA_HA.md](../architecture/DATA_HA.md) §3.2 · 演练：[FAULT_DRILL.md](../ops/FAULT_DRILL.md)  
 **场景：** Storage 宕机再启；或落后过久超出本地日志窗口。  
-**关键代码：** `RaftEngine`（File/Db）· `RaftNode::load_from_disk` / `recover_apply` · `RAFT_AE` / `RAFT_SNAP` · `KvEngine::{create,apply}_snapshot`
+**关键代码：** `RaftEngine`（File/Db）· `RaftNode::load_from_disk` / `recover_apply` · `RAFT_AE` / `RAFT_SNAP` · `KvEngine::{create,apply}_snapshot`  
+**已知限制：** InstallSnapshot 是整 Region 逻辑 dump，海量时内存/带宽压力大；与本机 Checkpoint 不是一条路 → [42-massive-snapshot-migration](42-massive-snapshot-migration.md)  
+**日志窗：** `[first,last]`、compact / 掉窗条件 → [53-raft-log-window](53-raft-log-window.md)
 
 启动装载见 [07-storage-startup](07-storage-startup.md)；选举见 [06-raft-election-commit](06-raft-election-commit.md)。
 

@@ -17,9 +17,9 @@
 
 #include "openkv/raftstore/snap_worker.hpp"
 
-#include "openkv/logging.hpp"
-
 #include <chrono>
+
+#include "openkv/logging.hpp"
 
 namespace openkv::raftstore {
 
@@ -94,8 +94,7 @@ void SnapWorker::loop() {
     SnapTask task;
     {
       std::unique_lock<std::mutex> lk(mu_);
-      cv_.wait_for(lk, std::chrono::milliseconds(50),
-                   [&] { return !q_.empty() || !running_; });
+      cv_.wait_for(lk, std::chrono::milliseconds(50), [&] { return !q_.empty() || !running_; });
       if (!running_ && q_.empty()) break;
       if (q_.empty()) continue;
       task = std::move(q_.front());

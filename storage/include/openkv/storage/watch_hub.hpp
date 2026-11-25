@@ -25,15 +25,15 @@
 
 namespace openkv::storage {
 
-struct WatchRecord {// 观察记录
-  uint32_t region_id{0}; // 区域 ID
-  uint64_t revision{0}; // 修订版
-  bool deleted{false}; // 是否删除
-  std::string key; // 键
-  std::string value; // 值
+struct WatchRecord {      // 观察记录
+  uint32_t region_id{0};  // 区域 ID
+  uint64_t revision{0};   // 修订版
+  bool deleted{false};    // 是否删除
+  std::string key;        // 键
+  std::string value;      // 值
 };
 
-class WatchHub {// 观察中心
+class WatchHub {  // 观察中心
  public:
   explicit WatchHub(size_t capacity = 4096);
 
@@ -43,9 +43,9 @@ class WatchHub {// 观察中心
   std::vector<WatchRecord> poll(uint32_t region_id, uint64_t since, size_t limit) const;
 
  private:
-  size_t capacity_; // 容量
-  mutable std::mutex mu_; // 互斥锁
-  std::deque<WatchRecord> buf_; // 缓冲区
+  size_t capacity_;              // 容量
+  mutable std::mutex mu_;        // 互斥锁
+  std::deque<WatchRecord> buf_;  // 缓冲区
 };
 
 }  // namespace openkv::storage

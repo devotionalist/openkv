@@ -13,16 +13,17 @@
 // limitations under the License.
 
 // @file membership.hpp
-// 成员表 / Joint 配置：ConfChange apply、多数派计算、自动 LeaveJoint（无锁，由 RaftNode::mu_ 保护）。
+// 成员表 / Joint 配置：ConfChange apply、多数派计算、自动 LeaveJoint（无锁，由 RaftNode::mu_
+// 保护）。
 
 #pragma once
-
-#include "openkv/raft/core/types.hpp"
 
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "openkv/raft/core/types.hpp"
 
 namespace openkv::raft {
 
@@ -49,10 +50,10 @@ class Membership {
   void add_peer(const Peer& p);
   void remove_peer(const std::string& id);
 
-  bool in_joint_{false};                      ///< 是否在 Joint（新旧双多数）
-  std::vector<std::string> joint_old_voters_; ///< Joint 旧投票人
-  std::vector<std::string> joint_new_voters_; ///< Joint 新投票人
-  bool auto_leave_pending_{false};            ///< 稳定后自动离 Joint
+  bool in_joint_{false};                       ///< 是否在 Joint（新旧双多数）
+  std::vector<std::string> joint_old_voters_;  ///< Joint 旧投票人
+  std::vector<std::string> joint_new_voters_;  ///< Joint 新投票人
+  bool auto_leave_pending_{false};             ///< 稳定后自动离 Joint
   /// 已 propose LeaveJoint、等 apply；避免每 tick 重复 append。
   bool leave_joint_inflight_{false};
 

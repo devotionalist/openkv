@@ -16,10 +16,7 @@
 // MetaService 类型化调用；返回与旧行协议兼容的正文供内部解析。
 #pragma once
 
-#include "openkv/admin_rpc.hpp"
-#include "openkv/codec.hpp"
-#include "openkv/grpc_auth.hpp"
-#include "openkv/protocol.hpp"
+#include <grpcpp/grpcpp.h>
 
 #include <chrono>
 #include <sstream>
@@ -28,9 +25,12 @@
 #include <string_view>
 #include <vector>
 
-#include <grpcpp/grpcpp.h>
 #include "meta/v1/meta.grpc.pb.h"
 #include "meta/v1/meta.pb.h"
+#include "openkv/admin_rpc.hpp"
+#include "openkv/codec.hpp"
+#include "openkv/grpc_auth.hpp"
+#include "openkv/protocol.hpp"
 
 namespace openkv {
 
@@ -51,8 +51,8 @@ inline std::string format_routing_table_line(const ::meta::v1::RoutingTable& rt)
   return oss.str();
 }
 
-inline std::string meta_typed_call(std::string_view addr, std::string_view req, std::string_view token,
-                                   int timeout_ms) {
+inline std::string meta_typed_call(std::string_view addr, std::string_view req,
+                                   std::string_view token, int timeout_ms) {
   auto parts = admin_split_ws(req);
   if (parts.empty()) throw std::runtime_error("meta empty");
   const std::string& op = parts[0];
@@ -144,8 +144,10 @@ inline std::string meta_typed_call(std::string_view addr, std::string_view req, 
   if (op == "LIST_NODES") {
     ::meta::v1::ListNodesRequest r;
     if (parts.size() >= 2) {
-      if (parts[1] == "storage") r.set_role(::meta::v1::STORAGE);
-      else if (parts[1] == "compute") r.set_role(::meta::v1::COMPUTE);
+      if (parts[1] == "storage")
+        r.set_role(::meta::v1::STORAGE);
+      else if (parts[1] == "compute")
+        r.set_role(::meta::v1::COMPUTE);
     }
     ::meta::v1::ListNodesResponse resp;
     auto st = stub->ListNodes(&ctx, r, &resp);
@@ -156,11 +158,21 @@ inline std::string meta_typed_call(std::string_view addr, std::string_view req, 
       char role = n.role() == ::meta::v1::STORAGE ? 'S' : 'C';
       int state = 0;
       switch (n.state()) {
-        case ::meta::v1::JOINING: state = 0; break;
-        case ::meta::v1::ACTIVE: state = 1; break;
-        case ::meta::v1::DRAINING: state = 2; break;
-        case ::meta::v1::OFFLINE: state = 3; break;
-        default: state = 4; break;
+        case ::meta::v1::JOINING:
+          state = 0;
+          break;
+        case ::meta::v1::ACTIVE:
+          state = 1;
+          break;
+        case ::meta::v1::DRAINING:
+          state = 2;
+          break;
+        case ::meta::v1::OFFLINE:
+          state = 3;
+          break;
+        default:
+          state = 4;
+          break;
       }
       oss << ' ' << n.node_id() << '@' << n.address() << ':' << role << ':' << state;
     }
@@ -427,8 +439,8 @@ inline std::string meta_typed_call(std::string_view addr, std::string_view req, 
     std::ostringstream oss;
     oss << "OK SCALE_LIST " << resp.tasks_size();
     for (const auto& t : resp.tasks()) {
-      oss << ' ' << t.task_id() << ':' << t.new_node_id() << ':' << static_cast<int>(t.state()) << ':'
-          << t.progress();
+      oss << ' ' << t.task_id() << ':' << t.new_node_id() << ':' << static_cast<int>(t.state())
+          << ':' << t.progress();
       if (!t.shard_ids().empty()) {
         oss << ':';
         for (int i = 0; i < t.shard_ids_size(); ++i) {
@@ -491,8 +503,10 @@ inline std::string meta_typed_rpc(std::string addr, std::string_view req, std::s
       }
       return body;
     } catch (const std::exception&) {
-      if (local_meta) addr = kMetaFallbacks[static_cast<size_t>(fb++ % 3)];
-      else throw;
+      if (local_meta)
+        addr = kMetaFallbacks[static_cast<size_t>(fb++ % 3)];
+      else
+        throw;
     }
   }
   throw std::runtime_error("meta_typed_rpc exhausted");

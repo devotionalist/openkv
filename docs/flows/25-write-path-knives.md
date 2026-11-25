@@ -19,14 +19,14 @@
 
 | 刀 | 改动 | 配置 |
 |----|------|------|
-| 1 Ready group commit | `RaftKV::async_write` → `Store::request_ready`；按条数/时限再 `drive_ready` | `SKV_READY_COALESCE_N`（默认 32，≤1 关计数）、`SKV_READY_COALESCE_MS`（默认 1） |
+| 1 Ready group commit | `Store::async_write` → `Store::request_ready`；按条数/时限再 `drive_ready` | `SKV_READY_COALESCE_N`（默认 32，≤1 关计数）、`SKV_READY_COALESCE_MS`（默认 1） |
 | 2 二进制 ONEPC | `ProposeRequest.op=ONEPC`；Gateway `store_propose_onepc_async`；Storage `StoreFacade::one_pc_async` | 无开关；公开 ExecLine 已删除 |
 | 3 workers | BatchSystem / MultiRaft 默认 **8/8**；Helm 可配 | `SKV_RAFT_WORKERS` / `SKV_APPLY_WORKERS` |
 
 ```mermaid
 flowchart LR
   G[Gateway Put] -->|StoreService.Propose ONEPC| S[StoreFacade.one_pc_async]
-  S --> P[RaftKV.async_write / propose]
+  S --> P[Store.async_write / propose]
   P --> R[request_ready 攒批]
   R -->|N 或 ms| D[drive_ready → process_ready]
   D --> F[persist_ready Raft sync]

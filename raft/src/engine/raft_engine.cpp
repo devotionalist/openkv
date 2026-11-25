@@ -18,10 +18,10 @@
 
 #include "openkv/raft/engine/raft_engine.hpp"
 
-#include "openkv/raft/log/raft_log.hpp"
-
 #include <cstdint>
 #include <cstring>
+
+#include "openkv/raft/log/raft_log.hpp"
 
 namespace openkv::raft {
 namespace {

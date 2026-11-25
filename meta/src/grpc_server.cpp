@@ -21,6 +21,14 @@
 
 #include "openkv/meta/grpc_server.hpp"
 
+#include <grpcpp/grpcpp.h>
+
+#include <sstream>
+#include <stdexcept>
+#include <string_view>
+
+#include "meta/v1/meta.grpc.pb.h"
+#include "meta/v1/meta.pb.h"
 #include "openkv/admin_acl.hpp"
 #include "openkv/codec.hpp"
 #include "openkv/grpc_auth.hpp"
@@ -30,14 +38,6 @@
 #include "openkv/peer_counter.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/raft/core/raft_node.hpp"
-
-#include <sstream>
-#include <stdexcept>
-#include <string_view>
-
-#include <grpcpp/grpcpp.h>
-#include "meta/v1/meta.grpc.pb.h"
-#include "meta/v1/meta.pb.h"
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
@@ -62,11 +62,12 @@ void fill_ts_response(pb::GetTsResponse* resp, std::string_view line) {
   uint32_t count = 1;
   if (iss >> ok >> tag >> ts) {
     resp->set_ts(ts);
-    if (iss >> count) resp->set_count(count);
-    else resp->set_count(1);
+    if (iss >> count)
+      resp->set_count(count);
+    else
+      resp->set_count(1);
   }
 }
-
 
 class MetaServiceImpl final : public pb::MetaService::CallbackService {
  public:
@@ -217,8 +218,10 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                                 pb::ListNodesResponse* resp) override {
     return reply(ctx, false, [this, req, resp] {
       std::string line = "LIST_NODES";
-      if (req->role() == pb::STORAGE) line += " storage";
-      else if (req->role() == pb::COMPUTE) line += " compute";
+      if (req->role() == pb::STORAGE)
+        line += " storage";
+      else if (req->role() == pb::COMPUTE)
+        line += " compute";
       auto body = meta_.handle_line(line);
       std::istringstream iss(body);
       std::string ok, tag;
@@ -245,11 +248,21 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
         }
         // 行协议 0-based → proto 枚举（JOINING=1 …）
         switch (state) {
-          case 0: ninfo->set_state(pb::JOINING); break;
-          case 1: ninfo->set_state(pb::ACTIVE); break;
-          case 2: ninfo->set_state(pb::DRAINING); break;
-          case 3: ninfo->set_state(pb::OFFLINE); break;
-          default: ninfo->set_state(pb::OFFLINE); break;
+          case 0:
+            ninfo->set_state(pb::JOINING);
+            break;
+          case 1:
+            ninfo->set_state(pb::ACTIVE);
+            break;
+          case 2:
+            ninfo->set_state(pb::DRAINING);
+            break;
+          case 3:
+            ninfo->set_state(pb::OFFLINE);
+            break;
+          default:
+            ninfo->set_state(pb::OFFLINE);
+            break;
         }
       }
     });

@@ -15,7 +15,15 @@
 // @file grpc_server.cpp
 // Storage gRPC：Store/Admin/Raft 一律 CallbackService；Finish@apply / reactor，无 WorkPool。
 
+// 生成 pb 头必须靠前：先拉 storage_node（含 raftstore）时，clangd 易在
+// 巨大 preamble 后仍只看到 ProposeResponse 前向声明 → incomplete type 红线。
 #include "openkv/storage/grpc_server.hpp"
+
+#include <grpcpp/grpcpp.h>
+
+#include <sstream>
+#include <stdexcept>
+#include <utility>
 
 #include "openkv/admin_acl.hpp"
 #include "openkv/grpc_auth.hpp"
@@ -23,14 +31,9 @@
 #include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/protocol.hpp"
+#include "openkv/raftstore/store.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/watch_log.hpp"
-
-#include <sstream>
-#include <stdexcept>
-#include <utility>
-
-#include <grpcpp/grpcpp.h>
 #include "storage/v1/storage.grpc.pb.h"
 #include "storage/v1/storage.pb.h"
 
@@ -116,9 +119,10 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
     const std::string& primary = req->primary().empty() ? req->key() : req->primary();
     switch (req->op()) {
       case pb::ProposeRequest::ONEPC:
-        facade_.one_pc_async(req->shard_id(), req->key(), req->start_ts(), req->commit_ts(), primary,
-                             static_cast<uint8_t>(req->mvcc_op()), req->value(), req->epoch(),
-                             req->cas(), req->expected_revision(), req->ttl_ms(), std::move(finish));
+        facade_.one_pc_async(req->shard_id(), req->key(), req->start_ts(), req->commit_ts(),
+                             primary, static_cast<uint8_t>(req->mvcc_op()), req->value(),
+                             req->epoch(), req->cas(), req->expected_revision(), req->ttl_ms(),
+                             std::move(finish));
         break;
       case pb::ProposeRequest::PREWRITE:
         facade_.prewrite_async(req->shard_id(), req->key(), req->start_ts(), primary,
@@ -205,8 +209,10 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
     if (!r.error.empty()) resp->set_error(r.error);
     // locked|expired|committed|rolledback
     const char* st = "rolledback";
-    if (r.status == TxnStatus::kLocked) st = r.lock_expired ? "expired" : "locked";
-    else if (r.status == TxnStatus::kCommitted) st = "committed";
+    if (r.status == TxnStatus::kLocked)
+      st = r.lock_expired ? "expired" : "locked";
+    else if (r.status == TxnStatus::kCommitted)
+      st = "committed";
     resp->set_status(st);
     reactor->Finish(Status::OK);
     return reactor;
@@ -413,8 +419,8 @@ class RaftServiceImpl final : public pb::RaftService::CallbackService {
     return reactor;
   }
 
-  ServerReadReactor<pb::SnapshotChunk>* InstallSnapshot(CallbackServerContext*,
-                                                        pb::InstallSnapshotResponse* resp) override {
+  ServerReadReactor<pb::SnapshotChunk>* InstallSnapshot(
+      CallbackServerContext*, pb::InstallSnapshotResponse* resp) override {
     return new InstallSnapshotReactor(node_, resp);
   }
 
@@ -489,9 +495,8 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
 
   ServerUnaryReactor* DestroyRegion(CallbackServerContext* ctx, const pb::DestroyRegionRequest* req,
                                     pb::AdminSimpleResponse* resp) override {
-    return with_auth(ctx, [&] {
-      *resp = make_admin_resp(node_.admin_destroy_region(req->region_id()));
-    });
+    return with_auth(
+        ctx, [&] { *resp = make_admin_resp(node_.admin_destroy_region(req->region_id())); });
   }
 
   ServerUnaryReactor* PeerProgress(CallbackServerContext* ctx, const pb::PeerOpRequest* req,
@@ -524,9 +529,7 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
 
   ServerUnaryReactor* Campaign(CallbackServerContext* ctx, const pb::CampaignRequest* req,
                                pb::AdminSimpleResponse* resp) override {
-    return with_auth(ctx, [&] {
-      *resp = make_admin_resp(node_.admin_campaign(req->region_id()));
-    });
+    return with_auth(ctx, [&] { *resp = make_admin_resp(node_.admin_campaign(req->region_id())); });
   }
 
   ServerUnaryReactor* PlaceRegion(CallbackServerContext* ctx, const pb::PlaceRegionRequest* req,
@@ -607,9 +610,12 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
     resp->set_client(snap.client);
     resp->set_qdepth(snap.qdepth);
     resp->set_qdrop(snap.qdrop);
-    for (const auto& kv : snap.peer_raft_out) (*resp->mutable_peer_raft_out())[kv.first] = kv.second;
-    for (const auto& kv : snap.peer_sync_out) (*resp->mutable_peer_sync_out())[kv.first] = kv.second;
-    for (const auto& kv : snap.meta_out_peers) (*resp->mutable_meta_out_peers())[kv.first] = kv.second;
+    for (const auto& kv : snap.peer_raft_out)
+      (*resp->mutable_peer_raft_out())[kv.first] = kv.second;
+    for (const auto& kv : snap.peer_sync_out)
+      (*resp->mutable_peer_sync_out())[kv.first] = kv.second;
+    for (const auto& kv : snap.meta_out_peers)
+      (*resp->mutable_meta_out_peers())[kv.first] = kv.second;
     reactor->Finish(Status::OK);
     return reactor;
   }

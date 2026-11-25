@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include "openkv/compute/ts_range_queue.hpp"
+#include <grpcpp/grpcpp.h>
 
 #include <atomic>
 #include <cstdint>
@@ -28,7 +28,7 @@
 #include <string>
 #include <vector>
 
-#include <grpcpp/grpcpp.h>
+#include "openkv/compute/ts_range_queue.hpp"
 
 namespace openkv::compute {
 

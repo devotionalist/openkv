@@ -11,7 +11,7 @@
 
 | 层 | 行为 |
 |----|------|
-| ProposalQueue | `wait_async(index, timeout, cb)`：apply `invoke` 或超时回调，不占调用方线程 |
+| IndexWaiter | `wait_async(index, timeout, cb)`：apply `invoke` 或超时回调，不占调用方线程 |
 | Storage | `propose_async` / `one_pc_async`；`Store`/`Admin`/`Raft` → `CallbackService`；Finish@apply / reactor；**无 WorkPool** |
 | Meta | 全部 Callback：`replicate_cb` / `watch_route_async` / `get_scale_task_async` / `activate_or_join_async`；调度/读 `reply`；**无 WorkPool** |
 | Gateway | `KV`/`DS` → `CallbackService` + `SKV_GATEWAY_WORKERS`（仅 Watch）；Put：`alloc_async` → `Propose(ONEPC)`；Get：`alloc_async` → `StoreService.Get(start_ts)`；BatchPut/Get CQ fan-in（见 [28](28-compute-net-opt.md)） |
@@ -48,6 +48,6 @@ sequenceDiagram
 
 | ID | 命令 / 期望 |
 |----|-------------|
-| A1 | `ctest -R 'ProposalQueue'` 含 WaitAsync 用例 PASS |
+| A1 | `ctest -R 'IndexWaiter'` 含 WaitAsync 用例 PASS |
 | A2 | `ctest -R 'OnePc\|MetaHa\|ExecLine\|TsoTest\|RouterTest'` PASS |
 | A3 | 本地/集群 Put：无长期 gRPC Deadline；写路径日志无 handler 内 sleep 等 apply |

@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "openkv/storage/kv_engine.hpp"
-#include "openkv/storage/store_service.hpp"
-#include "facade_sync.hpp"
-#include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/watch_log.hpp"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <thread>
-#include <unistd.h>
+
+#include "facade_sync.hpp"
+#include "openkv/storage/kv_engine.hpp"
+#include "openkv/storage/storage_node.hpp"
+#include "openkv/storage/store_service.hpp"
 
 using openkv::NodeConfig;
 using openkv::storage::KvEngine;
@@ -48,8 +49,7 @@ TEST(WatchLogTest, EncodeRoundTripAndKeyOrder) {
 }
 
 TEST(WatchLogTest, PersistAcrossReopen) {
-  auto dir =
-      std::filesystem::temp_directory_path() / ("skv_wlog_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / ("skv_wlog_" + std::to_string(::getpid()));
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
   {
@@ -71,8 +71,7 @@ TEST(WatchLogTest, PersistAcrossReopen) {
 }
 
 TEST(WatchLogTest, TrimCapacity) {
-  auto dir =
-      std::filesystem::temp_directory_path() / ("skv_wtrim_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / ("skv_wtrim_" + std::to_string(::getpid()));
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
   KvEngine eng(dir.string(), 0);
@@ -87,8 +86,7 @@ TEST(WatchLogTest, TrimCapacity) {
 }
 
 TEST(WatchLogTest, OnePcWatchPersistsAcrossRestart) {
-  auto dir =
-      std::filesystem::temp_directory_path() / ("skv_wtxn_" + std::to_string(::getpid()));
+  auto dir = std::filesystem::temp_directory_path() / ("skv_wtxn_" + std::to_string(::getpid()));
   std::filesystem::remove_all(dir);
   NodeConfig cfg;
   cfg.node_id = "storage-test";
@@ -110,8 +108,7 @@ TEST(WatchLogTest, OnePcWatchPersistsAcrossRestart) {
     auto pr = openkv::storage::test::sync_one_pc(facade, 0, "wk", 10, 11, "wk", /*put*/ 0, "wv");
     ASSERT_TRUE(pr.ok) << pr.error;
     auto evs = WatchLog::poll(node.engines().get_or_create(0), 0, 0, 20);
-    auto it = std::find_if(evs.begin(), evs.end(),
-                           [](const auto& e) { return e.key == "wk"; });
+    auto it = std::find_if(evs.begin(), evs.end(), [](const auto& e) { return e.key == "wk"; });
     ASSERT_NE(it, evs.end());
     EXPECT_EQ(it->value, "wv");
     watch_rev = it->revision;

@@ -16,10 +16,10 @@
 
 #pragma once
 
-#include "openkv/storage/store_service.hpp"
-
 #include <future>
 #include <utility>
+
+#include "openkv/storage/store_service.hpp"
 
 namespace openkv::storage::test {
 
@@ -45,9 +45,9 @@ inline ProposeResult sync_one_pc(StoreFacade& f, uint32_t shard, std::string key
   });
 }
 
-inline ProposeResult sync_prewrite(StoreFacade& f, uint32_t shard, std::string key, uint64_t start_ts,
-                                   std::string primary, uint8_t mvcc_op, std::string value,
-                                   uint64_t expected_epoch = 0, bool cas = false,
+inline ProposeResult sync_prewrite(StoreFacade& f, uint32_t shard, std::string key,
+                                   uint64_t start_ts, std::string primary, uint8_t mvcc_op,
+                                   std::string value, uint64_t expected_epoch = 0, bool cas = false,
                                    uint64_t expected_revision = 0, int64_t expire_at_ms = 0) {
   return wait_propose([&](auto cb) {
     f.prewrite_async(shard, std::move(key), start_ts, std::move(primary), mvcc_op, std::move(value),
@@ -62,8 +62,8 @@ inline ProposeResult sync_commit(StoreFacade& f, uint32_t shard, std::string key
   });
 }
 
-inline ProposeResult sync_rollback(StoreFacade& f, uint32_t shard, std::string key, uint64_t start_ts,
-                                   uint64_t expected_epoch = 0) {
+inline ProposeResult sync_rollback(StoreFacade& f, uint32_t shard, std::string key,
+                                   uint64_t start_ts, uint64_t expected_epoch = 0) {
   return wait_propose([&](auto cb) {
     f.rollback_async(shard, std::move(key), start_ts, expected_epoch, std::move(cb));
   });

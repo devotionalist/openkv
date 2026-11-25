@@ -67,8 +67,10 @@ void Latches::unlock(uint64_t token) {
   {
     std::lock_guard<std::mutex> lk(mu_);
     for (auto it = held_.begin(); it != held_.end();) {
-      if (it->second == token) it = held_.erase(it);
-      else ++it;
+      if (it->second == token)
+        it = held_.erase(it);
+      else
+        ++it;
     }
     drain_async_locked(&ready);
   }

@@ -19,12 +19,12 @@
 
 #pragma once
 
-#include "openkv/meta/cluster_state.hpp"
-
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "openkv/meta/cluster_state.hpp"
 
 namespace openkv::meta {
 

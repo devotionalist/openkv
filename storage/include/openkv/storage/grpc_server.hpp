@@ -17,12 +17,12 @@
 
 #pragma once
 
-#include "openkv/storage/store_service.hpp"
-
 #include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
+
+#include "openkv/storage/store_service.hpp"
 
 namespace openkv::storage {
 
@@ -37,12 +37,12 @@ class StorageGrpcServer {
   bool running() const { return running_.load(); }
 
  private:
-  StoreFacade& facade_; // 存储 facade
-  std::string listen_addr_; // 监听地址
-  std::string admin_token_; // 管理员 token
-  std::atomic<bool> running_{false}; // 运行状态
-  struct Impl; // 实现
-  std::unique_ptr<Impl> impl_; // 实现
-}; // 存储 gRPC 服务器
+  StoreFacade& facade_;               // 存储 facade
+  std::string listen_addr_;           // 监听地址
+  std::string admin_token_;           // 管理员 token
+  std::atomic<bool> running_{false};  // 运行状态
+  struct Impl;                        // 实现
+  std::unique_ptr<Impl> impl_;        // 实现
+};  // 存储 gRPC 服务器
 
 }  // namespace openkv::storage

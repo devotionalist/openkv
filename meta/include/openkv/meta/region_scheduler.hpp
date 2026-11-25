@@ -18,8 +18,6 @@
 
 #pragma once
 
-#include "openkv/meta/cluster_state.hpp"
-
 #include <atomic>
 #include <functional>
 #include <mutex>
@@ -29,12 +27,15 @@
 #include <unordered_map>
 #include <vector>
 
+#include "openkv/meta/cluster_state.hpp"
+
 namespace openkv::meta {
 
 /// 迁移任务状态机阶段。
 enum class MigrateState {
   kPending,        ///< 已提交，等待执行
-  kPlacing,        ///< 正在对 Storage 做 ENSURE/learner/promote；place 失败仍可进 UpdatingRoute（尽力而为）
+  kPlacing,        ///< 正在对 Storage 做 ENSURE/learner/promote；place 失败仍可进
+                   ///< UpdatingRoute（尽力而为）
   kUpdatingRoute,  ///< 提交 Meta PLACE_REGION 更新路由（即使 place 未完全成功也会尝试）
   kCompleted,      ///< 成功
   kFailed,         ///< 失败（见 MigrateTask::error）
@@ -43,13 +44,13 @@ enum class MigrateState {
 
 /// 运行时迁移任务（内存视图；持久化子集见 PersistMigrate）。
 struct MigrateTask {
-  std::string task_id;                      ///< 任务唯一 ID
-  MigrateState state{MigrateState::kPending};///< 当前阶段
-  uint32_t region_id{0};                    ///< 目标 Region
-  std::vector<std::string> desired_peers;   ///< 期望最终副本 node_id 列表
-  std::string error;                        ///< 失败原因
-  double progress{0.0};                     ///< 0~1 进度提示
-  uint32_t place_attempts{0};               ///< 数据面 place 失败次数；超限 → Failed
+  std::string task_id;                         ///< 任务唯一 ID
+  MigrateState state{MigrateState::kPending};  ///< 当前阶段
+  uint32_t region_id{0};                       ///< 目标 Region
+  std::vector<std::string> desired_peers;      ///< 期望最终副本 node_id 列表
+  std::string error;                           ///< 失败原因
+  double progress{0.0};                        ///< 0~1 进度提示
+  uint32_t place_attempts{0};                  ///< 数据面 place 失败次数；超限 → Failed
 };
 
 /// 数据面编排：对 Storage 执行 place（ENSURE / learner / promote / …）；成功返回 true。
@@ -138,12 +139,12 @@ class RegionScheduler {
   uint32_t max_inflight_;         ///< 并发迁移上限
   bool was_leader_{false};        ///< 上一轮 worker 是否为 Leader（用于换主 restore）
 
-  mutable std::mutex mu_;         ///< 保护 tasks_ / region_to_task_
-  std::unordered_map<std::string, MigrateTask> tasks_;           ///< task_id → 任务
-  std::unordered_map<uint32_t, std::string> region_to_task_;     ///< Region→task，防重复入队
-  std::atomic<bool> running_{false};  ///< worker 运行标志
-  std::thread worker_;                ///< 后台线程
-  std::atomic<uint64_t> task_seq_{0}; ///< 生成 task_id
+  mutable std::mutex mu_;                                     ///< 保护 tasks_ / region_to_task_
+  std::unordered_map<std::string, MigrateTask> tasks_;        ///< task_id → 任务
+  std::unordered_map<uint32_t, std::string> region_to_task_;  ///< Region→task，防重复入队
+  std::atomic<bool> running_{false};                          ///< worker 运行标志
+  std::thread worker_;                                        ///< 后台线程
+  std::atomic<uint64_t> task_seq_{0};                         ///< 生成 task_id
 };
 
 }  // namespace openkv::meta

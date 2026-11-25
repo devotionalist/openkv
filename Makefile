@@ -16,27 +16,77 @@
 # OpenKV Makefile — 常用开发入口
 # -----------------------------------------------------------------------------
 # 默认使用系统 clang++/ar，避免 Homebrew binutils 的 ar 与 Apple ld 不兼容。
+# 语言标准：C++20（与 CMakeLists.txt CMAKE_CXX_STANDARD 一致；编译参数多为 -std=gnu++20）。
+# 代码风格：Google C++ Style（.clang-format BasedOnStyle: Google）；make format / format-check。
 # 变量可覆盖，例如：
 #   make BUILD_DIR=build-asan memcheck
+#   make CXX_STANDARD=20 configure   # 勿降到 17 以下（工程依赖 C++20）
 # =============================================================================
 
 BUILD_DIR ?= build
 
+# C++ 标准：与根 CMakeLists.txt 对齐；经 -DCMAKE_CXX_STANDARD 传给 cmake。
+CXX_STANDARD ?= 20
+
+# clang-format：Google 风格；排除第三方与生成物。
+CLANG_FORMAT ?= clang-format
+CXX_FORMAT_DIRS ?= common raft storage compute meta tools tests
+
 # RocksDB 由 CMake FetchContent 固定版本随工程编译，无需系统预装
 # gRPC 强制（系统包优先，否则 FetchContent）；勿再传 -DOPENKV_USE_GRPC=OFF
-CMAKE_FLAGS ?= -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_AR=/usr/bin/ar -DCMAKE_RANLIB=/usr/bin/ranlib
+CMAKE_FLAGS ?= \
+	-DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+	-DCMAKE_AR=/usr/bin/ar \
+	-DCMAKE_RANLIB=/usr/bin/ranlib \
+	-DCMAKE_CXX_STANDARD=$(CXX_STANDARD) \
+	-DCMAKE_CXX_STANDARD_REQUIRED=ON
 
 .PHONY: all configure build test gtest run-meta run-storage run-compute proto go-mod clean \
 	cluster-up cluster-down cluster-test e2e memcheck asan fault-drill integ-workload release-gate \
 	admin admin-run admin-frontend \
 	it-web it-region it-txn it-disk-fault it-partition it-net-jitter integ-extra fault-drill-extra \
-	raft-fault-local
+	raft-fault-local show-std format format-check
 
 # 默认：编译 + 跑全部单元测试
 all: build test
 
+# 打印语言标准 + 风格约定
+show-std:
+	@echo "Makefile   CXX_STANDARD=$(CXX_STANDARD)"
+	@echo "CMakeLists CMAKE_CXX_STANDARD=20 (source of truth)"
+	@echo "Style      Google C++ (.clang-format BasedOnStyle: Google, ColumnLimit 100)"
+	@if [ -f "$(BUILD_DIR)/compile_commands.json" ]; then \
+	  printf 'build      compile flag: '; \
+	  (rg -o 'std=(gnu\+\+|c\+\+)[0-9]+' "$(BUILD_DIR)/compile_commands.json" || true) | head -1; \
+	  printf '\n'; \
+	else \
+	  echo "build      (no compile_commands.json — run: make configure)"; \
+	fi
+
+# 按 Google 风格格式化业务 C++（不碰 build/_deps/generated）
+format:
+	@command -v $(CLANG_FORMAT) >/dev/null || { echo "clang-format not found"; exit 1; }
+	@files=$$(find $(CXX_FORMAT_DIRS) -type f \
+	  \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cc' \) \
+	  ! -path '*/build/*' ! -path '*/_deps/*' ! -path '*/generated/*' -print); \
+	if [ -z "$$files" ]; then echo "no C++ files"; exit 0; fi; \
+	echo "==> clang-format -i (Google / C++$(CXX_STANDARD))"; \
+	echo "$$files" | tr '\n' '\0' | xargs -0 $(CLANG_FORMAT) -i --style=file
+
+# 仅检查是否符合 .clang-format（CI 可用；有差异则非 0）
+format-check:
+	@command -v $(CLANG_FORMAT) >/dev/null || { echo "clang-format not found"; exit 1; }
+	@files=$$(find $(CXX_FORMAT_DIRS) -type f \
+	  \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cc' \) \
+	  ! -path '*/build/*' ! -path '*/_deps/*' ! -path '*/generated/*' -print); \
+	if [ -z "$$files" ]; then echo "no C++ files"; exit 0; fi; \
+	echo "==> clang-format --dry-run -Werror"; \
+	echo "$$files" | tr '\n' '\0' | xargs -0 $(CLANG_FORMAT) --dry-run -Werror --style=file
+
+
 # 仅配置（生成 build/ 与 compile_commands.json）
 configure:
+	@echo "==> C++$(CXX_STANDARD) (CMAKE_CXX_STANDARD=$(CXX_STANDARD))"
 	cmake -B $(BUILD_DIR) $(CMAKE_FLAGS)
 
 # 增量编译

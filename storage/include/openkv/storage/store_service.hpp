@@ -17,24 +17,24 @@
 
 #pragma once
 
-#include "openkv/storage/latency_hist.hpp"
-#include "openkv/storage/mvcc.hpp"
-#include "openkv/storage/storage_node.hpp"
-
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
 
+#include "openkv/storage/latency_hist.hpp"
+#include "openkv/storage/mvcc.hpp"
+#include "openkv/storage/storage_node.hpp"
+
 namespace openkv::storage {
 
-enum class CmdOp : uint8_t {// 命令操作
-  kPut = 0, // 插入
+enum class CmdOp : uint8_t {  // 命令操作
+  kPut = 0,                   // 插入
   kDelete = 1,
-  kPrewrite = 2, // 预写
-  kCommit = 3, // 提交
-  kRollback = 4, // 回滚
+  kPrewrite = 2,  // 预写
+  kCommit = 3,    // 提交
+  kRollback = 4,  // 回滚
   kPessimisticLock = 5,
   kPessimisticRollback = 6,
   kGcBelow = 7,  // value = safe_ts u64；删非最新且 commit_ts < safe_ts
@@ -92,8 +92,7 @@ bool decode_rollback_value(std::string_view data, uint64_t* start_ts);
 std::string encode_pessimistic_lock_value(uint64_t start_ts, uint64_t for_update_ts,
                                           uint64_t ttl_ms, std::string_view primary);
 bool decode_pessimistic_lock_value(std::string_view data, uint64_t* start_ts,
-                                   uint64_t* for_update_ts, uint64_t* ttl_ms,
-                                   std::string* primary);
+                                   uint64_t* for_update_ts, uint64_t* ttl_ms, std::string* primary);
 
 struct ProposeResult {
   bool ok{false};
@@ -163,8 +162,8 @@ class StoreFacade {
   explicit StoreFacade(StorageNode& node);
 
   /// 异步提议（热路径；gRPC CQ / 后台统一走这）。
-  void propose_async(uint32_t shard_id, const Command& cmd,
-                     std::function<void(ProposeResult)> cb, uint64_t expected_epoch = 0);
+  void propose_async(uint32_t shard_id, const Command& cmd, std::function<void(ProposeResult)> cb,
+                     uint64_t expected_epoch = 0);
 
   GetResult get(uint32_t shard_id, std::string_view key, bool linearizable);
 
@@ -187,9 +186,8 @@ class StoreFacade {
                               uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
   void pessimistic_rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                                   uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
-  void resolve_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts,
-                          uint64_t commit_ts, uint64_t expected_epoch,
-                          std::function<void(ProposeResult)> cb);
+  void resolve_lock_async(uint32_t shard_id, std::string key, uint64_t start_ts, uint64_t commit_ts,
+                          uint64_t expected_epoch, std::function<void(ProposeResult)> cb);
 
   // 事务获取
   TxnGetResult txn_get(uint32_t shard_id, std::string_view key, uint64_t start_ts,
@@ -211,8 +209,8 @@ class StoreFacade {
   const RegionMetrics& metrics() const { return *metrics_; }
 
  private:
-  ProposeResult require_leader(uint32_t shard_id, uint64_t expected_epoch); // 需要领导者
-  StorageNode& node_; // 存储节点
+  ProposeResult require_leader(uint32_t shard_id, uint64_t expected_epoch);  // 需要领导者
+  StorageNode& node_;                                                        // 存储节点
   /// shared：propose_async 回调可能晚于临时 StoreFacade（如 txn GC）析构。
   std::shared_ptr<RegionMetrics> metrics_;
 };

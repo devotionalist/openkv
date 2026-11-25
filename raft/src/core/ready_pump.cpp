@@ -17,34 +17,41 @@
 
 #include "openkv/raft/core/ready_pump.hpp"
 
-#include "openkv/raft/core/raft_node.hpp"
-
 #include <mutex>
 #include <utility>
 
+#include "openkv/raft/core/raft_node.hpp"
+
 namespace openkv::raft {
 
+// 【非网络】只攒出站消息；external_io 下等 take_ready，嵌入路径见 flush_transport。
 void ReadyPump::enqueue(std::string peer_id, std::string type, std::string payload) {
   outbound_.push_back(Outbound{std::move(peer_id), std::move(type), std::move(payload)});
 }
 
+// external_io：不发，留给 Store。嵌入路径：经 send_（常即 GrpcRaftTransport::bind）→ 真正出网。
 void ReadyPump::flush_transport() {
-  if (n_.opts_.external_io) return;  // 消息留在 outbound_，由 take_ready 外提
+  if (n_.opts_.external_io) return;
   std::vector<Outbound> batch;
   {
     std::lock_guard<std::mutex> lock(n_.mu_);
     batch.swap(outbound_);
   }
   for (auto& m : batch) {
+    // 【出网入口·嵌入】send_ 最终进 gRPC 发送队列（见 grpc_transport.cpp bind）。
     if (n_.send_) n_.send_(m.peer_id, m.type, m.payload);
   }
 }
 
+// HS / 未落盘日志 / 待 apply / 出站 / 快照 任一有货 → Store 该拉 Ready。
 bool ReadyPump::has_ready() const {
   std::lock_guard<std::mutex> lock(n_.mu_);
-  return n_.ready_io_.ready_hs_dirty_ || !n_.ready_io_.ready_unstable_.empty() ||
-         !n_.ready_io_.ready_committed_.empty() || !outbound_.empty() ||
-         !n_.ready_io_.ready_snaps_.empty();
+  return n_.ready_io_.ready_hs_dirty_               // 硬状态脏
+         || !n_.ready_io_.ready_unstable_.empty()   // 未落盘日志
+         || !n_.ready_io_.ready_committed_.empty()  // 待提交日志
+         || !outbound_.empty()                      // 出站 消息
+         || !n_.ready_io_.ready_snaps_.empty()      // 快照 消息
+      ;                                             // 任一有货 → Store 该拉 Ready
 }
 
 SoftState ReadyPump::soft_state_locked() const {
@@ -61,10 +68,19 @@ SoftState ReadyPump::soft_state_locked() const {
   return st;
 }
 
+/**
+ * @brief 获取待发送消息：获取待发送消息是获取待发送消息的外部io，用于获取待发送消息的外部io。
+ *
+ * 如果硬状态脏，则获取硬状态。
+ * 否则，获取未落盘日志。
+ * 否则，获取待提交日志。
+ * 否则，获取出站消息。
+ * 否则，获取快照消息。
+ */
 Ready ReadyPump::take_ready() {
   std::lock_guard<std::mutex> lock(n_.mu_);
   Ready rd;
-  if (n_.ready_io_.ready_hs_dirty_) {
+  if (n_.ready_io_.ready_hs_dirty_) {  // 硬状态脏
     rd.hard_state = n_.ready_io_.ready_hs_;
     rd.must_sync = true;
     n_.ready_io_.ready_hs_dirty_ = false;

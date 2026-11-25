@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include "openkv/region.hpp"
-
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -29,6 +27,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include "openkv/region.hpp"
 
 namespace openkv::compute {
 

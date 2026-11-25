@@ -31,7 +31,8 @@ void append_u32(std::string& out, uint32_t v) {
 
 bool read_u32(std::string_view in, size_t* i, uint32_t* v) {
   if (*i + 4 > in.size()) return false;
-  *v = static_cast<uint8_t>(in[*i]) | (static_cast<uint32_t>(static_cast<uint8_t>(in[*i + 1])) << 8) |
+  *v = static_cast<uint8_t>(in[*i]) |
+       (static_cast<uint32_t>(static_cast<uint8_t>(in[*i + 1])) << 8) |
        (static_cast<uint32_t>(static_cast<uint8_t>(in[*i + 2])) << 16) |
        (static_cast<uint32_t>(static_cast<uint8_t>(in[*i + 3])) << 24);
   *i += 4;
