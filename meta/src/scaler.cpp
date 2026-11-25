@@ -21,8 +21,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
 
 #include "openkv/logging.hpp"
+#include "openkv/meta/errors.hpp"
 
 namespace openkv::meta {
 
@@ -84,14 +86,14 @@ ScaleTask Scaler::start_scale_out(const std::string& new_storage_node_id,
   auto node = state_.get_node(new_storage_node_id);
   if (!node) {
     task.state = ScaleTaskState::kFailed;
-    task.error = "unknown_node";
+    task.error = std::string(err::kUnknownNode);
     std::lock_guard<std::mutex> lock(mu_);
     tasks_[task.task_id] = task;
     return task;
   }
   if (node->state != NodeState::kActive) {
     task.state = ScaleTaskState::kFailed;
-    task.error = "node_not_active";  // Joining 须先 JOIN/ACTIVATE
+    task.error = std::string(err::kNodeNotActive);  // Joining 须先 JOIN/ACTIVATE
     std::lock_guard<std::mutex> lock(mu_);
     tasks_[task.task_id] = task;
     return task;
@@ -109,7 +111,7 @@ ScaleTask Scaler::start_scale_out(const std::string& new_storage_node_id,
   // 同 node+Region 已在排队/推进：拒绝重复，避免双 Learner ConfChange。
   if (overlaps_inflight_locked(task.new_node_id, task.shard_ids)) {
     task.state = ScaleTaskState::kFailed;
-    task.error = "duplicate_inflight";
+    task.error = std::string(err::kDuplicateInflight);
     tasks_[task.task_id] = task;
     return task;
   }
@@ -174,7 +176,7 @@ int Scaler::cancel_inflight(const std::string& node_id, std::optional<uint32_t> 
       }
     }
     t.state = ScaleTaskState::kFailed;
-    t.error = "cancelled";
+    t.error = std::string(err::kCancelled);
     t.progress = t.progress;
     ++n;
     SKV_INFO << "scale-out cancelled task=" << id << " node=" << t.new_node_id;
@@ -236,7 +238,7 @@ void Scaler::advance(ScaleTask& task) {
   auto node = state_.get_node(task.new_node_id);
   if (!node) {
     task.state = ScaleTaskState::kFailed;
-    task.error = "node_gone";
+    task.error = std::string(err::kNodeGone);
     return;
   }
 
@@ -262,7 +264,7 @@ void Scaler::advance(ScaleTask& task) {
       }
       if (ok == 0) {
         task.state = ScaleTaskState::kFailed;
-        task.error = "add_learner_failed";
+        task.error = std::string(err::kAddLearnerFailed);
         return;
       }
       task.state = ScaleTaskState::kCatchingUp;
@@ -302,7 +304,7 @@ void Scaler::advance(ScaleTask& task) {
       }
       if (ok == 0 && !task.shard_ids.empty()) {
         task.state = ScaleTaskState::kFailed;
-        task.error = "promote_failed";
+        task.error = std::string(err::kPromoteFailed);
         return;
       }
       task.state = ScaleTaskState::kUpdatingRoute;
@@ -313,7 +315,7 @@ void Scaler::advance(ScaleTask& task) {
       if (bump_) {
         if (!bump_()) {
           task.state = ScaleTaskState::kFailed;
-          task.error = "bump_route_failed";
+          task.error = std::string(err::kBumpRouteFailed);
           return;
         }
       } else {

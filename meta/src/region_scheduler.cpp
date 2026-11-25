@@ -25,8 +25,10 @@
 #include <chrono>
 #include <optional>
 #include <set>
+#include <string>
 
 #include "openkv/logging.hpp"
+#include "openkv/meta/errors.hpp"
 
 namespace openkv::meta {
 namespace {
@@ -182,7 +184,7 @@ MigrateTask RegionScheduler::submit(uint32_t region_id, std::vector<std::string>
   task.desired_peers = std::move(desired);
   if (task.desired_peers.empty()) {
     task.state = MigrateState::kFailed;
-    task.error = "no_placement";
+    task.error = std::string(err::kNoPlacement);
     std::lock_guard<std::mutex> lock(mu_);
     tasks_[task.task_id] = task;
     return task;
@@ -190,7 +192,7 @@ MigrateTask RegionScheduler::submit(uint32_t region_id, std::vector<std::string>
   std::lock_guard<std::mutex> lock(mu_);
   if (region_to_task_.count(region_id)) {
     task.state = MigrateState::kFailed;
-    task.error = "already_migrating";
+    task.error = std::string(err::kAlreadyMigrating);
     tasks_[task.task_id] = task;
     return task;
   }
@@ -446,7 +448,7 @@ void RegionScheduler::advance(const std::string& task_id) {
                  << " attempts=" << task.place_attempts;
         if (task.place_attempts >= kMaxPlaceAttempts) {
           task.state = MigrateState::kFailed;
-          task.error = "place_exhausted";
+          task.error = std::string(err::kPlaceExhausted);
           region_to_task_.erase(task.region_id);
           erase_id = task.task_id;
         } else {
@@ -460,8 +462,9 @@ void RegionScheduler::advance(const std::string& task_id) {
     }
     if (erase_id && erase_) {
       erase_(*erase_id);
-    } else if (upsert && persist_)
+    } else if (upsert && persist_) {
       persist_(*upsert);
+    }
     return;
   }
 
@@ -481,7 +484,7 @@ void RegionScheduler::advance(const std::string& task_id) {
       }
       if (!ok) {
         task.state = MigrateState::kFailed;
-        task.error = "commit_place_failed";
+        task.error = std::string(err::kCommitPlaceFailed);
         region_to_task_.erase(task.region_id);
         erase_id = task.task_id;
       } else {

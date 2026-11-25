@@ -25,6 +25,7 @@
 
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 #include "meta/v1/meta.grpc.pb.h"
@@ -35,6 +36,7 @@
 #include "openkv/grpc_keepalive.hpp"
 #include "openkv/grpc_shutdown.hpp"
 #include "openkv/logging.hpp"
+#include "openkv/meta/errors.hpp"
 #include "openkv/peer_counter.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/raft/core/raft_node.hpp"
@@ -77,7 +79,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 
   Status auth_write(CallbackServerContext* ctx) {
     if (!grpc_admin_allowed(*ctx, token_)) {
-      return Status(grpc::StatusCode::UNAUTHENTICATED, "unauthorized");
+      return Status(grpc::StatusCode::UNAUTHENTICATED, std::string(err::kUnauthorized));
     }
     return Status::OK;
   }

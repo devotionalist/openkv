@@ -20,16 +20,13 @@
 #include <utility>
 
 #include "openkv/compute/gateway_server.hpp"
+#include "openkv/errors.hpp"
 
 namespace openkv::compute {
 namespace {
 
 constexpr uint32_t kScanDefaultLimit = 256;
 constexpr uint32_t kScanHardLimit = 4096;
-
-bool contains(std::string_view hay, std::string_view needle) {
-  return hay.find(needle) != std::string_view::npos;
-}
 
 std::string min_end(const std::string& a, const std::string& b) {
   if (a.empty()) {
@@ -181,9 +178,12 @@ void GatewayServer::scan_async(const kv::v1::ScanRequest* req, kv::v1::ScanRespo
                     on_rpc(sst, false, sst.error_message(), "");
                     return;
                   }
-                  if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
-                      contains(out.error, "splitting") || contains(out.error, "no_region")) {
-                    on_rpc(grpc::Status::OK, false, out.error.empty() ? "not_leader" : out.error,
+                  if (!out.redirect_to.empty() ||
+                      openkv::err::has_token(out.error, openkv::err::kNotLeader) ||
+                      openkv::err::has_token(out.error, openkv::err::kSplitting) ||
+                      openkv::err::has_token(out.error, openkv::err::kNoRegion)) {
+                    on_rpc(grpc::Status::OK, false,
+                           out.error.empty() ? std::string(openkv::err::kNotLeader) : out.error,
                            out.redirect_to);
                     return;
                   }
@@ -198,7 +198,8 @@ void GatewayServer::scan_async(const kv::v1::ScanRequest* req, kv::v1::ScanRespo
               return;
             }
             if (!ok) {
-              if (contains(err, "splitting") || contains(err, "no_region")) {
+              if (openkv::err::has_token(err, openkv::err::kSplitting) ||
+                  openkv::err::has_token(err, openkv::err::kNoRegion)) {
                 st->self->refresh_routes();
                 (*st->step)();
                 return;
@@ -277,19 +278,21 @@ void GatewayServer::ttl_async(const kv::v1::TTLRequest* req, kv::v1::TTLResponse
                         done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
                         return;
                       }
-                      if (out.locked || contains(out.error, "locked")) {
+                      if (out.locked || openkv::err::has_token(out.error, openkv::err::kLocked)) {
                         LockedError le(out.lock_primary, out.lock_ts,
-                                       out.error.empty() ? "locked" : out.error);
+                                       out.error.empty() ? std::string(openkv::err::kLocked)
+                                                         : out.error);
                         resolve_blocking_lock_async(req->key(), le,
                                                     [this, req, resp, attempt, done](grpc::Status) {
                                                       ttl_async(req, resp, attempt + 1, done);
                                                     });
                         return;
                       }
-                      if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
-                          contains(out.error, "splitting")) {
-                        if (!out.redirect_to.empty() && out.redirect_to != "no_region" &&
-                            out.redirect_to != "key_not_in_region") {
+                      if (!out.redirect_to.empty() ||
+                          openkv::err::has_token(out.error, openkv::err::kNotLeader) ||
+                          openkv::err::has_token(out.error, openkv::err::kSplitting)) {
+                        if (!out.redirect_to.empty() && out.redirect_to != openkv::err::kNoRegion &&
+                            out.redirect_to != openkv::err::kKeyNotInRegion) {
                           remember_leader(region, out.redirect_to);
                         }
                         refresh_routes();

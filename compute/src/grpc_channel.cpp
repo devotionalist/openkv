@@ -22,6 +22,7 @@
 #include <unordered_map>
 
 #include "openkv/admin_acl.hpp"
+#include "openkv/errors.hpp"
 #include "openkv/grpc_auth.hpp"
 #include "openkv/grpc_keepalive.hpp"
 
@@ -48,12 +49,11 @@ std::shared_ptr<grpc::Channel> channel_locked(const std::string& addr) {
 }  // namespace
 
 std::string parse_redirect(std::string_view resp) {
-  constexpr std::string_view k = "redirect=";
-  const auto i = resp.find(k);
+  const auto i = resp.find(openkv::err::kRedirect);
   if (i == std::string_view::npos) {
     return {};
   }
-  auto rest = resp.substr(i + k.size());
+  auto rest = resp.substr(i + openkv::err::kRedirect.size());
   size_t end = 0;
   while (end < rest.size() && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '\r' &&
          rest[end] != '\n') {

@@ -30,6 +30,7 @@
 
 #include "cluster.hpp"
 #include "kv/v1/kv.grpc.pb.h"
+#include "openkv/errors.hpp"
 #include "openkv/grpc_keepalive.hpp"
 #include "tcp_line.hpp"
 
@@ -101,7 +102,7 @@ std::string storage_call(const std::string& req, const std::vector<std::string>&
     std::string addr = hint.empty() ? addrs[static_cast<size_t>(attempt) % addrs.size()] : hint;
     try {
       auto resp = skv::tcp_line(addr, req, timeout_ms);
-      if (resp.find("not_leader") != std::string::npos) {
+      if (openkv::err::has_token(resp, openkv::err::kNotLeader)) {
         last_err = resp;
         // 仅跟随仍在候选地址集内的 redirect（踢出节点上的陈旧 *L 会导致死循环）
         if (auto r = skv::redirect_of(resp); r && *r != addr && *r != hint) {
@@ -123,7 +124,7 @@ std::string storage_call(const std::string& req, const std::vector<std::string>&
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         continue;
       }
-      if (resp.find("no_region") != std::string::npos) {
+      if (openkv::err::has_token(resp, openkv::err::kNoRegion)) {
         last_err = resp;
         hint.clear();
         continue;
@@ -204,7 +205,7 @@ std::string meta_call(const std::string& req) {
     std::string addr = hint.empty() ? addrs[static_cast<size_t>(attempt) % addrs.size()] : hint;
     try {
       auto resp = skv::tcp_line(addr, req);
-      if (resp.find("not_leader") != std::string::npos) {
+      if (openkv::err::has_token(resp, openkv::err::kNotLeader)) {
         if (auto r = skv::redirect_of(resp)) {
           last_err = resp;
           // 自指 / 重复 redirect：换下一个种子，避免卡死在假 Leader
@@ -805,10 +806,12 @@ int cmd_place(const std::vector<std::string>& args) {
           ok = true;
           break;
         }
-        if (r.find("busy") != std::string::npos || r.find("not_leader") != std::string::npos ||
+        if (openkv::err::has_token(r, openkv::err::kBusy) ||
+            openkv::err::has_token(r, openkv::err::kNotLeader) ||
             r.find("joint") != std::string::npos ||
             r.find("add_learner_failed") != std::string::npos) {
-          if (r.find("not_leader") != std::string::npos && attempt >= 3 && !desired.empty()) {
+          if (openkv::err::has_token(r, openkv::err::kNotLeader) && attempt >= 3 &&
+              !desired.empty()) {
             auto it = nodes.find(desired[0]);
             if (it != nodes.end()) {
               try {
@@ -845,8 +848,10 @@ int cmd_place(const std::vector<std::string>& args) {
           break;
         }
         // 上一轮 ConfChange 的 Joint 未退出时 promote 会失败，短等再试
-        if (r.find("busy") != std::string::npos || r.find("promote_failed") != std::string::npos ||
-            r.find("not_leader") != std::string::npos || r.find("joint") != std::string::npos) {
+        if (openkv::err::has_token(r, openkv::err::kBusy) ||
+            r.find("promote_failed") != std::string::npos ||
+            openkv::err::has_token(r, openkv::err::kNotLeader) ||
+            r.find("joint") != std::string::npos) {
           std::this_thread::sleep_for(std::chrono::milliseconds(150));
           continue;
         }
@@ -939,8 +944,10 @@ int cmd_place(const std::vector<std::string>& args) {
         ok = true;
         break;
       }
-      if (r.find("busy") != std::string::npos || r.find("remove_failed") != std::string::npos ||
-          r.find("not_leader") != std::string::npos || r.find("no_region") != std::string::npos) {
+      if (openkv::err::has_token(r, openkv::err::kBusy) ||
+          r.find("remove_failed") != std::string::npos ||
+          openkv::err::has_token(r, openkv::err::kNotLeader) ||
+          openkv::err::has_token(r, openkv::err::kNoRegion)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
         continue;
       }

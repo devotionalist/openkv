@@ -27,13 +27,10 @@
 #include <thread>
 
 #include "openkv/compute/gateway_server.hpp"
+#include "openkv/errors.hpp"
 
 namespace openkv::compute {
 namespace {
-
-bool contains(std::string_view hay, std::string_view needle) {
-  return hay.find(needle) != std::string_view::npos;
-}
 
 bool has_prefix(std::string_view s, std::string_view p) {
   return s.size() >= p.size() && s.substr(0, p.size()) == p;
@@ -324,9 +321,10 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
               (*st->poll_round)();
               return;
             }
-            if (!out.redirect_to.empty() || contains(out.error, "splitting") ||
-                contains(out.error, "not_leader")) {
-              if (!out.redirect_to.empty() && out.redirect_to != "no_region") {
+            if (!out.redirect_to.empty() ||
+                openkv::err::has_token(out.error, openkv::err::kSplitting) ||
+                openkv::err::has_token(out.error, openkv::err::kNotLeader)) {
+              if (!out.redirect_to.empty() && out.redirect_to != openkv::err::kNoRegion) {
                 st->self->remember_leader(rid, out.redirect_to);
               }
               st->self->refresh_routes();

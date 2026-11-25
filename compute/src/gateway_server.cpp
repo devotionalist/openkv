@@ -35,6 +35,7 @@
 
 #include "openkv/codec.hpp"
 #include "openkv/compute/meta_client.hpp"
+#include "openkv/errors.hpp"
 #include "openkv/logging.hpp"
 
 namespace openkv::compute {
@@ -50,12 +51,12 @@ bool contains(std::string_view hay, std::string_view needle) {
 // 判断 Store 错误是否可跳过并换副本重试（连通性 / 超时 / no_region）。
 // 副本被杀时 TCP 半开常先打出 DeadlineExceeded，必须换人，不能直接打回客户端。
 bool store_skip_err(const std::string& msg) {
-  return contains(msg, "no_region") || contains(msg, "connection refused") ||
-         contains(msg, "connection reset") || contains(msg, "transport: Error while dialing") ||
-         contains(msg, "Unavailable") || contains(msg, "failed to connect") ||
-         contains(msg, "Deadline Exceeded") || contains(msg, "DeadlineExceeded") ||
-         contains(msg, "deadline exceeded") || contains(msg, "Connection timed out") ||
-         contains(msg, "Socket closed");
+  return openkv::err::has_token(msg, openkv::err::kNoRegion) ||
+         contains(msg, "connection refused") || contains(msg, "connection reset") ||
+         contains(msg, "transport: Error while dialing") || contains(msg, "Unavailable") ||
+         contains(msg, "failed to connect") || contains(msg, "Deadline Exceeded") ||
+         contains(msg, "DeadlineExceeded") || contains(msg, "deadline exceeded") ||
+         contains(msg, "Connection timed out") || contains(msg, "Socket closed");
 }
 
 // 从错误串解析 `expected=` 后的 epoch；解析失败返回 0。
@@ -317,9 +318,10 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
       on_done(sst, false, msg, "", addr);
       return;
     }
-    const bool not_leader = contains(error, "not_leader") || !redirect_to.empty();
-    const bool splitting = contains(error, "splitting");
-    const bool epoch_mismatch = contains(error, "epoch_not_match");
+    const bool not_leader =
+        openkv::err::has_token(error, openkv::err::kNotLeader) || !redirect_to.empty();
+    const bool splitting = openkv::err::has_token(error, openkv::err::kSplitting);
+    const bool epoch_mismatch = openkv::err::has_token(error, openkv::err::kEpochNotMatch);
     if (!ok && (not_leader || splitting || epoch_mismatch)) {
       // 先清旧 hint，再写入 redirect；以前先 remember 再 clear，redirect 会被抹掉。
       if (not_leader) {
@@ -327,7 +329,7 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
         skipped->insert(addr);
       }
       if (!redirect_to.empty()) {
-        if (redirect_to == "key_not_in_region" || redirect_to == "no_region") {
+        if (redirect_to == openkv::err::kKeyNotInRegion || redirect_to == openkv::err::kNoRegion) {
           refresh_routes();
         } else {
           remember_leader(region, redirect_to);
@@ -472,11 +474,12 @@ void GatewayServer::with_start_commit_ts(std::function<void(grpc::Status)> on_er
 bool GatewayServer::retry_async_write(std::string_view body, const std::string& key,
                                       uint32_t region, bool retry_write_conflict,
                                       const std::function<void()>& retry) {
-  const bool not_leader = contains(body, "not_leader");
-  const bool locked = contains(body, "locked");
-  const bool splitting = contains(body, "splitting");
-  const bool epoch_mismatch = contains(body, "epoch_not_match");
-  const bool write_conflict = retry_write_conflict && contains(body, "write_conflict");
+  const bool not_leader = openkv::err::has_token(body, openkv::err::kNotLeader);
+  const bool locked = openkv::err::has_token(body, openkv::err::kLocked);
+  const bool splitting = openkv::err::has_token(body, openkv::err::kSplitting);
+  const bool epoch_mismatch = openkv::err::has_token(body, openkv::err::kEpochNotMatch);
+  const bool write_conflict =
+      retry_write_conflict && openkv::err::has_token(body, openkv::err::kWriteConflict);
   if (!not_leader && !locked && !splitting && !epoch_mismatch && !write_conflict) {
     return false;
   }
@@ -549,7 +552,7 @@ void GatewayServer::put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutRespo
                   on_rpc(sst, false, sst.error_message(), "");
                   return;
                 }
-                if (out.cas_failed || contains(out.error, "cas_failed")) {
+                if (out.cas_failed || openkv::err::has_token(out.error, openkv::err::kCasFailed)) {
                   *got = std::move(out);
                   on_rpc(grpc::Status::OK, true, "__cas__", "");
                   return;
@@ -636,7 +639,7 @@ void GatewayServer::delete_async(const kv::v1::DeleteRequest* req, kv::v1::Delet
                 reactor->Finish(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
                 return;
               }
-              if (out.cas_failed || contains(out.error, "cas_failed")) {
+              if (out.cas_failed || openkv::err::has_token(out.error, openkv::err::kCasFailed)) {
                 resp->set_deleted(false);
                 resp->set_cas_failed(true);
                 resp->set_current_revision(out.current_revision != 0
@@ -653,8 +656,11 @@ void GatewayServer::delete_async(const kv::v1::DeleteRequest* req, kv::v1::Delet
                 return;
               }
               std::string body = out.error;
-              if (!out.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
-                body += " redirect=" + out.redirect_to;
+              if (!out.redirect_to.empty() &&
+                  !openkv::err::has_token(body, openkv::err::kRedirect)) {
+                body.push_back(' ');
+                body.append(openkv::err::kRedirect);
+                body.append(out.redirect_to);
               }
               if (retry_async_write(body, req->key(), region, /*retry_write_conflict=*/false,
                                     [this, req, resp, reactor, attempt] {
@@ -697,11 +703,16 @@ void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetRespo
                   on_rpc(sst, false, sst.error_message(), "");
                   return;
                 }
-                if (out.locked || !out.redirect_to.empty() || contains(out.error, "splitting") ||
-                    contains(out.error, "locked") || contains(out.error, "not_leader") ||
-                    contains(out.error, "epoch_not_match")) {
+                if (out.locked || !out.redirect_to.empty() ||
+                    openkv::err::has_token(out.error, openkv::err::kSplitting) ||
+                    openkv::err::has_token(out.error, openkv::err::kLocked) ||
+                    openkv::err::has_token(out.error, openkv::err::kNotLeader) ||
+                    openkv::err::has_token(out.error, openkv::err::kEpochNotMatch)) {
                   on_rpc(grpc::Status::OK, false,
-                         out.error.empty() ? (out.locked ? "locked" : "not_leader") : out.error,
+                         out.error.empty()
+                             ? std::string(out.locked ? openkv::err::kLocked
+                                                      : openkv::err::kNotLeader)
+                             : out.error,
                          out.redirect_to);
                   return;
                 }
@@ -720,7 +731,7 @@ void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetRespo
             return;
           }
           if (!ok) {
-            if (contains(body, "locked")) {
+            if (openkv::err::has_token(body, openkv::err::kLocked)) {
               LockedError le = parse_locked_error(body);
               resolve_blocking_lock_async(req->key(), le,
                                           [this, req, resp, attempt, done](grpc::Status) {
@@ -729,8 +740,9 @@ void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetRespo
               return;
             }
             // not_leader / splitting 已在 with_store_async 内换副本；仍失败则抬外层 attempt。
-            if (!body.empty() && !contains(body, "not_leader") && !contains(body, "splitting") &&
-                !contains(body, "epoch_not_match")) {
+            if (!body.empty() && !openkv::err::has_token(body, openkv::err::kNotLeader) &&
+                !openkv::err::has_token(body, openkv::err::kSplitting) &&
+                !openkv::err::has_token(body, openkv::err::kEpochNotMatch)) {
               done(grpc::Status(grpc::StatusCode::ABORTED, "get: " + body));
               return;
             }
@@ -794,15 +806,17 @@ namespace {
 // 拼 ProposePlain 错误体，必要时附加 redirect=。
 std::string propose_err_body(const ProposePlainResult& out) {
   std::string body = out.error;
-  if (!out.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
-    body += " redirect=" + out.redirect_to;
+  if (!out.redirect_to.empty() && !openkv::err::has_token(body, openkv::err::kRedirect)) {
+    body.push_back(' ');
+    body.append(openkv::err::kRedirect);
+    body.append(out.redirect_to);
   }
   return body;
 }
 
 // 判断 Plain Propose 是否 CAS 失败（字段或错误串）。
 bool propose_cas_failed(const ProposePlainResult& out) {
-  return out.cas_failed || contains(out.error, "cas_failed");
+  return out.cas_failed || openkv::err::has_token(out.error, openkv::err::kCasFailed);
 }
 
 // 取 CAS 当前 revision（优先结果字段，否则解析错误串）。
@@ -943,11 +957,14 @@ void GatewayServer::raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawG
                             on_rpc(sst, false, sst.error_message(), "");
                             return;
                           }
-                          if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
-                              contains(out.error, "splitting") ||
-                              contains(out.error, "epoch_not_match")) {
+                          if (!out.redirect_to.empty() ||
+                              openkv::err::has_token(out.error, openkv::err::kNotLeader) ||
+                              openkv::err::has_token(out.error, openkv::err::kSplitting) ||
+                              openkv::err::has_token(out.error, openkv::err::kEpochNotMatch)) {
                             on_rpc(grpc::Status::OK, false,
-                                   out.error.empty() ? "not_leader" : out.error, out.redirect_to);
+                                   out.error.empty() ? std::string(openkv::err::kNotLeader)
+                                                     : out.error,
+                                   out.redirect_to);
                             return;
                           }
                           *got = std::move(out);

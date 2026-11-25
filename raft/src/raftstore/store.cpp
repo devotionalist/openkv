@@ -27,6 +27,7 @@
 #include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/raft/util/snap_stream.hpp"
+#include "openkv/raftstore/errors.hpp"
 #include "openkv/raftstore/write_batch_merge.hpp"
 
 namespace openkv::raftstore {
@@ -153,19 +154,19 @@ bool Store::async_write(uint32_t region_id, std::string data, uint64_t* assigned
   auto* n = get(region_id);
   if (!n) {
     if (error) {
-      *error = "no_region";
+      *error = err::kNoRegion;
     }
     return false;
   }
   if (!n->is_leader()) {
     if (error) {
-      *error = "not_leader";
+      *error = err::kNotLeader;
     }
     return false;
   }
   if (!n->propose(std::move(data), assigned_index)) {
     if (error) {
-      *error = "propose_failed";
+      *error = err::kProposeFailed;
     }
     return false;
   }
@@ -354,7 +355,7 @@ std::string Store::apply_inbound_raft(uint32_t region_id, RaftMessage msg) {
     peer = peer_locked(region_id);
   }
   if (!peer) {
-    return "ERR no_region";
+    return openkv::err::line(err::kNoRegion);
   }
   wake_peer(*peer);
   // 同步步进（行协议需立即回包）；同时投递 Router 作唤醒/批处理对齐。
@@ -531,7 +532,7 @@ void Store::handle_raft_message(Peer& peer, const RaftMessage& msg) {
 std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready) {
   auto* n = peer_node(peer);
   if (!n) {
-    return "ERR no_region";
+    return openkv::err::line(err::kNoRegion);
   }
   peer.touch_activity();
   const auto& type = msg.type;
@@ -545,7 +546,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
   try {
     if (type == "RequestVote" || type == "RequestPreVote") {
       if (parts.size() < 3) {
-        return "ERR bad_vote";
+        return openkv::err::line(err::kBadVote);
       }
       const uint64_t term = std::stoull(parts[0]);
       const uint64_t last_idx = std::stoull(parts[1]);
@@ -564,7 +565,7 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
     if (type == "AppendEntries") {
       // term|prev|prev_term|commit|n|[term|idx|hex]*
       if (parts.size() < 5) {
-        return "ERR bad_ae";
+        return openkv::err::line(err::kBadAe);
       }
       const uint64_t term = std::stoull(parts[0]);
       const uint64_t prev_idx = std::stoull(parts[1]);
@@ -576,13 +577,13 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
       size_t off = 5;
       for (uint64_t i = 0; i < nent; ++i) {
         if (off + 2 >= parts.size()) {
-          return "ERR ae_trunc";
+          return openkv::err::line(err::kAeTrunc);
         }
         raft::LogEntry e;
         e.term = std::stoull(parts[off]);
         e.index = std::stoull(parts[off + 1]);
         if (!openkv::from_hex(parts[off + 2], &e.data)) {
-          return "ERR ae_bad_hex";
+          return openkv::err::line(err::kAeBadHex);
         }
         entries.push_back(std::move(e));
         off += 3;
@@ -599,14 +600,14 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
     if (type == "InstallSnapshot") {
       // term|last_idx|last_term|hex
       if (parts.size() < 4) {
-        return "ERR bad_snap";
+        return openkv::err::line(err::kBadSnap);
       }
       const uint64_t term = std::stoull(parts[0]);
       const uint64_t last_idx = std::stoull(parts[1]);
       const uint64_t last_term = std::stoull(parts[2]);
       std::string data;
       if (!openkv::from_hex(parts[3], &data)) {
-        return "ERR snap_bad_hex";
+        return openkv::err::line(err::kSnapBadHex);
       }
       bool success = false;
       n->on_install_snapshot(msg.from, term, last_idx, last_term, data, &success);
@@ -616,10 +617,10 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
              std::to_string(last_idx);
     }
   } catch (...) {
-    return "ERR step";
+    return openkv::err::line(err::kStep);
   }
   maybe_ready();
-  return "ERR unknown_raft_type";
+  return openkv::err::line(err::kUnknownRaftType);
 }
 
 void Store::dispatch_ready_after_persist(Peer& peer, raft::Ready& rd) {

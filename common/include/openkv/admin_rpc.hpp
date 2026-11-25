@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "openkv/codec.hpp"
+#include "openkv/errors.hpp"
 #include "openkv/grpc_auth.hpp"
 #include "openkv/grpc_keepalive.hpp"
 #include "openkv/protocol.hpp"
@@ -66,11 +67,11 @@ inline std::vector<std::string> admin_split_ws(std::string_view s) {
  * @return 重定向地址或空
  */
 inline std::string admin_follow_redirect_body(std::string_view body) {
-  auto p = body.find("redirect=");
+  auto p = body.find(openkv::err::kRedirect);
   if (p == std::string_view::npos) {
     return {};
   }
-  auto rest = body.substr(p + 9);
+  auto rest = body.substr(p + openkv::err::kRedirect.size());
   auto sp = rest.find_first_of(" \t\r\n");
   if (sp != std::string_view::npos) {
     rest = rest.substr(0, sp);
@@ -104,7 +105,7 @@ inline std::string admin_typed_call(std::string_view addr, std::string_view req,
       return r.message();
     }
     if (!r.redirect_to().empty()) {
-      return "ERR not_leader redirect=" + r.redirect_to();
+      return openkv::err::not_leader_redirect(r.redirect_to());
     }
     return r.ok() ? "OK" : "ERR";
   };
@@ -207,7 +208,7 @@ inline std::string admin_typed_call(std::string_view addr, std::string_view req,
       return resp.message();
     }
     if (!resp.redirect_to().empty()) {
-      return "ERR not_leader redirect=" + resp.redirect_to();
+      return openkv::err::not_leader_redirect(resp.redirect_to());
     }
     std::ostringstream oss;
     oss << "OK PROGRESS " << resp.match_index() << ' ' << resp.commit_index() << ' '
@@ -395,7 +396,7 @@ inline std::string admin_typed_rpc(std::string addr, std::string_view req, std::
       addr.replace(0, 7, "127.0.0.1");
     }
     std::string body = admin_typed_call(addr, req, token, timeout_ms);
-    if (body.find("not_leader") != std::string::npos) {
+    if (openkv::err::has_token(body, openkv::err::kNotLeader)) {
       auto next = admin_follow_redirect_body(body);
       if (next.empty()) {
         throw std::runtime_error(body);
@@ -497,7 +498,7 @@ inline void admin_peer_progress_async(std::string addr, uint32_t region_id, std:
         if (!call->resp.message().empty()) {
           body = call->resp.message();
         } else if (!call->resp.redirect_to().empty()) {
-          body = "ERR not_leader redirect=" + call->resp.redirect_to();
+          body = openkv::err::not_leader_redirect(call->resp.redirect_to());
         } else {
           std::ostringstream oss;
           oss << "OK PROGRESS " << call->resp.match_index() << ' ' << call->resp.commit_index()
@@ -505,7 +506,7 @@ inline void admin_peer_progress_async(std::string addr, uint32_t region_id, std:
               << (call->resp.is_learner() ? 1 : 0);
           body = oss.str();
         }
-        if (body.find("not_leader") != std::string::npos) {
+        if (openkv::err::has_token(body, openkv::err::kNotLeader)) {
           auto next = admin_follow_redirect_body(body);
           if (next.empty()) {
             cb(std::move(body));

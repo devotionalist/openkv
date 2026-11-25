@@ -27,6 +27,7 @@
 #include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/raftstore/store.hpp"
+#include "openkv/storage/errors.hpp"
 #include "openkv/storage/mvcc.hpp"
 
 namespace {
@@ -281,7 +282,7 @@ ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_e
   // 1) 本机是否托管该 Region。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
-    r.error = "no_region";
+    r.error = std::string(err::kNoRegion);
     return r;
   }
   // 2) 仅 Leader 可写；Follower 填 redirect。
@@ -290,20 +291,20 @@ ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_e
     if (r.redirect_to.empty()) {
       r.redirect_to = node_.peer_address(group->soft_state().leader_id);
     }
-    r.error = "not_leader";
+    r.error = std::string(err::kNotLeader);
     return r;
   }
   // 3) 可选 epoch，防路由陈旧。
   if (expected_epoch != 0) {
     const uint64_t cur = node_.region_epoch(shard_id);
     if (cur != expected_epoch) {
-      r.error = "epoch_not_match expected=" + std::to_string(cur);
+      r.error = std::string(err::kEpochNotMatch) + " expected=" + std::to_string(cur);
       return r;
     }
   }
   // 4) 分裂窗口早拒（事务入口）；propose_async 对所有用户数据写还有统一闸门。
   if (node_.region_splitting(shard_id)) {
-    r.error = "splitting";
+    r.error = std::string(err::kSplitting);
     return r;
   }
   r.ok = true;
@@ -348,7 +349,7 @@ bool ensure_applied_catchup(StorageNode& node, raft::RaftNode* group, uint32_t s
 
 void fill_cas_meta(ProposeResult& pr) {
   // 从 apply 错误串解析 cas_failed + current_revision，供 Gateway 回客户端。
-  if (pr.error.rfind("cas_failed", 0) != 0) {
+  if (pr.error.rfind(err::kCasFailed, 0) != 0) {
     return;
   }
   pr.cas_failed = true;
@@ -365,7 +366,7 @@ ProposeResult finish_propose(StorageNode& node, uint64_t idx,
   node.scheduler().unlock(latch_tok);
   ProposeResult r;
   if (outcome.timed_out) {
-    r.error = "apply_timeout";
+    r.error = std::string(err::kApplyTimeout);
     return r;
   }
   r.revision = idx;  // 默认 Raft log index；ONEPC 外层改为 commit_ts
@@ -401,7 +402,7 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
   StorageNode& node = node_;
   auto* group = node.multi_raft().get(shard_id);
   if (!group) {  // shard 未托管于本节点
-    fail("no_region");
+    fail(std::string(err::kNoRegion));
     return;
   }
 
@@ -411,7 +412,7 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     if (redir.empty()) {
       redir = node.peer_address(group->soft_state().leader_id);
     }
-    fail("not_leader", std::move(redir));
+    fail(std::string(err::kNotLeader), std::move(redir));
     return;
   }
 
@@ -419,7 +420,7 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
   if (expected_epoch != 0) {
     const uint64_t cur = node.region_epoch(shard_id);
     if (cur != expected_epoch) {
-      fail("epoch_not_match expected=" + std::to_string(cur));
+      fail(std::string(err::kEpochNotMatch) + " expected=" + std::to_string(cur));
       return;
     }
   }
@@ -427,11 +428,11 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
   // 5) 用户数据写：分裂窗拒写 + key 归属；Admin/GC 跳过。
   if (cmd_is_user_data_write(cmd.op)) {
     if (node.region_splitting(shard_id)) {
-      fail("splitting");  // 仅挡元数据 apply 窗，无物理搬迁
+      fail(std::string(err::kSplitting));  // 仅挡元数据 apply 窗，无物理搬迁
       return;
     }
     if (!node.key_in_region(shard_id, cmd.key)) {
-      fail("key_not_in_region");  // Gateway 应改路由
+      fail(std::string(err::kKeyNotInRegion));  // Gateway 应改路由
       return;
     }
   }
@@ -446,7 +447,7 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
     if (!node.multi_raft().store().async_write(shard_id, encode_command(cmd), &idx, &perr)) {
       node.scheduler().unlock(latch_tok);  // propose 失败立即放锁
       ProposeResult r;
-      r.error = perr.empty() ? "propose_failed" : std::move(perr);
+      r.error = perr.empty() ? std::string(err::kProposeFailed) : std::move(perr);
       cb(std::move(r));
       return;
     }
@@ -484,7 +485,7 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
   // 2) Region 存在性。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
-    r.redirect_to = "no_region";  // tcp 层识别
+    r.redirect_to = std::string(err::kNoRegion);  // tcp 层识别
     return r;
   }
   r.is_leader = group->is_leader();
@@ -507,7 +508,7 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
   }
   // 5) Key 必须在本 Region range。
   if (!node_.key_in_region(shard_id, key)) {
-    r.redirect_to = "key_not_in_region";
+    r.redirect_to = std::string(err::kKeyNotInRegion);
     return r;
   }
   // 6) 引擎直读 plain KvRecord（非 MVCC txn_get）。
@@ -547,17 +548,17 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
   }
   // 2) commit_ts 必须严格大于 start_ts。
   if (commit_ts <= start_ts) {
-    fail("bad_ts");
+    fail(std::string(err::kBadTs));
     return;
   }
   // 3) 引擎。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) {
-    fail("no_engine");
+    fail(std::string(err::kNoEngine));
     return;
   }
   auto locked_err = [](const LockInfo& lk) {
-    return "locked primary=" + openkv::to_hex(lk.primary) +
+    return std::string(err::kLocked) + " primary=" + openkv::to_hex(lk.primary) +
            " lock_ts=" + std::to_string(lk.start_ts);
   };
   MvccStore mvcc(*eng);
@@ -568,7 +569,7 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
   }
   // 5) write 冲突。
   if (mvcc.has_write_conflict(key, start_ts)) {
-    fail("write_conflict");
+    fail(std::string(err::kWriteConflict));
     return;
   }
   // 6) 可选 CAS 预检。
@@ -583,7 +584,7 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
     }
     const bool match = (expected_revision == 0) ? !vis.has_value() : (cur_rev == expected_revision);
     if (!match) {
-      fail("cas_failed current_revision=" + std::to_string(cur_rev), true, cur_rev);
+      fail(std::string(err::kCasFailed) + " current_revision=" + std::to_string(cur_rev), true, cur_rev);
       return;
     }
   }
@@ -627,18 +628,18 @@ void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t st
   // 2) 引擎。
   auto* eng = node_.engines().get(shard_id);
   if (!eng) {
-    fail("no_engine");
+    fail(std::string(err::kNoEngine));
     return;
   }
   MvccStore mvcc(*eng);
   // 3) 锁 / write 冲突（同事务悲观锁可升级）。
   if (auto lk = mvcc.get_lock(key)) {
     if (lk->start_ts != start_ts) {
-      fail("locked");
+      fail(std::string(err::kLocked));
       return;
     }
   } else if (mvcc.has_write_conflict(key, start_ts)) {
-    fail("write_conflict");
+    fail(std::string(err::kWriteConflict));
     return;
   }
   // 4) CAS 预检。
@@ -647,12 +648,12 @@ void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t st
     uint64_t cur_rev = 0;
     auto vis = mvcc.txn_get(key, ~uint64_t{0}, &locked, nullptr, &cur_rev);
     if (locked) {
-      fail("locked");
+      fail(std::string(err::kLocked));
       return;
     }
     const bool match = (expected_revision == 0) ? !vis.has_value() : (cur_rev == expected_revision);
     if (!match) {
-      fail("cas_failed current_revision=" + std::to_string(cur_rev), true, cur_rev);
+      fail(std::string(err::kCasFailed) + " current_revision=" + std::to_string(cur_rev), true, cur_rev);
       return;
     }
   }
@@ -687,7 +688,7 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
   }
   auto* eng = node_.engines().get(shard_id);
   if (!eng) {
-    fail("no_engine");
+    fail(std::string(err::kNoEngine));
     return;
   }
   MvccStore mvcc(*eng);
@@ -707,11 +708,11 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
       cb(std::move(gate));
       return;
     }
-    fail("lock_not_found");
+    fail(std::string(err::kLockNotFound));
     return;
   }
   if (lk->op == MvccOp::kPessimistic) {
-    fail("pessimistic_not_prewritten");
+    fail(std::string(err::kPessimisticNotPrewritten));
     return;
   }
   // 4) propose_async。
@@ -760,7 +761,7 @@ void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uin
   }
   auto* eng = node_.engines().get(shard_id);
   if (!eng) {
-    fail("no_engine");
+    fail(std::string(err::kNoEngine));
     return;
   }
   MvccStore mvcc(*eng);
@@ -770,11 +771,11 @@ void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uin
       cb(std::move(gate));
       return;
     }
-    fail("locked");
+    fail(std::string(err::kLocked));
     return;
   }
   if (mvcc.has_write_conflict(key, for_update_ts != 0 ? for_update_ts : start_ts)) {
-    fail("write_conflict");
+    fail(std::string(err::kWriteConflict));
     return;
   }
   if (ttl_ms == 0) {
@@ -827,7 +828,7 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
   // 1) Region / Leader（线性时）。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
-    r.redirect_to = "no_region";
+    r.redirect_to = std::string(err::kNoRegion);
     return r;
   }
   r.is_leader = group->is_leader();
@@ -843,7 +844,7 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
     uint64_t read_ci = 0;
     if (!group->read_index(&read_ci)) {
       r.redirect_to = group->leader_address();
-      r.error = "read_index_failed";
+      r.error = std::string(err::kReadIndexFailed);
       return r;
     }
     (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
@@ -862,7 +863,7 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
   r.revision = commit_ts;
   if (locked) {
     r.blocking_lock = blk;
-    r.error = "locked";
+    r.error = std::string(err::kLocked);
     return r;
   }
   if (val) {
@@ -881,7 +882,7 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
   // 1) Region / 线性读门闩（同 txn_get）。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
-    r.redirect_to = "no_region";
+    r.redirect_to = std::string(err::kNoRegion);
     return r;
   }
   r.is_leader = group->is_leader();
@@ -896,7 +897,7 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
     uint64_t read_ci = 0;
     if (!group->read_index(&read_ci)) {
       r.redirect_to = group->leader_address();
-      r.error = "read_index_failed";
+      r.error = std::string(err::kReadIndexFailed);
       return r;
     }
     (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
@@ -928,7 +929,7 @@ TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint6
   TxnTtlResult r;
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
-    r.redirect_to = "no_region";
+    r.redirect_to = std::string(err::kNoRegion);
     return r;
   }
   r.is_leader = group->is_leader();
@@ -943,7 +944,7 @@ TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint6
     uint64_t read_ci = 0;
     if (!group->read_index(&read_ci)) {
       r.redirect_to = group->leader_address();
-      r.error = "read_index_failed";
+      r.error = std::string(err::kReadIndexFailed);
       return r;
     }
     (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
@@ -958,7 +959,7 @@ TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint6
   r.locked = locked;
   if (locked) {
     r.blocking_lock = blk;
-    r.error = "locked";
+    r.error = std::string(err::kLocked);
     return r;
   }
   if (ttl) {
@@ -973,7 +974,7 @@ GetLockResult StoreFacade::get_lock(uint32_t shard_id, std::string_view key) {
   // 1) Region + 强制 Leader。
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
-    r.redirect_to = "no_region";
+    r.redirect_to = std::string(err::kNoRegion);
     return r;
   }
   r.is_leader = group->is_leader();
@@ -1002,7 +1003,7 @@ CheckTxnResult StoreFacade::check_txn_status(uint32_t shard_id, std::string_view
   CheckTxnResult r;
   auto* group = node_.multi_raft().get(shard_id);
   if (!group) {
-    r.redirect_to = "no_region";
+    r.redirect_to = std::string(err::kNoRegion);
     return r;
   }
   r.is_leader = group->is_leader();

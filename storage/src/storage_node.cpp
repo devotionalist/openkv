@@ -41,6 +41,7 @@
 #include "openkv/raft/engine/sync_mode.hpp"
 #include "openkv/raftstore/msg.hpp"
 #include "openkv/raftstore/store.hpp"
+#include "openkv/storage/errors.hpp"
 #include "openkv/storage/mvcc.hpp"
 #include "openkv/storage/store_service.hpp"
 #include "openkv/storage/watch_log.hpp"
@@ -213,7 +214,7 @@ void StorageNode::on_apply_entries(uint32_t shard_id,
       if (!eng.write_batch(puts, dels)) {
         for (auto &p : pending) {
           if (p.err.empty()) {
-            p.err = "engine_write_failed";
+            p.err = std::string(err::kEngineWriteFailed);
           }
         }
       }
@@ -256,12 +257,12 @@ void StorageNode::on_apply_entries(uint32_t shard_id,
         continue;
       }
       if (auto lk = mvcc.get_lock(cmd.key)) {
-        push_pending(e.index, "locked primary=" + to_hex(lk->primary) +
+        push_pending(e.index, std::string(err::kLocked) + " primary=" + to_hex(lk->primary) +
                                   " lock_ts=" + std::to_string(lk->start_ts));
         continue;
       }
       if (mvcc.has_write_conflict(cmd.key, start_ts)) {
-        push_pending(e.index, "write_conflict");
+        push_pending(e.index, std::string(err::kWriteConflict));
         continue;
       }
       if (mvcc.find_commit_ts(cmd.key, start_ts)) {
@@ -314,13 +315,13 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
   Command cmd;
   if (!decode_command(data, &cmd)) {
     SKV_WARN << "bad command at index=" << index;
-    publish_apply_result(index, "bad_command");
+    publish_apply_result(index, std::string(err::kBadCommand));
     return;
   }
   auto finish = [this, index](std::string err = {}) { publish_apply_result(index, err); };
   auto &eng = engines_->get_or_create(shard_id);
   auto cas_fail = [&](uint64_t cur) {
-    finish("cas_failed current_revision=" + std::to_string(cur));
+    finish(std::string(err::kCasFailed) + " current_revision=" + std::to_string(cur));
   };
   switch (cmd.op) {
     case CmdOp::kPut: {
@@ -361,7 +362,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       std::string primary, value;
       if (!decode_prewrite_value(cmd.value, &start_ts, &mop, &primary, &value)) {
         SKV_WARN << "bad prewrite at index=" << index;
-        finish("bad_prewrite");
+        finish(std::string(err::kBadPrewrite));
         break;
       }
       MvccStore mvcc(eng);
@@ -370,7 +371,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
         uint64_t cur_rev = 0;
         auto vis = mvcc.txn_get(cmd.key, ~uint64_t{0}, &locked, nullptr, &cur_rev);
         if (locked) {
-          finish("locked");
+          finish(std::string(err::kLocked));
           break;
         }
         const bool match =
@@ -382,7 +383,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       }
       if (auto lk = mvcc.get_lock(cmd.key)) {
         if (lk->start_ts != start_ts) {
-          finish("locked");
+          finish(std::string(err::kLocked));
           break;
         }
         // 同事务：允许从悲观锁升级，或幂等覆盖同 op
@@ -391,7 +392,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
           break;
         }
       } else if (mvcc.has_write_conflict(cmd.key, start_ts)) {
-        finish("write_conflict");
+        finish(std::string(err::kWriteConflict));
         break;
       }
       LockInfo li;
@@ -414,16 +415,16 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       std::string primary, value;
       if (!decode_onepc_value(cmd.value, &start_ts, &commit_ts, &mop, &primary, &value)) {
         SKV_WARN << "bad onepc at index=" << index;
-        finish("bad_onepc");
+        finish(std::string(err::kBadOnePc));
         break;
       }
       if (commit_ts <= start_ts) {
-        finish("bad_ts");
+        finish(std::string(err::kBadTs));
         break;
       }
       MvccStore mvcc(eng);
       if (auto lk = mvcc.get_lock(cmd.key)) {
-        finish("locked primary=" + to_hex(lk->primary) +
+        finish(std::string(err::kLocked) + " primary=" + to_hex(lk->primary) +
                " lock_ts=" + std::to_string(lk->start_ts));
         break;
       }
@@ -433,7 +434,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
         LockInfo blk;
         auto vis = mvcc.txn_get(cmd.key, ~uint64_t{0}, &locked, &blk, &cur_rev);
         if (locked) {
-          finish("locked primary=" + to_hex(blk.primary) +
+          finish(std::string(err::kLocked) + " primary=" + to_hex(blk.primary) +
                  " lock_ts=" + std::to_string(blk.start_ts));
           break;
         }
@@ -445,7 +446,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
         }
       }
       if (mvcc.has_write_conflict(cmd.key, start_ts)) {
-        finish("write_conflict");
+        finish(std::string(err::kWriteConflict));
         break;
       }
       if (mvcc.find_commit_ts(cmd.key, start_ts)) {
@@ -455,7 +456,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       const auto op = static_cast<MvccOp>(mop);
       const bool is_del = op == MvccOp::kDelete;
       if (!mvcc.put_onepc(cmd.key, start_ts, commit_ts, op, value, index, cmd.ttl_ms)) {
-        finish("engine_write_failed");
+        finish(std::string(err::kEngineWriteFailed));
         break;
       }
       {
@@ -470,7 +471,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       uint64_t start_ts = 0, commit_ts = 0;
       if (!decode_commit_value(cmd.value, &start_ts, &commit_ts)) {
         SKV_WARN << "bad commit at index=" << index;
-        finish("bad_commit");
+        finish(std::string(err::kBadCommit));
         break;
       }
       MvccStore mvcc(eng);
@@ -480,11 +481,11 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       }
       auto lk = mvcc.get_lock(cmd.key);
       if (!lk || lk->start_ts != start_ts) {
-        finish("lock_not_found");
+        finish(std::string(err::kLockNotFound));
         break;
       }
       if (lk->op == MvccOp::kPessimistic) {
-        finish("pessimistic_not_prewritten");
+        finish(std::string(err::kPessimisticNotPrewritten));
         break;
       }
       WriteInfo wi;
@@ -508,7 +509,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       uint64_t start_ts = 0;
       if (!decode_rollback_value(cmd.value, &start_ts)) {
         SKV_WARN << "bad rollback at index=" << index;
-        finish("bad_rollback");
+        finish(std::string(err::kBadRollback));
         break;
       }
       MvccStore mvcc(eng);
@@ -529,7 +530,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       std::string primary;
       if (!decode_pessimistic_lock_value(cmd.value, &start_ts, &for_update_ts, &ttl_ms, &primary)) {
         SKV_WARN << "bad pessimistic_lock at index=" << index;
-        finish("bad_pessimistic_lock");
+        finish(std::string(err::kBadPessimisticLock));
         break;
       }
       MvccStore mvcc(eng);
@@ -538,11 +539,11 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
           finish();  // idempotent
           break;
         }
-        finish("locked");
+        finish(std::string(err::kLocked));
         break;
       }
       if (mvcc.has_write_conflict(cmd.key, for_update_ts != 0 ? for_update_ts : start_ts)) {
-        finish("write_conflict");
+        finish(std::string(err::kWriteConflict));
         break;
       }
       LockInfo li;
@@ -560,7 +561,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       uint64_t start_ts = 0;
       if (!decode_rollback_value(cmd.value, &start_ts)) {
         SKV_WARN << "bad pessimistic_rollback at index=" << index;
-        finish("bad_pessimistic_rollback");
+        finish(std::string(err::kBadPessimisticRollback));
         break;
       }
       MvccStore mvcc(eng);
@@ -591,7 +592,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       // 同机不搬 KV，只改区间元数据 + 共享引擎；跨机靠 Place。
       if (cmd.value.size() < sizeof(uint32_t)) {
         SKV_WARN << "bad admin_split at index=" << index;
-        finish("bad_admin_split");
+        finish(std::string(err::kBadAdminSplit));
         break;
       }
       uint32_t right = 0;
@@ -638,7 +639,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
     case CmdOp::kAdminMerge: {
       if (cmd.value.size() < sizeof(uint32_t)) {
         SKV_WARN << "bad admin_merge at index=" << index;
-        finish("bad_admin_merge");
+        finish(std::string(err::kBadAdminMerge));
         break;
       }
       uint32_t right = 0;
@@ -666,7 +667,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
     }
     case CmdOp::kAdminSetEpoch: {
       if (cmd.value.size() < sizeof(uint64_t)) {
-        finish("bad_admin_set_epoch");
+        finish(std::string(err::kBadAdminSetEpoch));
         break;
       }
       uint64_t epoch = 0;
@@ -679,7 +680,7 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
       break;
     }
     default:
-      finish("unknown_op");
+      finish(std::string(err::kUnknownOp));
       break;
   }
   // 注意：不可在 apply 路径里同步打 Meta/对端 TCP（会死锁/拖垮 Raft）
@@ -783,7 +784,7 @@ std::string StorageNode::admin_ensure_region(uint32_t region_id,
       engines_->get_or_create(region_id);
     } catch (const std::exception &e) {
       SKV_WARN << "ENSURE engine warm region=" << region_id << " " << e.what();
-      return std::string("ERR ") + e.what();
+      return openkv::err::line(e.what());
     }
     {
       std::lock_guard<std::mutex> lock(create_mu_);
@@ -794,7 +795,7 @@ std::string StorageNode::admin_ensure_region(uint32_t region_id,
     return "OK ENSURE created";
   } catch (const std::exception &e) {
     SKV_WARN << "ENSURE failed region=" << region_id << " " << e.what();
-    return std::string("ERR ") + e.what();
+    return openkv::err::line(e.what());
   }
 }
 
@@ -802,13 +803,13 @@ std::string StorageNode::admin_add_learner(uint32_t region_id, const raft::Peer 
   if (!add_learner(region_id, peer)) {
     auto *g = multi_raft_->get(region_id);
     if (!g) {
-      return "ERR no_region";
+      return openkv::err::line(err::kNoRegion);
     }
     if (!g->is_leader()) {
       auto addr = peer_address(g->soft_state().leader_id);
-      return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
+      return openkv::err::not_leader_redirect(addr);
     }
-    return "ERR add_learner_failed";
+    return openkv::err::line(err::kAddLearnerFailed);
   }
   return "OK ADD_LEARNER " + peer.id;
 }
@@ -817,14 +818,14 @@ std::string StorageNode::admin_promote(uint32_t region_id, const std::string &pe
   if (!promote_learner(region_id, peer_id)) {
     auto *g = multi_raft_->get(region_id);
     if (!g) {
-      return "ERR no_region";
+      return openkv::err::line(err::kNoRegion);
     }
     if (!g->is_leader()) {
       auto addr = peer_address(g->soft_state().leader_id);
-      return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
+      return openkv::err::not_leader_redirect(addr);
     }
     if (g->conf_change_busy()) {
-      return "ERR busy class=joint";
+      return openkv::err::line(err::kBusyClassJoint);
     }
     bool found = false;
     bool learner = false;
@@ -837,13 +838,13 @@ std::string StorageNode::admin_promote(uint32_t region_id, const std::string &pe
     }
     // 换主后成员表丢 Learner（快照未带 ConfState）时常见
     if (!found) {
-      return "ERR unknown_peer";
+      return openkv::err::line(err::kUnknownPeer);
     }
     // 已是 voter：幂等成功，避免 Meta 任务卡死
     if (!learner) {
       return "OK PROMOTE " + peer_id;
     }
-    return "ERR promote_failed";
+    return openkv::err::line(err::kPromoteFailed);
   }
   return "OK PROMOTE " + peer_id;
 }
@@ -852,17 +853,17 @@ std::string StorageNode::admin_remove_peer(uint32_t region_id, const std::string
   if (!remove_peer(region_id, peer_id)) {
     auto *g = multi_raft_->get(region_id);
     if (!g) {
-      return "ERR no_region";
+      return openkv::err::line(err::kNoRegion);
     }
     if (!g->is_leader()) {
       auto addr = peer_address(g->soft_state().leader_id);
-      return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
+      return openkv::err::not_leader_redirect(addr);
     }
     // Joint / LeaveJoint 进行中时 ConfChange 会拒绝，客户端应短暂重试
     if (g->conf_change_busy()) {
-      return "ERR busy class=joint";
+      return openkv::err::line(err::kBusyClassJoint);
     }
-    return "ERR remove_failed";
+    return openkv::err::line(err::kRemoveFailed);
   }
   return "OK REMOVE " + peer_id;
 }
@@ -936,11 +937,11 @@ std::string StorageNode::admin_destroy_region(uint32_t region_id) {
 std::string StorageNode::admin_peer_progress(uint32_t region_id, const std::string &peer_id) {
   auto *g = multi_raft_->get(region_id);
   if (!g) {
-    return "ERR no_region";
+    return openkv::err::line(err::kNoRegion);
   }
   if (!g->is_leader()) {
     auto addr = peer_address(g->soft_state().leader_id);
-    return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
+    return openkv::err::not_leader_redirect(addr);
   }
   const uint64_t match = g->match_index_of(peer_id);
   const auto st = g->soft_state();
@@ -962,11 +963,11 @@ std::string StorageNode::admin_peer_progress(uint32_t region_id, const std::stri
 std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::string &target_id) {
   auto *g = multi_raft_->get(region_id);
   if (!g) {
-    return "ERR no_region";
+    return openkv::err::line(err::kNoRegion);
   }
   if (!g->is_leader()) {
     auto addr = peer_address(g->soft_state().leader_id);
-    return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
+    return openkv::err::not_leader_redirect(addr);
   }
   if (target_id == cfg_.node_id) {
     return "OK TRANSFER " + target_id;
@@ -975,14 +976,14 @@ std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::st
   for (const auto &p : g->peers()) {
     if (p.id == target_id) {
       if (p.learner) {
-        return "ERR target_is_learner";
+        return openkv::err::line(err::kTargetIsLearner);
       }
       target_addr = p.address.empty() ? peer_address(p.id) : p.address;
       break;
     }
   }
   if (target_addr.empty()) {
-    return "ERR unknown_target";
+    return openkv::err::line(err::kUnknownTarget);
   }
 
   // C7：让位前等目标追平已提交日志（match >= commit），避免转主后立刻空洞。
@@ -990,7 +991,7 @@ std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::st
   for (int i = 0; i < 100; ++i) {  // ~5s
     g = multi_raft_->get(region_id);
     if (!g || !g->is_leader()) {
-      return "ERR lost_leadership";
+      return openkv::err::line(err::kLostLeadership);
     }
     const auto st = g->soft_state();
     if (g->match_index_of(target_id) >= st.commit_index) {
@@ -1002,11 +1003,11 @@ std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::st
   if (!caught) {
     SKV_WARN << "TRANSFER region=" << region_id << " target=" << target_id
              << " not caught up (match < commit)";
-    return "ERR target_not_caught_up";
+    return openkv::err::line(err::kTargetNotCaughtUp);
   }
 
   if (!g->abdicate()) {
-    return "ERR abdicate_failed";
+    return openkv::err::line(err::kAbdicateFailed);
   }
   bool camp_ok = false;
   try {
@@ -1038,16 +1039,16 @@ std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::st
       SKV_WARN << "TRANSFER fallback self campaign region=" << region_id;
     }
   }
-  return camp_ok ? ("OK TRANSFER " + target_id) : "ERR campaign_failed";
+  return camp_ok ? ("OK TRANSFER " + target_id) : openkv::err::line(err::kCampaignFailed);
 }
 
 std::string StorageNode::admin_campaign(uint32_t region_id) {
   auto *g = multi_raft_->get(region_id);
   if (!g) {
-    return "ERR no_region";
+    return openkv::err::line(err::kNoRegion);
   }
   if (!g->force_election()) {
-    return "ERR campaign_failed";
+    return openkv::err::line(err::kCampaignFailed);
   }
   {
     std::lock_guard<std::mutex> lock(campaign_mu_);
@@ -1117,7 +1118,7 @@ std::string StorageNode::advertise_address() const {
 std::string StorageNode::handle_raft_vote(uint32_t shard, const std::string &from, uint64_t term,
                                           uint64_t last_idx, uint64_t last_term) {
   if (region_destroyed(shard)) {
-    return "ERR destroyed";
+    return openkv::err::line(err::kDestroyed);
   }
   // S2：入站只进 Store/Router，禁止直调协议状态机。
   std::ostringstream payload;
@@ -1130,7 +1131,7 @@ std::string StorageNode::handle_raft_pre_vote(uint32_t shard, const std::string 
                                               uint64_t term, uint64_t last_idx,
                                               uint64_t last_term) {
   if (region_destroyed(shard)) {
-    return "ERR destroyed";
+    return openkv::err::line(err::kDestroyed);
   }
   std::ostringstream payload;
   payload << term << '|' << last_idx << '|' << last_term;
@@ -1143,7 +1144,7 @@ std::string StorageNode::handle_raft_append(uint32_t shard, const std::string &f
                                             uint64_t leader_commit,
                                             const std::vector<openkv::raft::LogEntry> &entries) {
   if (region_destroyed(shard)) {
-    return "ERR destroyed";
+    return openkv::err::line(err::kDestroyed);
   }
   std::ostringstream payload;
   payload << term << '|' << prev_idx << '|' << prev_term << '|' << leader_commit << '|'
@@ -1159,7 +1160,7 @@ std::string StorageNode::handle_raft_snapshot(uint32_t shard, const std::string 
                                               uint64_t term, uint64_t last_idx, uint64_t last_term,
                                               std::string_view data) {
   if (region_destroyed(shard)) {
-    return "ERR destroyed";
+    return openkv::err::line(err::kDestroyed);
   }
   std::ostringstream payload;
   payload << term << '|' << last_idx << '|' << last_term << '|' << to_hex(data);
@@ -1172,7 +1173,7 @@ std::string StorageNode::handle_raft_snap_chunk(uint32_t shard, const std::strin
                                                 uint64_t last_term, uint64_t offset, uint64_t total,
                                                 bool done, std::string_view chunk) {
   if (region_destroyed(shard)) {
-    return "ERR destroyed";
+    return openkv::err::line(err::kDestroyed);
   }
   raft::SnapStreamBuffer::Key key{from, shard, last_idx};
   bool complete = false;
@@ -1182,7 +1183,7 @@ std::string StorageNode::handle_raft_snap_chunk(uint32_t shard, const std::strin
                         &out_term, &out_last_term)) {
     snap_buf_.drop(key);
     auto *g = multi_raft_->get(shard);
-    return "ERR snapc " + std::to_string(g ? g->soft_state().term : 0);
+    return openkv::err::line(err::kSnapc, std::to_string(g ? g->soft_state().term : 0));
   }
   if (!complete) {
     auto *g = multi_raft_->get(shard);
@@ -1301,7 +1302,7 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
   auto *g = multi_raft_->get(shard_id);
   if (!g) {
     if (error) {
-      *error = "no_region";
+      *error = std::string(err::kNoRegion);
     }
     return false;
   }
@@ -1313,7 +1314,7 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
       }
     }
     if (error) {
-      *error = "not_leader";
+      *error = std::string(err::kNotLeader);
     }
     return false;
   }
@@ -1338,7 +1339,7 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
   unlock_latch();
   if (outcome.timed_out || !outcome.error.empty()) {
     if (error) {
-      *error = outcome.timed_out ? "apply_timeout" : outcome.error;
+      *error = outcome.timed_out ? std::string(err::kApplyTimeout) : outcome.error;
     }
     return false;
   }
@@ -1351,7 +1352,8 @@ std::string StorageNode::admin_set_epoch(uint32_t region_id, uint64_t epoch) {
   cmd.value.assign(reinterpret_cast<const char *>(&epoch), sizeof(epoch));
   std::string err, redir;
   if (!propose_encoded(region_id, encode_command(cmd), &err, &redir)) {
-    return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+    return redir.empty() ? openkv::err::line(err)
+                         : openkv::err::line(err, std::string(openkv::err::kRedirect) + redir);
   }
   return "OK EPOCH " + std::to_string(region_epoch(region_id));
 }
@@ -1363,7 +1365,7 @@ std::string StorageNode::admin_checkpoint(uint32_t region_id, std::string_view p
     eng = engines_->get(region_id);
   }
   if (!eng) {
-    return "ERR no_engine";
+    return openkv::err::line(err::kNoEngine);
   }
   std::string dest(path);
   if (dest.empty()) {
@@ -1375,7 +1377,7 @@ std::string StorageNode::admin_checkpoint(uint32_t region_id, std::string_view p
                .string();
   }
   if (!eng->create_checkpoint(dest)) {
-    return "ERR checkpoint_failed path=" + dest;
+    return openkv::err::line(err::kCheckpointFailed, "path=" + dest);
   }
   return "OK CHECKPOINT " + std::to_string(region_id) + " " + dest;
 }
@@ -1404,7 +1406,8 @@ std::string StorageNode::admin_prepare_split(uint32_t left_region, std::string_v
   cmd.key = std::string(split_key);
   std::string err, redir;
   if (!propose_encoded(left_region, encode_command(cmd), &err, &redir)) {
-    return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+    return redir.empty() ? openkv::err::line(err)
+                         : openkv::err::line(err, std::string(openkv::err::kRedirect) + redir);
   }
   SKV_INFO << "PREPARE_SPLIT region=" << left_region << " pause=on (via raft)";
   return "OK PREPARE_SPLIT " + std::to_string(left_region);
@@ -1455,7 +1458,7 @@ std::string StorageNode::seed_right_region(uint32_t left_region, uint32_t right_
   }
   auto local = admin_ensure_region(right_region, peers);
   if (local.rfind("OK", 0) != 0) {
-    return "ERR local_ensure " + local;
+    return openkv::err::line(err::kLocalEnsure, local);
   }
 
   std::ostringstream csv;
@@ -1482,10 +1485,10 @@ std::string StorageNode::seed_right_region(uint32_t left_region, uint32_t right_
       auto resp = tcp_line(p.address, ensure_req, 4000);
       SKV_INFO << "seed_right ENSURE peer=" << p.id << " -> " << resp;
       if (resp.rfind("OK", 0) != 0) {
-        return "ERR remote_ensure " + p.id + " " + resp;
+        return openkv::err::line(err::kRemoteEnsure, p.id + " " + resp);
       }
     } catch (const std::exception &e) {
-      return std::string("ERR remote_ensure ") + p.id + " " + e.what();
+      return openkv::err::line(err::kRemoteEnsure, p.id + " " + e.what());
     }
   }
 
@@ -1513,7 +1516,8 @@ std::string StorageNode::admin_split(uint32_t left_region, uint32_t right_region
   cmd.value.assign(reinterpret_cast<const char *>(&right_region), sizeof(right_region));
   std::string err, redir;
   if (!propose_encoded(left_region, encode_command(cmd), &err, &redir)) {
-    return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+    return redir.empty() ? openkv::err::line(err)
+                         : openkv::err::line(err, std::string(openkv::err::kRedirect) + redir);
   }
   return "OK SPLIT left_epoch=" + std::to_string(region_epoch(left_region)) +
          " right_epoch=" + std::to_string(region_epoch(right_region)) +
@@ -1527,7 +1531,8 @@ std::string StorageNode::admin_merge(uint32_t left_region, uint32_t right_region
   cmd.value.assign(reinterpret_cast<const char *>(&right_region), sizeof(right_region));
   std::string err, redir;
   if (!propose_encoded(left_region, encode_command(cmd), &err, &redir)) {
-    return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+    return redir.empty() ? openkv::err::line(err)
+                         : openkv::err::line(err, std::string(openkv::err::kRedirect) + redir);
   }
   return "OK MERGE epoch=" + std::to_string(region_epoch(left_region));
 }
@@ -1542,12 +1547,12 @@ bool StorageNode::meta_split(uint32_t left, const std::string &split_key, uint32
     std::string addr = cfg_.meta_addr;
     for (int i = 0; i < 4; ++i) {
       auto resp = meta_exec_line(addr, req.str());
-      if (resp.find("not_leader") != std::string::npos) {
-        auto p = resp.find("redirect=");
+      if (openkv::err::has_token(resp, openkv::err::kNotLeader)) {
+        auto p = resp.find(openkv::err::kRedirect);
         if (p == std::string::npos) {
           return false;
         }
-        addr = resp.substr(p + 9);
+        addr = resp.substr(p + openkv::err::kRedirect.size());
         continue;
       }
       std::istringstream iss(resp);
@@ -1806,12 +1811,12 @@ bool StorageNode::meta_suggest_place(std::vector<std::string> *out,
     std::string addr = cfg_.meta_addr;
     for (int i = 0; i < 4; ++i) {
       auto resp = meta_exec_line(addr, req.str());
-      if (resp.find("not_leader") != std::string::npos) {
-        auto p = resp.find("redirect=");
+      if (openkv::err::has_token(resp, openkv::err::kNotLeader)) {
+        auto p = resp.find(openkv::err::kRedirect);
         if (p == std::string::npos) {
           return false;
         }
-        addr = resp.substr(p + 9);
+        addr = resp.substr(p + openkv::err::kRedirect.size());
         continue;
       }
       std::istringstream iss(resp);
@@ -1844,12 +1849,12 @@ bool StorageNode::meta_find_merge_right(uint32_t left, uint32_t *right_out) {
     std::string addr = cfg_.meta_addr;
     for (int i = 0; i < 4; ++i) {
       auto resp = meta_exec_line(addr, "FIND_MERGE_RIGHT " + std::to_string(left));
-      if (resp.find("not_leader") != std::string::npos) {
-        auto p = resp.find("redirect=");
+      if (openkv::err::has_token(resp, openkv::err::kNotLeader)) {
+        auto p = resp.find(openkv::err::kRedirect);
         if (p == std::string::npos) {
           return false;
         }
-        addr = resp.substr(p + 9);
+        addr = resp.substr(p + openkv::err::kRedirect.size());
         continue;
       }
       std::istringstream iss(resp);
@@ -1875,12 +1880,12 @@ bool StorageNode::meta_merge(uint32_t left, uint32_t right) {
     for (int i = 0; i < 4; ++i) {
       auto resp = meta_exec_line(
           addr, "MERGE_REGIONS " + std::to_string(left) + " " + std::to_string(right));
-      if (resp.find("not_leader") != std::string::npos) {
-        auto p = resp.find("redirect=");
+      if (openkv::err::has_token(resp, openkv::err::kNotLeader)) {
+        auto p = resp.find(openkv::err::kRedirect);
         if (p == std::string::npos) {
           return false;
         }
-        addr = resp.substr(p + 9);
+        addr = resp.substr(p + openkv::err::kRedirect.size());
         continue;
       }
       return resp.rfind("OK MERGE", 0) == 0;
@@ -2112,11 +2117,11 @@ std::string StorageNode::admin_rpc(const std::string &req,
     std::string addr = hint.empty() ? addrs[static_cast<size_t>(attempt) % addrs.size()] : hint;
     try {
       auto resp = tcp_line(addr, req, 8000);
-      if (resp.find("not_leader") != std::string::npos) {
+      if (openkv::err::has_token(resp, openkv::err::kNotLeader)) {
         last_err = resp;
-        auto p = resp.find("redirect=");
+        auto p = resp.find(openkv::err::kRedirect);
         if (p != std::string::npos) {
-          const std::string r = resp.substr(p + 9);
+          const std::string r = resp.substr(p + openkv::err::kRedirect.size());
           hint = (r != addr) ? r : "";
         } else {
           hint.clear();
@@ -2124,7 +2129,7 @@ std::string StorageNode::admin_rpc(const std::string &req,
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         continue;
       }
-      if (resp.find("no_region") != std::string::npos) {
+      if (openkv::err::has_token(resp, openkv::err::kNoRegion)) {
         last_err = resp;
         hint.clear();
         continue;
@@ -2158,7 +2163,7 @@ bool StorageNode::wait_peer_caught_up(uint32_t region_id, const std::string &pee
       SKV_INFO << "place progress region=" << region_id << " peer=" << peer_id << " " << r;
     } catch (const std::exception &e) {
       SKV_WARN << "place progress: " << e.what();
-      if (std::string(e.what()).find("not_leader") != std::string::npos) {
+      if (openkv::err::has_token(e.what(), openkv::err::kNotLeader)) {
         for (const auto &a : seed_addrs) {
           if (a.empty()) {
             continue;
@@ -2298,20 +2303,20 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
       try {
         r = admin_rpc(req, rebuild_seeds(exclude_addr));
       } catch (const std::exception &e) {
-        r = std::string("ERR ") + e.what();
+        r = openkv::err::line(e.what());
       }
       SKV_INFO << "place " << tag << " -> " << r;
       if (r.rfind("OK", 0) == 0) {
         return true;
       }
-      if (r.find("busy") != std::string::npos || r.find("not_leader") != std::string::npos ||
-          r.find("joint") != std::string::npos || r.find("no_region") != std::string::npos ||
-          r.find("remove_failed") != std::string::npos ||
-          r.find("promote_failed") != std::string::npos ||
-          r.find("add_learner_failed") != std::string::npos) {
+      if (openkv::err::has_token(r, openkv::err::kBusy) || openkv::err::has_token(r, openkv::err::kNotLeader) ||
+          r.find("joint") != std::string::npos || openkv::err::has_token(r, openkv::err::kNoRegion) ||
+          openkv::err::has_token(r, err::kRemoveFailed) ||
+          openkv::err::has_token(r, err::kPromoteFailed) ||
+          openkv::err::has_token(r, err::kAddLearnerFailed)) {
         // 无主，或 redirect 多轮仍失败：催目标集竞选（僵死 *L 常见）
-        if (r.find("not_leader") != std::string::npos && !desired_peers.empty() &&
-            (r.find("redirect=") == std::string::npos || attempt >= 5)) {
+        if (openkv::err::has_token(r, openkv::err::kNotLeader) && !desired_peers.empty() &&
+            (r.find(openkv::err::kRedirect) == std::string::npos || attempt >= 5)) {
           maybe_campaign(region_id, nodes[desired_peers[0]]);
           for (const auto &id : desired_peers) {
             if (id == desired_peers[0]) {
@@ -2498,7 +2503,7 @@ std::string StorageNode::admin_place_region(uint32_t region_id,
     return "OK PLACE " + std::to_string(region_id) + " " + std::to_string(desired.size()) +
            " epoch=" + std::to_string(region_epoch(region_id));
   }
-  return "ERR place_failed";
+  return openkv::err::line(err::kPlaceFailed);
 }
 
 void StorageNode::start() {

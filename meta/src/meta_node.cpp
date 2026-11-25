@@ -40,6 +40,7 @@
 #include "openkv/meta/grpc_server.hpp"
 #include "openkv/net/tcp_line_client.hpp"
 #include "openkv/protocol.hpp"
+#include "openkv/meta/errors.hpp"
 
 namespace openkv::meta {
 namespace proto = openkv::proto;
@@ -185,7 +186,7 @@ void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> c
   }
   if (!raft_ || !raft_->is_leader()) {
     const auto a = leader_address();
-    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    cb(openkv::err::not_leader_redirect(a));
     return;
   }
   MetaCommand cmd;
@@ -193,7 +194,7 @@ void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> c
   cmd.ts_count = count;
   uint64_t idx = 0;
   if (!raft_->propose(encode_meta_command(cmd), &idx)) {
-    cb("ERR propose_failed");
+    cb(openkv::err::line(err::kProposeFailed));
     return;
   }
   {
@@ -223,7 +224,7 @@ void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> c
       cbs = std::move(it->second);
       ts_async_waiters_.erase(it);
     }
-    fire_line_cbs(cbs, "ERR apply_timeout");
+    fire_line_cbs(cbs, openkv::err::line(err::kApplyTimeout));
   }).detach();
 }
 
@@ -231,7 +232,7 @@ void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> c
 bool MetaNode::replicate(const MetaCommand& cmd, std::string* error, std::string* redirect_to) {
   if (!raft_) {
     if (error) {
-      *error = "raft_not_ready";
+      *error = std::string(err::kRaftNotReady);
     }
     return false;
   }
@@ -240,14 +241,14 @@ bool MetaNode::replicate(const MetaCommand& cmd, std::string* error, std::string
       *redirect_to = raft_->leader_address();
     }
     if (error) {
-      *error = "not_leader";
+      *error = std::string(err::kNotLeader);
     }
     return false;
   }
   uint64_t idx = 0;
   if (!raft_->propose(encode_meta_command(cmd), &idx)) {
     if (error) {
-      *error = "propose_failed";
+      *error = std::string(err::kProposeFailed);
     }
     return false;
   }
@@ -258,7 +259,7 @@ bool MetaNode::replicate(const MetaCommand& cmd, std::string* error, std::string
     if (apply_cv_.wait_until(lock, deadline) == std::cv_status::timeout &&
         last_applied_wait_ < idx) {
       if (error) {
-        *error = "apply_timeout";
+        *error = std::string(err::kApplyTimeout);
       }
       return false;
     }
@@ -270,7 +271,7 @@ bool MetaNode::replicate_async(const MetaCommand& cmd, std::string* error,
                                std::string* redirect_to) {
   if (!raft_) {
     if (error) {
-      *error = "raft_not_ready";
+      *error = std::string(err::kRaftNotReady);
     }
     return false;
   }
@@ -279,14 +280,14 @@ bool MetaNode::replicate_async(const MetaCommand& cmd, std::string* error,
       *redirect_to = raft_->leader_address();
     }
     if (error) {
-      *error = "not_leader";
+      *error = std::string(err::kNotLeader);
     }
     return false;
   }
   uint64_t idx = 0;
   if (!raft_->propose(encode_meta_command(cmd), &idx)) {
     if (error) {
-      *error = "propose_failed";
+      *error = std::string(err::kProposeFailed);
     }
     return false;
   }
@@ -299,17 +300,17 @@ void MetaNode::replicate_cb(const MetaCommand& cmd, std::function<std::string()>
     return;
   }
   if (!raft_) {
-    cb("ERR raft_not_ready");
+    cb(openkv::err::line(err::kRaftNotReady));
     return;
   }
   if (!raft_->is_leader()) {
     const auto a = leader_address();
-    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    cb(openkv::err::not_leader_redirect(a));
     return;
   }
   uint64_t idx = 0;
   if (!raft_->propose(encode_meta_command(cmd), &idx)) {
-    cb("ERR propose_failed");
+    cb(openkv::err::line(err::kProposeFailed));
     return;
   }
   {
@@ -335,7 +336,7 @@ void MetaNode::replicate_cb(const MetaCommand& cmd, std::function<std::string()>
     }
     for (auto& w : waiters) {
       if (w.cb) {
-        w.cb("ERR apply_timeout");
+        w.cb(openkv::err::line(err::kApplyTimeout));
       }
     }
   }).detach();
@@ -347,7 +348,7 @@ void MetaNode::register_node_async(NodeInfo n, std::function<void(std::string)> 
   }
   if (!is_leader()) {
     const auto a = leader_address();
-    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    cb(openkv::err::not_leader_redirect(a));
     return;
   }
   MetaCommand cmd;
@@ -430,7 +431,7 @@ void MetaNode::split_region_async(uint32_t left_region_id, std::string split_key
             return "OK SPLIT " + std::to_string(left) + " " + std::to_string(r.region_id);
           }
         }
-        return std::string("ERR split_apply_missing");
+        return openkv::err::line(err::kSplitApplyMissing);
       },
       std::move(cb));
 }
@@ -450,10 +451,10 @@ void MetaNode::merge_regions_async(uint32_t left_region_id, uint32_t right_regio
       cmd,
       [this, l, r] {
         if (!state_->find_region(l)) {
-          return std::string("ERR merge_lost_left");
+          return openkv::err::line(err::kMergeLostLeft);
         }
         if (state_->find_region(r)) {
-          return std::string("ERR merge_right_still_present");
+          return openkv::err::line(err::kMergeRightStillPresent);
         }
         return "OK MERGE " + std::to_string(l) + " " + std::to_string(r);
       },
@@ -471,7 +472,7 @@ void MetaNode::place_region_async(uint32_t region_id, std::vector<std::string> p
   for (const auto& id : peer_node_ids) {
     auto node = state_->get_node(id);
     if (!node) {
-      cb("ERR unknown_node " + id);
+      cb(openkv::err::line(err::kUnknownNode, id));
       return;
     }
     Replica rep;
@@ -480,7 +481,7 @@ void MetaNode::place_region_async(uint32_t region_id, std::vector<std::string> p
     cmd.place_replicas.push_back(std::move(rep));
   }
   if (cmd.place_replicas.empty()) {
-    cb("ERR empty_peers");
+    cb(openkv::err::line(err::kEmptyPeers));
     return;
   }
   const auto n = cmd.place_replicas.size();
@@ -497,11 +498,11 @@ void MetaNode::set_node_state_async(std::string node_id, NodeState state, std::s
   }
   if (!is_leader()) {
     const auto a = leader_address();
-    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    cb(openkv::err::not_leader_redirect(a));
     return;
   }
   if (!state_->get_node(node_id)) {
-    cb("ERR unknown_node");
+    cb(openkv::err::line(err::kUnknownNode));
     return;
   }
   MetaCommand cmd;
@@ -583,17 +584,17 @@ void MetaNode::get_scale_task_async(std::string task_id, std::function<void(std:
     return;
   }
   if (!scaler_) {
-    cb("ERR no_scaler");
+    cb(openkv::err::line(err::kNoScaler));
     return;
   }
   if (!is_leader()) {
     const auto a = leader_address();
-    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    cb(openkv::err::not_leader_redirect(a));
     return;
   }
   auto t = scaler_->get_task(task_id);
   if (!t) {
-    cb("ERR no_task");
+    cb(openkv::err::line(err::kNoTask));
     return;
   }
   std::ostringstream oss;
@@ -648,33 +649,33 @@ void MetaNode::activate_or_join_async(bool join, std::string node_id,
   }
   if (!is_leader()) {
     const auto a = leader_address();
-    cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
+    cb(openkv::err::not_leader_redirect(a));
     return;
   }
   auto cur = state_->get_node(node_id);
   if (!cur) {
-    cb("ERR unknown_node");
+    cb(openkv::err::line(err::kUnknownNode));
     return;
   }
   if (cur->state != NodeState::kJoining && cur->state != NodeState::kOffline) {
-    cb("ERR not_pending");
+    cb(openkv::err::line(err::kNotPending));
     return;
   }
   if (cur->address.empty()) {
-    cb("ERR no_address");
+    cb(openkv::err::line(err::kNoAddress));
     return;
   }
   const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
   if (cur->last_heartbeat_ms <= 0) {
-    cb("ERR no_heartbeat");
+    cb(openkv::err::line(err::kNoHeartbeat));
     return;
   }
   const int64_t age = now - cur->last_heartbeat_ms;
   if (age > static_cast<int64_t>(store_ttl_ms_)) {
-    cb("ERR heartbeat_stale age_ms=" + std::to_string(age) +
-       " ttl_ms=" + std::to_string(store_ttl_ms_));
+    cb(openkv::err::line(err::kHeartbeatStale, "age_ms=" + std::to_string(age) +
+                                  " ttl_ms=" + std::to_string(store_ttl_ms_)));
     return;
   }
   const std::string addr = cur->address;
@@ -683,13 +684,13 @@ void MetaNode::activate_or_join_async(bool join, std::string node_id,
   openkv::admin_ping_async(addr, admin_token_, proto::timeout_ms::kStorageRpcDefault,
                            [this, id, op, cb = std::move(cb)](std::string pong) {
                              if (!proto::starts_with_ok(pong)) {
-                               cb("ERR unreachable ping=" + pong);
+                               cb(openkv::err::line(err::kUnreachable, "ping=" + pong));
                                return;
                              }
                              // Ping 后复核租约（异步间隙可能过期）。
                              auto again = state_->get_node(id);
                              if (!again) {
-                               cb("ERR unknown_node");
+                               cb(openkv::err::line(err::kUnknownNode));
                                return;
                              }
                              const int64_t now2 =
@@ -697,13 +698,13 @@ void MetaNode::activate_or_join_async(bool join, std::string node_id,
                                      std::chrono::system_clock::now().time_since_epoch())
                                      .count();
                              if (again->last_heartbeat_ms <= 0) {
-                               cb("ERR no_heartbeat");
+                               cb(openkv::err::line(err::kNoHeartbeat));
                                return;
                              }
                              const int64_t age2 = now2 - again->last_heartbeat_ms;
                              if (age2 > static_cast<int64_t>(store_ttl_ms_)) {
-                               cb("ERR heartbeat_stale age_ms=" + std::to_string(age2) +
-                                  " ttl_ms=" + std::to_string(store_ttl_ms_));
+                               cb(openkv::err::line(err::kHeartbeatStale, "age_ms=" + std::to_string(age2) +
+                                  " ttl_ms=" + std::to_string(store_ttl_ms_)));
                                return;
                              }
                              set_node_state_async(id, NodeState::kActive, op, std::move(cb));
@@ -716,15 +717,15 @@ void MetaNode::kick_node_async(std::string node_id, std::function<void(std::stri
   }
   auto n = state_->get_node(node_id);
   if (!n) {
-    cb("ERR unknown_node");
+    cb(openkv::err::line(err::kUnknownNode));
     return;
   }
   if (n->state == NodeState::kActive) {
-    cb("ERR still_active");
+    cb(openkv::err::line(err::kStillActive));
     return;
   }
   if (state_->region_count_on(node_id) > 0) {
-    cb("ERR still_has_regions");
+    cb(openkv::err::line(err::kStillHasRegions));
     return;
   }
   MetaCommand cmd;
@@ -751,13 +752,13 @@ bool MetaNode::heartbeat(const std::string& node_id, const std::vector<uint32_t>
       *redirect = raft_ ? raft_->leader_address() : "";
     }
     if (error) {
-      *error = "not_leader";
+      *error = std::string(err::kNotLeader);
     }
     return false;
   }
   if (!state_->get_node(node_id)) {
     if (error) {
-      *error = "unknown_node";
+      *error = std::string(err::kUnknownNode);
     }
     return false;
   }
@@ -766,7 +767,7 @@ bool MetaNode::heartbeat(const std::string& node_id, const std::vector<uint32_t>
   if (!state_->heartbeat_changes_leaders(node_id, leaders)) {
     if (!state_->touch_lease(node_id)) {
       if (error) {
-        *error = "unknown_node";
+        *error = std::string(err::kUnknownNode);
       }
       return false;
     }
@@ -850,7 +851,7 @@ std::string MetaNode::handle_raft_snap_chunk(const std::string& from, uint64_t t
                         &out_term, &out_last_term)) {
     snap_buf_.drop(key);
     auto st = raft_->soft_state();
-    return "ERR snapc " + std::to_string(st.term);
+    return openkv::err::line(err::kSnapc, std::to_string(st.term));
   }
   if (!complete) {
     auto st = raft_->soft_state();
@@ -865,20 +866,20 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
   AdminSession& session = sess ? *sess : local;
   auto parts = split_ws(line);
   if (parts.empty()) {
-    return "ERR empty";
+    return openkv::err::line(err::kEmpty);
   }
   const auto& op = parts[0];
   if (op == proto::kOpAuth) {
     if (parts.size() < 2) {
-      return "ERR usage: AUTH <token>";
+      return openkv::err::line(err::kAuthUsage);
     }
     if (!admin_try_auth(&session, admin_token_, parts[1])) {
-      return "ERR unauthorized";
+      return openkv::err::line(err::kUnauthorized);
     }
     return "OK AUTH";
   }
   if (meta_needs_admin(op) && !admin_allowed(session, admin_token_)) {
-    return "ERR unauthorized";
+    return openkv::err::line(err::kUnauthorized);
   }
   if (op == proto::kOpStats) {
     const auto pr = peer_raft_.encode();
@@ -1011,13 +1012,13 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       size_t off = 8;
       for (size_t i = 0; i < n; ++i) {
         if (off + 2 >= parts.size()) {
-          return "ERR ae_truncated";
+          return openkv::err::line(err::kAeTrunc);
         }
         raft::LogEntry e;
         e.term = std::stoull(parts[off]);
         e.index = std::stoull(parts[off + 1]);
         if (!from_hex(parts[off + 2], &e.data)) {
-          return "ERR ae_bad_hex";
+          return openkv::err::line(err::kAeBadHex);
         }
         ents.push_back(std::move(e));
         off += 3;
@@ -1028,7 +1029,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == proto::kOpRaftSnap && parts.size() == 7) {
       std::string data;
       if (!from_hex(parts[6], &data)) {
-        return "ERR snap_bad_hex";
+        return openkv::err::line(err::kSnapBadHex);
       }
       return handle_raft_snapshot(parts[2], std::stoull(parts[3]), std::stoull(parts[4]),
                                   std::stoull(parts[5]), data);
@@ -1037,7 +1038,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == proto::kOpRaftSnapc && parts.size() == 10) {
       std::string chunk;
       if (!from_hex(parts[9], &chunk)) {
-        return "ERR snap_bad_hex";
+        return openkv::err::line(err::kSnapBadHex);
       }
       return handle_raft_snap_chunk(parts[2], std::stoull(parts[3]), std::stoull(parts[4]),
                                     std::stoull(parts[5]), std::stoull(parts[6]),
@@ -1054,7 +1055,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       // Offline）。
       if (!is_leader()) {
         auto a = leader_address();
-        return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+        return openkv::err::not_leader_redirect(a);
       }
       const auto existing = state_->get_node(n.node_id);
       const bool known_same =
@@ -1064,7 +1065,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         // 禁止本地 touch_lease，否则 Follower 状态不一致。
         if (existing->state == NodeState::kOffline || existing->state == NodeState::kJoining) {
           if (!replicate(cmd, &err, &redir)) {
-            return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+            return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
           }
           return "OK REGISTER " + n.node_id;
         }
@@ -1072,7 +1073,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         return "OK REGISTER " + n.node_id;
       }
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       return "OK REGISTER " + n.node_id;
     }
@@ -1080,7 +1081,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       std::string nid = parts[1];
       size_t n = static_cast<size_t>(std::stoul(parts[2]));
       if (parts.size() < 3 + n) {
-        return "ERR bad_heartbeat";
+        return openkv::err::line(err::kBadHeartbeat);
       }
       std::vector<uint32_t> leaders;
       for (size_t i = 0; i < n; ++i) {
@@ -1088,7 +1089,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       }
       std::string err, redir;
       if (!heartbeat(nid, leaders, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       return "OK HEARTBEAT";
     }
@@ -1143,11 +1144,11 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       cmd.ts_count = count;
       if (!raft_ || !raft_->is_leader()) {
         auto a = leader_address();
-        return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+        return openkv::err::not_leader_redirect(a);
       }
       uint64_t idx = 0;
       if (!raft_->propose(encode_meta_command(cmd), &idx)) {
-        return "ERR propose_failed";
+        return openkv::err::line(err::kProposeFailed);
       }
       uint64_t start = 0;
       {
@@ -1163,7 +1164,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
           if (apply_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
             auto it2 = ts_alloc_by_index_.find(idx);
             if (it2 == ts_alloc_by_index_.end()) {
-              return "ERR apply_timeout";
+              return openkv::err::line(err::kApplyTimeout);
             }
             start = it2->second;
             ts_alloc_by_index_.erase(it2);
@@ -1190,7 +1191,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       cmd.ts_count = retain;
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       return "OK SAFE " + std::to_string(state_->gc_safe_ts()) + " " +
              std::to_string(state_->next_ts()) + " " + std::to_string(state_->min_start_ts_hint());
@@ -1205,7 +1206,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       }
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       return "OK MIN_START " + std::to_string(state_->min_start_ts_hint());
     }
@@ -1213,7 +1214,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == proto::kOpSplitRegion && parts.size() == 3) {
       std::string split_key;
       if (!from_hex(parts[2], &split_key)) {
-        return "ERR bad_hex";
+        return openkv::err::line(err::kBadHex);
       }
       const uint32_t left_id = static_cast<uint32_t>(std::stoul(parts[1]));
       MetaCommand cmd;
@@ -1222,7 +1223,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       cmd.split_key = split_key;
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       auto rt = state_->routing_table();
       uint32_t right = 0;
@@ -1235,7 +1236,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         }
       }
       if (!found) {
-        return "ERR split_apply_missing";
+        return openkv::err::line(err::kSplitApplyMissing);
       }
       return "OK SPLIT " + std::to_string(left_id) + " " + std::to_string(right);
     }
@@ -1247,13 +1248,13 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       cmd.merge_right_id = static_cast<uint32_t>(std::stoul(parts[2]));
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       if (!state_->find_region(cmd.shard_id)) {
-        return "ERR merge_lost_left";
+        return openkv::err::line(err::kMergeLostLeft);
       }
       if (state_->find_region(cmd.merge_right_id)) {
-        return "ERR merge_right_still_present";
+        return openkv::err::line(err::kMergeRightStillPresent);
       }
       return "OK MERGE " + parts[1] + " " + parts[2];
     }
@@ -1261,11 +1262,11 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == "LOCATE" && parts.size() == 2) {
       std::string key;
       if (!from_hex(parts[1], &key)) {
-        return "ERR bad_hex";
+        return openkv::err::line(err::kBadHex);
       }
       auto rid = state_->locate(key);
       if (!rid) {
-        return "ERR not_found";
+        return openkv::err::line(err::kNotFound);
       }
       return "OK LOCATE " + std::to_string(*rid);
     }
@@ -1278,40 +1279,40 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       // 租约/心跳只在 Leader 内存续；Follower 上读 last_heartbeat 会误判 stale。
       if (!is_leader()) {
         auto a = leader_address();
-        return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+        return openkv::err::not_leader_redirect(a);
       }
       auto cur = state_->get_node(parts[1]);
       if (!cur) {
-        return "ERR unknown_node";
+        return openkv::err::line(err::kUnknownNode);
       }
       NodeState st = NodeState::kDraining;
       if (op == proto::kOpActivateNode || op == proto::kOpJoinNode) {
         if (cur->state != NodeState::kJoining && cur->state != NodeState::kOffline) {
-          return "ERR not_pending";  // 仅待加入 / Offline 可加入
+          return openkv::err::line(err::kNotPending);  // 仅待加入 / Offline 可加入
         }
         if (cur->address.empty()) {
-          return "ERR no_address";
+          return openkv::err::line(err::kNoAddress);
         }
         // 可用性：gRPC AdminService.Ping
         try {
           auto pong = storage_rpc(cur->address, "PING");
           if (!proto::starts_with_ok(pong)) {
-            return "ERR unreachable ping=" + pong;
+            return openkv::err::line(err::kUnreachable, "ping=" + pong);
           }
         } catch (const std::exception& e) {
-          return std::string("ERR unreachable ") + e.what();
+          return openkv::err::line(err::kUnreachable, e.what());
         }
         // 心跳新鲜：超过 store TTL 视为不可用（进程假活 / 未接入 Meta）
         const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::system_clock::now().time_since_epoch())
                                 .count();
         if (cur->last_heartbeat_ms <= 0) {
-          return "ERR no_heartbeat";
+          return openkv::err::line(err::kNoHeartbeat);
         }
         const int64_t age = now - cur->last_heartbeat_ms;
         if (age > static_cast<int64_t>(store_ttl_ms_)) {
-          return "ERR heartbeat_stale age_ms=" + std::to_string(age) +
-                 " ttl_ms=" + std::to_string(store_ttl_ms_);
+          return openkv::err::line(err::kHeartbeatStale, "age_ms=" + std::to_string(age) +
+                                " ttl_ms=" + std::to_string(store_ttl_ms_));
         }
         st = NodeState::kActive;
       } else if (op == proto::kOpOfflineNode) {
@@ -1323,7 +1324,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       cmd.ts_value = static_cast<uint64_t>(st);
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       return "OK " + op + " " + parts[1];
     }
@@ -1331,20 +1332,20 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if ((op == proto::kOpRemoveTombstone || op == proto::kOpKickNode) && parts.size() == 2) {
       auto n = state_->get_node(parts[1]);
       if (!n) {
-        return "ERR unknown_node";
+        return openkv::err::line(err::kUnknownNode);
       }
       if (n->state == NodeState::kActive) {
-        return "ERR still_active";
+        return openkv::err::line(err::kStillActive);
       }
       if (state_->region_count_on(parts[1]) > 0) {
-        return "ERR still_has_regions";
+        return openkv::err::line(err::kStillHasRegions);
       }
       MetaCommand cmd;
       cmd.op = MetaOp::kEraseTombstone;
       cmd.node.node_id = parts[1];
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       return "OK KICK_NODE " + parts[1];
     }
@@ -1352,7 +1353,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == "STORE_STATUS" && parts.size() == 2) {
       auto n = state_->get_node(parts[1]);
       if (!n) {
-        return "ERR unknown_node";
+        return openkv::err::line(err::kUnknownNode);
       }
       return "OK STORE " + parts[1] + " state=" + std::to_string(static_cast<int>(n->state)) +
              " regions=" + std::to_string(state_->region_count_on(parts[1])) +
@@ -1362,10 +1363,10 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == "BALANCE") {
       if (!is_leader()) {
         auto a = leader_address();
-        return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+        return openkv::err::not_leader_redirect(a);
       }
       if (!scheduler_) {
-        return "ERR no_scheduler";
+        return openkv::err::line(err::kNoScheduler);
       }
       size_t max_n = 1;
       if (parts.size() >= 2) {
@@ -1383,10 +1384,11 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       if (parts.size() >= 2) {
         if (parts[1] == "storage") {
           role = NodeRole::kStorage;
-        } else if (parts[1] == "compute")
+        } else if (parts[1] == "compute") {
           role = NodeRole::kCompute;
-        else
-          return "ERR bad_role";
+        } else {
+          return openkv::err::line(err::kBadRole);
+        }
       }
       auto nodes = state_->list_nodes(role);
       std::ostringstream oss;
@@ -1421,7 +1423,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == "FIND_MERGE_RIGHT" && parts.size() == 2) {
       auto right = state_->adjacent_right(static_cast<uint32_t>(std::stoul(parts[1])));
       if (!right) {
-        return "ERR no_adjacent";
+        return openkv::err::line(err::kNoAdjacent);
       }
       return "OK MERGE_RIGHT " + parts[1] + " " + std::to_string(*right);
     }
@@ -1431,12 +1433,12 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         return {};
       }
       auto a = leader_address();
-      return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+      return openkv::err::not_leader_redirect(a);
     };
     // SCALE_OUT node_id [rid,rid,...] — S1 在线扩容
     if (op == proto::kOpScaleOut && parts.size() >= 2) {
       if (!scaler_) {
-        return "ERR no_scaler";
+        return openkv::err::line(err::kNoScaler);
       }
       if (auto e = scale_need_leader(); !e.empty()) {
         return e;
@@ -1458,7 +1460,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     // CANCEL_SCALE <node_id> [region_id] — 取消该节点（可选指定 Region）上未完成的 SCALE_OUT
     if (op == "CANCEL_SCALE" && parts.size() >= 2) {
       if (!scaler_) {
-        return "ERR no_scaler";
+        return openkv::err::line(err::kNoScaler);
       }
       if (auto e = scale_need_leader(); !e.empty()) {
         return e;
@@ -1472,14 +1474,14 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     }
     if (op == "GET_SCALE" && parts.size() == 2) {
       if (!scaler_) {
-        return "ERR no_scaler";
+        return openkv::err::line(err::kNoScaler);
       }
       if (auto e = scale_need_leader(); !e.empty()) {
         return e;
       }
       auto t = scaler_->get_task(parts[1]);
       if (!t) {
-        return "ERR no_task";
+        return openkv::err::line(err::kNoTask);
       }
       // OK SCALE id state progress node=… shards=… [match= commit= caught=] [error=…]
       std::ostringstream oss;
@@ -1516,7 +1518,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     }
     if (op == "LIST_SCALE") {
       if (!scaler_) {
-        return "ERR no_scaler";
+        return openkv::err::line(err::kNoScaler);
       }
       if (auto e = scale_need_leader(); !e.empty()) {
         return e;
@@ -1543,10 +1545,10 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == proto::kOpScheduleMigrate && parts.size() >= 2) {
       if (!is_leader()) {
         auto a = leader_address();
-        return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+        return openkv::err::not_leader_redirect(a);
       }
       if (!scheduler_) {
-        return "ERR no_scheduler";
+        return openkv::err::line(err::kNoScheduler);
       }
       std::vector<std::string> desired;
       if (parts.size() >= 3) {
@@ -1564,10 +1566,10 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == "LIST_MIGRATE") {
       if (!is_leader()) {
         auto a = leader_address();
-        return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+        return openkv::err::not_leader_redirect(a);
       }
       if (!scheduler_) {
-        return "ERR no_scheduler";
+        return openkv::err::line(err::kNoScheduler);
       }
       auto tasks = scheduler_->list_tasks();
       std::ostringstream oss;
@@ -1580,12 +1582,12 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == proto::kOpCancelMigrate && parts.size() == 2) {
       if (!is_leader()) {
         auto a = leader_address();
-        return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
+        return openkv::err::not_leader_redirect(a);
       }
       if (!scheduler_) {
-        return "ERR no_scheduler";
+        return openkv::err::line(err::kNoScheduler);
       }
-      return scheduler_->cancel(parts[1]) ? "OK CANCELLED" : "ERR cancel";
+      return scheduler_->cancel(parts[1]) ? "OK CANCELLED" : openkv::err::line(err::kCancel);
     }
     // PLACE_REGION <rid> <node_id>[,node_id...]
     // 仅更新 Meta 路由；数据面 ConfChange 由 skv place 编排后再调本命令。
@@ -1602,7 +1604,7 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         }
         auto node = state_->get_node(item);
         if (!node) {
-          return "ERR unknown_node " + item;
+          return openkv::err::line(err::kUnknownNode, item);
         }
         Replica r;
         r.node_id = node->node_id;
@@ -1610,18 +1612,18 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         cmd.place_replicas.push_back(std::move(r));
       }
       if (cmd.place_replicas.empty()) {
-        return "ERR empty_peers";
+        return openkv::err::line(err::kEmptyPeers);
       }
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
-        return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
+        return openkv::err::line(err, redir.empty() ? "" : (std::string(openkv::err::kRedirect) + redir));
       }
       return "OK PLACE " + parts[1] + " " + std::to_string(cmd.place_replicas.size());
     }
   } catch (const std::exception& e) {
-    return std::string("ERR ") + e.what();
+    return openkv::err::line(e.what());
   }
-  return "ERR bad_request";
+  return openkv::err::line(err::kBadRequest);
 }
 
 // 创建 Raft/transport、绑定 Scaler/Scheduler 钩子、restore 迁移、起线程。
@@ -1779,7 +1781,7 @@ void MetaNode::start() {
         }
         SKV_WARN << "ADMIN_ADD_LEARNER: " << resp;
         if (resp.find("busy") == std::string::npos && resp.find("joint") == std::string::npos &&
-            resp.find("not_leader") == std::string::npos &&
+            !openkv::err::has_token(resp, err::kNotLeader) &&
             resp.find("already") == std::string::npos) {
           return false;
         }
@@ -1849,14 +1851,14 @@ void MetaNode::start() {
             continue;
           }
           if (resp.find("busy") == std::string::npos && resp.find("joint") == std::string::npos &&
-              resp.find("not_leader") == std::string::npos) {
+              !openkv::err::has_token(resp, err::kNotLeader)) {
             return false;
           }
         } catch (const std::exception& e) {
           SKV_WARN << "ADMIN_PROMOTE: " << e.what();
           const std::string msg = e.what();
           if (msg.find("busy") == std::string::npos && msg.find("joint") == std::string::npos &&
-              msg.find("not_leader") == std::string::npos) {
+              !openkv::err::has_token(msg, err::kNotLeader)) {
             return false;
           }
         }

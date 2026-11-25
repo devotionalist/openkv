@@ -32,6 +32,7 @@
 #include "openkv/logging.hpp"
 #include "openkv/protocol.hpp"
 #include "openkv/raftstore/store.hpp"
+#include "openkv/storage/errors.hpp"
 #include "openkv/storage/storage_node.hpp"
 #include "openkv/storage/watch_log.hpp"
 #include "storage/v1/storage.grpc.pb.h"
@@ -41,11 +42,11 @@ namespace openkv::storage {
 namespace {
 
 std::string extract_redirect(std::string_view s) {
-  auto p = s.find("redirect=");
+  auto p = s.find(openkv::err::kRedirect);
   if (p == std::string_view::npos) {
     return {};
   }
-  auto rest = s.substr(p + 9);
+  auto rest = s.substr(p + openkv::err::kRedirect.size());
   auto sp = rest.find_first_of(" \t\r\n");
   if (sp != std::string_view::npos) {
     rest = rest.substr(0, sp);
@@ -220,11 +221,12 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
       resp->set_error(r.error);
     }
     // locked|expired|committed|rolledback
-    const char* st = "rolledback";
+    const char* st = err::kTxnRolledback.data();
     if (r.status == TxnStatus::kLocked) {
-      st = r.lock_expired ? "expired" : "locked";
-    } else if (r.status == TxnStatus::kCommitted)
-      st = "committed";
+      st = r.lock_expired ? err::kTxnExpired.data() : err::kLocked.data();
+    } else if (r.status == TxnStatus::kCommitted) {
+      st = err::kTxnCommitted.data();
+    }
     resp->set_status(st);
     reactor->Finish(Status::OK);
     return reactor;
@@ -235,8 +237,8 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
     auto* reactor = ctx->DefaultReactor();
     auto* g = facade_.node().multi_raft().get(req->shard_id());
     if (!g) {
-      resp->set_redirect_to("no_region");
-      resp->set_error("no_region");
+      resp->set_redirect_to(std::string(err::kNoRegion));
+      resp->set_error(std::string(err::kNoRegion));
     } else {
       resp->set_revision(g->soft_state().last_applied);
     }
@@ -252,8 +254,8 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
     size_t limit = req->limit() > 0 ? static_cast<size_t>(req->limit()) : 64;
     auto* g = facade_.node().multi_raft().get(shard);
     if (!g) {
-      resp->set_redirect_to("no_region");
-      resp->set_error("no_region");
+      resp->set_redirect_to(std::string(err::kNoRegion));
+      resp->set_error(std::string(err::kNoRegion));
       resp->set_max_revision(since);
       reactor->Finish(Status::OK);
       return reactor;
@@ -283,7 +285,7 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
                                          pb::TransferResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
     if (!grpc_admin_allowed(*ctx, token_)) {
-      reactor->Finish(Status(grpc::StatusCode::UNAUTHENTICATED, "unauthorized"));
+      reactor->Finish(Status(grpc::StatusCode::UNAUTHENTICATED, std::string(err::kUnauthorized)));
       return reactor;
     }
     auto msg = facade_.node().admin_transfer_leader(req->shard_id(), req->target_peer());
@@ -460,7 +462,7 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
 
   Status ensure_auth(CallbackServerContext* ctx) {
     if (!grpc_admin_allowed(*ctx, token_)) {
-      return Status(grpc::StatusCode::UNAUTHENTICATED, "unauthorized");
+      return Status(grpc::StatusCode::UNAUTHENTICATED, std::string(err::kUnauthorized));
     }
     return Status::OK;
   }

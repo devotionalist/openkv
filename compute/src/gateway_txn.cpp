@@ -20,14 +20,11 @@
 #include <utility>
 
 #include "openkv/compute/gateway_server.hpp"
+#include "openkv/errors.hpp"
 #include "openkv/logging.hpp"
 
 namespace openkv::compute {
 namespace {
-
-bool contains(std::string_view hay, std::string_view needle) {
-  return hay.find(needle) != std::string_view::npos;
-}
 
 ProposeTxnArgs make_txn_args(uint32_t region, ProposeOp op, std::string key, uint64_t start_ts,
                              uint64_t epoch, std::string primary = {}) {
@@ -49,7 +46,7 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
     return;
   }
   if (le.primary().empty() || le.lock_ts() == 0) {
-    cont(grpc::Status(grpc::StatusCode::ABORTED, "locked"));
+    cont(grpc::Status(grpc::StatusCode::ABORTED, std::string(openkv::err::kLocked)));
     return;
   }
   const uint32_t primary_region = region_of(le.primary());
@@ -65,8 +62,10 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
                 on_rpc(sst, false, sst.error_message(), "");
                 return;
               }
-              if (!out.redirect_to.empty() || contains(out.error, "not_leader")) {
-                on_rpc(grpc::Status::OK, false, out.error.empty() ? "not_leader" : out.error,
+              if (!out.redirect_to.empty() ||
+                  openkv::err::has_token(out.error, openkv::err::kNotLeader)) {
+                on_rpc(grpc::Status::OK, false,
+                       out.error.empty() ? std::string(openkv::err::kNotLeader) : out.error,
                        out.redirect_to);
                 return;
               }
@@ -80,7 +79,8 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
           return;
         }
         if (!ok) {
-          cont(grpc::Status(grpc::StatusCode::ABORTED, body.empty() ? "locked" : body));
+          cont(grpc::Status(grpc::StatusCode::ABORTED,
+                            body.empty() ? std::string(openkv::err::kLocked) : body));
           return;
         }
         const auto nl = body.find('\n');
@@ -143,7 +143,7 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
           }
           return;
         }
-        cont(grpc::Status(grpc::StatusCode::ABORTED, "locked"));
+        cont(grpc::Status(grpc::StatusCode::ABORTED, std::string(openkv::err::kLocked)));
       });
 }
 
@@ -221,11 +221,13 @@ void GatewayServer::txn_get_async(const kv::v1::TxnGetRequest* req, kv::v1::TxnG
           done(grpc::Status(grpc::StatusCode::UNAVAILABLE, sst.error_message()));
           return;
         }
-        if (out.locked || contains(out.error, "locked")) {
-          LockedError le(out.lock_primary, out.lock_ts, out.error.empty() ? "locked" : out.error);
+        if (out.locked || openkv::err::has_token(out.error, openkv::err::kLocked)) {
+          LockedError le(out.lock_primary, out.lock_ts,
+                         out.error.empty() ? std::string(openkv::err::kLocked) : out.error);
           resolve_blocking_lock_async(req->key(), le,
                                       [this, req, resp, attempt, done](grpc::Status rst) {
-                                        if (!rst.ok() && contains(rst.error_message(), "locked")) {
+                                        if (!rst.ok() && openkv::err::has_token(rst.error_message(),
+                                                                               openkv::err::kLocked)) {
                                           resp->set_locked(true);
                                           done(grpc::Status::OK);
                                           return;
@@ -234,10 +236,11 @@ void GatewayServer::txn_get_async(const kv::v1::TxnGetRequest* req, kv::v1::TxnG
                                       });
           return;
         }
-        if (!out.redirect_to.empty() || contains(out.error, "not_leader") ||
-            contains(out.error, "splitting")) {
-          if (!out.redirect_to.empty() && out.redirect_to != "key_not_in_region" &&
-              out.redirect_to != "no_region") {
+        if (!out.redirect_to.empty() ||
+            openkv::err::has_token(out.error, openkv::err::kNotLeader) ||
+            openkv::err::has_token(out.error, openkv::err::kSplitting)) {
+          if (!out.redirect_to.empty() && out.redirect_to != openkv::err::kKeyNotInRegion &&
+              out.redirect_to != openkv::err::kNoRegion) {
             remember_leader(region, out.redirect_to);
           } else {
             refresh_routes();
@@ -264,7 +267,7 @@ void GatewayServer::txn_prewrite_async(const kv::v1::TxnPrewriteRequest* req,
                                        std::function<void(grpc::Status)> done) {
   if (req->mutations_size() == 0) {
     resp->set_ok(false);
-    resp->set_error("empty");
+    resp->set_error(std::string(openkv::err::kEmpty));
     done(grpc::Status::OK);
     return;
   }
@@ -320,7 +323,8 @@ void GatewayServer::txn_prewrite_async(const kv::v1::TxnPrewriteRequest* req,
                 }
                 if (out.cas_failed) {
                   on_rpc(grpc::Status::OK, false,
-                         "cas_failed current_revision=" + std::to_string(out.current_revision),
+                         std::string(openkv::err::kCasFailed) + " current_revision=" +
+                             std::to_string(out.current_revision),
                          out.redirect_to);
                   return;
                 }
@@ -335,7 +339,7 @@ void GatewayServer::txn_prewrite_async(const kv::v1::TxnPrewriteRequest* req,
           if (!ok) {
             st->resp->set_ok(false);
             st->resp->set_error(err);
-            if (contains(err, "cas_failed")) {
+            if (openkv::err::has_token(err, openkv::err::kCasFailed)) {
               st->resp->set_cas_failed(true);
               st->resp->set_current_revision(parse_cas_current_rev(err));
             }
@@ -354,7 +358,7 @@ void GatewayServer::txn_commit_async(const kv::v1::TxnCommitRequest* req,
                                      std::function<void(grpc::Status)> done) {
   if (req->keys_size() == 0) {
     resp->set_ok(false);
-    resp->set_error("empty");
+    resp->set_error(std::string(openkv::err::kEmpty));
     done(grpc::Status::OK);
     return;
   }
@@ -501,7 +505,7 @@ void GatewayServer::txn_pessimistic_lock_async(const kv::v1::TxnPessimisticLockR
                                                std::function<void(grpc::Status)> done) {
   if (req->keys_size() == 0) {
     resp->set_ok(false);
-    resp->set_error("empty");
+    resp->set_error(std::string(openkv::err::kEmpty));
     done(grpc::Status::OK);
     return;
   }
@@ -702,7 +706,8 @@ void GatewayServer::txn_check_status_async(const kv::v1::TxnCheckStatusRequest* 
                 return;
               }
               if (!out.redirect_to.empty() || !out.error.empty()) {
-                on_rpc(grpc::Status::OK, false, out.error.empty() ? "not_leader" : out.error,
+                on_rpc(grpc::Status::OK, false,
+                       out.error.empty() ? std::string(openkv::err::kNotLeader) : out.error,
                        out.redirect_to);
                 return;
               }

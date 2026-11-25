@@ -20,6 +20,7 @@
 
 #include "openkv/compute/ds_encode.hpp"
 #include "openkv/compute/gateway_server.hpp"
+#include "openkv/errors.hpp"
 
 namespace openkv::compute {
 namespace {
@@ -104,8 +105,11 @@ void GatewayServer::ds_store_async(const std::string& mk, const std::string& blo
               return;
             }
             std::string body = res.error;
-            if (!res.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
-              body += " redirect=" + res.redirect_to;
+            if (!res.redirect_to.empty() &&
+                !openkv::err::has_token(body, openkv::err::kRedirect)) {
+              body.push_back(' ');
+              body.append(openkv::err::kRedirect);
+              body.append(res.redirect_to);
             }
             if (retry_async_write(body, dr->key(), region, false, [this, dr, out, done, attempt] {
                   ds_store_async(dr->key(), "", done, attempt + 1);

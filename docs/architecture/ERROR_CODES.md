@@ -3,6 +3,15 @@
 **状态：** 与实现对齐的目录（字符串 token，**无**统一数值 ErrorCode 枚举）  
 **读者：** 客户端 / Gateway / 运维 / 联调  
 **协议前缀：** `OK …` / `ERR <token> [k=v…]`（见 `common/include/openkv/protocol.hpp`）  
+**代码常量（新增 token 先改头文件再改本页）：**
+
+| 范围 | 头文件 |
+|------|--------|
+| 共用 token / `line()` / `not_leader_redirect()` | `common/include/openkv/errors.hpp` |
+| raftstore 入站 / propose | `raft/include/openkv/raftstore/errors.hpp` |
+| Storage 数据面 / Admin | `storage/include/openkv/storage/errors.hpp` |
+| Meta 管控 / Scaler | `meta/include/openkv/meta/errors.hpp` |
+
 **相关：** [NETWORKING.md](../NETWORKING.md) · [08-not-leader-redirect.md](../flows/08-not-leader-redirect.md) · [DATA_STRUCTURES.md](DATA_STRUCTURES.md) §4
 
 ---
@@ -201,6 +210,12 @@ C++ 遗留 stub：`no_route`、`stub_transport`（`compute/`）。
 | JOIN 失败 | [K8S_SCALE.md](../flows/K8S_SCALE.md) · [DATA_SCALE.md](DATA_SCALE.md) |
 | 集成 | I14 not_leader · I36 splitting · `it-ds-*` wrong_type |
 
-**验收（目录完整性）：** 本文 token 表与 `store_service` / `meta_node` / `exec_line_handler` 主要 `ERR` 出口一致；新增对外错误须同步改本页并注明客户端动作。
+**验收（目录完整性）：** 本文 token 表与 `errors.hpp` 常量及 `store_service` / `meta_node` 主要 `ERR` 出口一致；新增对外错误须先加常量、再改本页并注明客户端动作。
+
+```bash
+# 抽查：业务源里不应再直接写常用 token 字面量（常量定义头除外）
+rg -n '"no_region"|"not_leader"|"propose_failed"' raft/src storage/src meta/src compute/src \
+  --glob '!**/errors.hpp'
+```
 
 登记可选：在 [TEST_CASES.md](../test/TEST_CASES.md) 联调说明中链到本页。

@@ -29,6 +29,7 @@
 #include "meta/v1/meta.pb.h"
 #include "openkv/admin_rpc.hpp"
 #include "openkv/codec.hpp"
+#include "openkv/errors.hpp"
 #include "openkv/grpc_auth.hpp"
 #include "openkv/protocol.hpp"
 
@@ -641,7 +642,7 @@ inline std::string meta_typed_rpc(std::string addr, std::string_view req, std::s
   for (int i = 0; i < 12; ++i) {
     try {
       std::string body = meta_typed_call(addr, req, token, timeout_ms);
-      if (body.find("not_leader") != std::string::npos) {
+      if (openkv::err::has_token(body, openkv::err::kNotLeader)) {
         auto next = admin_follow_redirect_body(body);
         if (!next.empty() && next != addr) {
           addr = std::move(next);
