@@ -26,20 +26,29 @@
 
 namespace openkv::raftstore {
 
+/* 单个 Region 的一批待 apply 日志。 */
 struct RegionApplySlice {
-  uint32_t region_id{0};
-  std::vector<raft::LogEntry> entries;
+  uint32_t region_id{0};                // 哪个 Region
+  std::vector<raft::LogEntry> entries;  // 已提交条目
 };
 
-/// 将多 Region 的 ApplyMsg 展平为有序列表，供引擎合并写。
+/**
+ * 将多 Region 的 Apply 切片展平为 (region_id, entry) 有序列表，供引擎合并写。
+ * @param slices 各 Region 的 Apply 切片
+ * @return 展平后的列表（保持切片内顺序、切片间按输入顺序）
+ */
 inline std::vector<std::pair<uint32_t, raft::LogEntry>> flatten_apply_slices(
     const std::vector<RegionApplySlice>& slices) {
   std::vector<std::pair<uint32_t, raft::LogEntry>> out;
   size_t n = 0;
-  for (const auto& s : slices) n += s.entries.size();
+  for (const auto& s : slices) {
+    n += s.entries.size();
+  }
   out.reserve(n);
   for (const auto& s : slices) {
-    for (const auto& e : s.entries) out.emplace_back(s.region_id, e);
+    for (const auto& e : s.entries) {
+      out.emplace_back(s.region_id, e);
+    }
   }
   return out;
 }

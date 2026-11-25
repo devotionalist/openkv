@@ -26,16 +26,18 @@ namespace {
 constexpr unsigned char kMarker[] = {0x00, 0x01, 'd', 's', 0x00};
 constexpr char kMagic[] = {'S', 'K', 'V', 'D'};
 
-/// 追加 4 字节大端 uint32。
+// 追加 4 字节大端 uint32。
 void put_u32_be(std::string* buf, uint32_t v) {
   const char n[4] = {static_cast<char>((v >> 24) & 0xff), static_cast<char>((v >> 16) & 0xff),
                      static_cast<char>((v >> 8) & 0xff), static_cast<char>(v & 0xff)};
   buf->append(n, 4);
 }
 
-/// 消费 4 字节大端 uint32；不足则 CorruptError。
+// 消费 4 字节大端 uint32；不足则 CorruptError。
 uint32_t get_u32_be(std::string_view& r) {
-  if (r.size() < 4) throw CorruptError();
+  if (r.size() < 4) {
+    throw CorruptError();
+  }
   const uint32_t v = (static_cast<uint32_t>(static_cast<unsigned char>(r[0])) << 24) |
                      (static_cast<uint32_t>(static_cast<unsigned char>(r[1])) << 16) |
                      (static_cast<uint32_t>(static_cast<unsigned char>(r[2])) << 8) |
@@ -44,22 +46,24 @@ uint32_t get_u32_be(std::string_view& r) {
   return v;
 }
 
-/// 长度前缀 + 原始字节写入。
+// 长度前缀 + 原始字节写入。
 void put_bytes(std::string* buf, std::string_view b) {
   put_u32_be(buf, static_cast<uint32_t>(b.size()));
   buf->append(b.data(), b.size());
 }
 
-/// 读长度前缀字节串；超 64MiB 或截断则 CorruptError。
+// 读长度前缀字节串；超 64MiB 或截断则 CorruptError。
 std::string get_bytes(std::string_view& r) {
   const uint32_t ln = get_u32_be(r);
-  if (ln > (64u << 20) || r.size() < ln) throw CorruptError();
+  if (ln > (64u << 20) || r.size() < ln) {
+    throw CorruptError();
+  }
   std::string out(r.substr(0, ln));
   r.remove_prefix(ln);
   return out;
 }
 
-/// SKVD magic + typ + payload 组装完整 blob。
+// SKVD magic + typ + payload 组装完整 blob。
 std::string wrap(char typ, std::string_view payload) {
   std::string out;
   out.reserve(5 + payload.size());
@@ -69,21 +73,27 @@ std::string wrap(char typ, std::string_view payload) {
   return out;
 }
 
-/// 校验 magic，拆出类型字节与 payload 视图。
+// 校验 magic，拆出类型字节与 payload 视图。
 std::pair<char, std::string_view> unwrap(std::string_view blob) {
-  if (blob.size() < 5 || std::memcmp(blob.data(), kMagic, 4) != 0) throw CorruptError();
+  if (blob.size() < 5 || std::memcmp(blob.data(), kMagic, 4) != 0) {
+    throw CorruptError();
+  }
   return {blob[4], blob.substr(5)};
 }
 
-/// 空 blob → 空 payload（与 Go checkType 一致）；非空则校验类型。
+// 空 blob → 空 payload（与 Go checkType 一致）；非空则校验类型。
 std::string_view check_type(std::string_view blob, char want) {
-  if (blob.empty()) return {};
+  if (blob.empty()) {
+    return {};
+  }
   auto [typ, payload] = unwrap(blob);
-  if (typ != want) throw WrongTypeError(typ, want);
+  if (typ != want) {
+    throw WrongTypeError(typ, want);
+  }
   return payload;
 }
 
-/// 追加 IEEE754 double 大端 8 字节。
+// 追加 IEEE754 double 大端 8 字节。
 void put_f64_be(std::string* buf, double v) {
   static_assert(sizeof(double) == 8, "need IEEE754 double");
   uint64_t bits = 0;
@@ -95,9 +105,11 @@ void put_f64_be(std::string* buf, double v) {
   buf->append(n, 8);
 }
 
-/// 消费大端 double；不足 8 字节则 CorruptError。
+// 消费大端 double；不足 8 字节则 CorruptError。
 double get_f64_be(std::string_view& r) {
-  if (r.size() < 8) throw CorruptError();
+  if (r.size() < 8) {
+    throw CorruptError();
+  }
   uint64_t bits = 0;
   for (int i = 0; i < 8; ++i) {
     bits = (bits << 8) | static_cast<unsigned char>(r[i]);
@@ -110,7 +122,7 @@ double get_f64_be(std::string_view& r) {
 
 }  // namespace
 
-/// 用户 key 追加 DS meta marker，得到元数据键。
+// 用户 key 追加 DS meta marker，得到元数据键。
 std::string meta_key(std::string_view ukey) {
   std::string out;
   out.reserve(ukey.size() + sizeof(kMarker));
@@ -119,7 +131,7 @@ std::string meta_key(std::string_view ukey) {
   return out;
 }
 
-/// Hash → count + (field,value)* 再 wrap 为 Hash 类型 blob。
+// Hash → count + (field,value)* 再 wrap 为 Hash 类型 blob。
 std::string encode_hash(const Hash& h) {
   std::string payload;
   put_u32_be(&payload, static_cast<uint32_t>(h.size()));
@@ -130,12 +142,16 @@ std::string encode_hash(const Hash& h) {
   return wrap(kTypeHash, payload);
 }
 
-/// 解 Hash blob；空输入得空表，否则按 count 读字段对。
+// 解 Hash blob；空输入得空表，否则按 count 读字段对。
 Hash decode_hash(std::string_view blob) {
   auto payload = check_type(blob, kTypeHash);
-  if (payload.empty() && blob.empty()) return {};
+  if (payload.empty() && blob.empty()) {
+    return {};
+  }
   Hash h;
-  if (blob.empty()) return h;
+  if (blob.empty()) {
+    return h;
+  }
   const uint32_t cnt = get_u32_be(payload);
   for (uint32_t i = 0; i < cnt; ++i) {
     auto fk = get_bytes(payload);
@@ -145,69 +161,101 @@ Hash decode_hash(std::string_view blob) {
   return h;
 }
 
-/// Set → count + member* 再 wrap。
+// Set → count + member* 再 wrap。
 std::string encode_set(const Set& s) {
   std::string payload;
   put_u32_be(&payload, static_cast<uint32_t>(s.size()));
-  for (const auto& m : s) put_bytes(&payload, m);
+  for (const auto& m : s) {
+    put_bytes(&payload, m);
+  }
   return wrap(kTypeSet, payload);
 }
 
-/// 解 Set blob；空输入得空集。
+// 解 Set blob；空输入得空集。
 Set decode_set(std::string_view blob) {
   auto payload = check_type(blob, kTypeSet);
-  if (blob.empty()) return {};
+  if (blob.empty()) {
+    return {};
+  }
   Set s;
   const uint32_t cnt = get_u32_be(payload);
-  for (uint32_t i = 0; i < cnt; ++i) s.insert(get_bytes(payload));
+  for (uint32_t i = 0; i < cnt; ++i) {
+    s.insert(get_bytes(payload));
+  }
   return s;
 }
 
-/// List → count + elem* 再 wrap。
+// List → count + elem* 再 wrap。
 std::string encode_list(const List& l) {
   std::string payload;
   put_u32_be(&payload, static_cast<uint32_t>(l.size()));
-  for (const auto& v : l) put_bytes(&payload, v);
+  for (const auto& v : l) {
+    put_bytes(&payload, v);
+  }
   return wrap(kTypeList, payload);
 }
 
-/// 解 List blob；空输入得空列表。
+// 解 List blob；空输入得空列表。
 List decode_list(std::string_view blob) {
   auto payload = check_type(blob, kTypeList);
-  if (blob.empty()) return {};
+  if (blob.empty()) {
+    return {};
+  }
   List l;
   const uint32_t cnt = get_u32_be(payload);
   l.reserve(cnt);
-  for (uint32_t i = 0; i < cnt; ++i) l.push_back(get_bytes(payload));
+  for (uint32_t i = 0; i < cnt; ++i) {
+    l.push_back(get_bytes(payload));
+  }
   return l;
 }
 
-/// 负下标相对长度归一到半开 [start,stop)；非法则 nullopt。
+// 负下标相对长度归一到半开 [start,stop)；非法则 nullopt。
 std::optional<std::pair<size_t, size_t>> normalize_range(int64_t n, int64_t start, int64_t stop) {
-  if (n <= 0) return std::nullopt;
-  if (start < 0) start = n + start;
-  if (stop < 0) stop = n + stop;
-  if (start < 0) start = 0;
-  if (stop < 0) return std::nullopt;
-  if (start >= n) return std::nullopt;
-  if (stop >= n) stop = n - 1;
-  if (start > stop) return std::nullopt;
+  if (n <= 0) {
+    return std::nullopt;
+  }
+  if (start < 0) {
+    start = n + start;
+  }
+  if (stop < 0) {
+    stop = n + stop;
+  }
+  if (start < 0) {
+    start = 0;
+  }
+  if (stop < 0) {
+    return std::nullopt;
+  }
+  if (start >= n) {
+    return std::nullopt;
+  }
+  if (stop >= n) {
+    stop = n - 1;
+  }
+  if (start > stop) {
+    return std::nullopt;
+  }
   return std::make_pair(static_cast<size_t>(start), static_cast<size_t>(stop) + 1);
 }
 
-/// ZSet 展成条目并按 score、member 排序。
+// ZSet 展成条目并按 score、member 排序。
 std::vector<ZEntry> z_sorted(const ZSet& z) {
   std::vector<ZEntry> ents;
   ents.reserve(z.size());
-  for (const auto& [m, s] : z) ents.push_back({m, s});
+  for (const auto& [m, s] : z) {
+    ents.push_back({m, s});
+  }
   std::sort(ents.begin(), ents.end(), [](const ZEntry& a, const ZEntry& b) {
-    if (a.score != b.score) return a.score < b.score;
+    if (a.score != b.score) {
+      return a.score < b.score;
+    }
     return a.member < b.member;
   });
   return ents;
 }
 
-/// 排序后写 count+(member,score)*，wrap 为 ZSet blob。
+// 排序后写 count+(member,score)*，wrap 为 ZSet blob。
 std::string encode_zset(const ZSet& z) {
   auto ents = z_sorted(z);
   std::string payload;
@@ -219,10 +267,12 @@ std::string encode_zset(const ZSet& z) {
   return wrap(kTypeZSet, payload);
 }
 
-/// 解 ZSet blob；空输入得空表。
+// 解 ZSet blob；空输入得空表。
 ZSet decode_zset(std::string_view blob) {
   auto payload = check_type(blob, kTypeZSet);
-  if (blob.empty()) return {};
+  if (blob.empty()) {
+    return {};
+  }
   ZSet z;
   const uint32_t cnt = get_u32_be(payload);
   for (uint32_t i = 0; i < cnt; ++i) {

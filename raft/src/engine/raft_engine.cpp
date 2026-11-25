@@ -36,9 +36,13 @@ void put_u64(std::string* out, uint64_t v) {
 }
 
 bool get_u64(const char*& p, const char* end, uint64_t* v) {
-  if (!p || end - p < 8) return false;
+  if (!p || end - p < 8) {
+    return false;
+  }
   uint64_t x = 0;
-  for (int i = 0; i < 8; ++i) x = (x << 8) | static_cast<uint8_t>(p[i]);
+  for (int i = 0; i < 8; ++i) {
+    x = (x << 8) | static_cast<uint8_t>(p[i]);
+  }
   p += 8;
   *v = x;
   return true;
@@ -54,9 +58,13 @@ void put_u32(std::string* out, uint32_t v) {
 }
 
 bool get_u32(const char*& p, const char* end, uint32_t* v) {
-  if (!p || end - p < 4) return false;
+  if (!p || end - p < 4) {
+    return false;
+  }
   uint32_t x = 0;
-  for (int i = 0; i < 4; ++i) x = (x << 8) | static_cast<uint8_t>(p[i]);
+  for (int i = 0; i < 4; ++i) {
+    x = (x << 8) | static_cast<uint8_t>(p[i]);
+  }
   p += 4;
   *v = x;
   return true;
@@ -91,13 +99,21 @@ std::string encode_raft_local_state(const RaftLocalState& st) {
 }
 
 bool decode_raft_local_state(std::string_view raw, RaftLocalState* st) {
-  if (!st || raw.size() < kWireMagicLen + 8 * 7) return false;
-  if (raw.substr(0, kWireMagicLen) != kMagicRls) return false;
+  if (!st || raw.size() < kWireMagicLen + 8 * 7) {
+    return false;
+  }
+  if (raw.substr(0, kWireMagicLen) != kMagicRls) {
+    return false;
+  }
   const char* p = raw.data() + kWireMagicLen;
   const char* end = raw.data() + raw.size();
   uint64_t vote_len = 0;
-  if (!get_u64(p, end, &st->term) || !get_u64(p, end, &vote_len)) return false;
-  if (end - p < static_cast<std::ptrdiff_t>(vote_len)) return false;
+  if (!get_u64(p, end, &st->term) || !get_u64(p, end, &vote_len)) {
+    return false;
+  }
+  if (end - p < static_cast<std::ptrdiff_t>(vote_len)) {
+    return false;
+  }
   st->voted_for.assign(p, vote_len);
   p += vote_len;
   return get_u64(p, end, &st->commit_index) && get_u64(p, end, &st->last_applied) &&
@@ -121,19 +137,27 @@ std::string encode_log_entry(const LogEntry& e) {
 }
 
 bool decode_log_entry(std::string_view raw, LogEntry* e) {
-  if (!e || raw.size() < kWireMagicLen + 24 + 4) return false;
-  if (raw.substr(0, kWireMagicLen) != kMagicRle) return false;
+  if (!e || raw.size() < kWireMagicLen + 24 + 4) {
+    return false;
+  }
+  if (raw.substr(0, kWireMagicLen) != kMagicRle) {
+    return false;
+  }
   const char* p = raw.data() + kWireMagicLen;
   const char* end = raw.data() + raw.size() - 4;  // exclude crc
   uint64_t dlen = 0;
   if (!get_u64(p, end, &e->term) || !get_u64(p, end, &e->index) || !get_u64(p, end, &dlen)) {
     return false;
   }
-  if (end - p < static_cast<std::ptrdiff_t>(dlen)) return false;
+  if (end - p < static_cast<std::ptrdiff_t>(dlen)) {
+    return false;
+  }
   e->data.assign(p, dlen);
   const char* crc_p = raw.data() + raw.size() - 4;
   uint32_t expect = 0;
-  if (!get_u32(crc_p, raw.data() + raw.size(), &expect)) return false;
+  if (!get_u32(crc_p, raw.data() + raw.size(), &expect)) {
+    return false;
+  }
   const size_t body_len = raw.size() - kWireMagicLen - 4;
   const uint32_t got =
       crc32(reinterpret_cast<const uint8_t*>(raw.data() + kWireMagicLen), body_len);
@@ -142,9 +166,13 @@ bool decode_log_entry(std::string_view raw, LogEntry* e) {
 
 bool load_group_from_engine(const RaftEngine& eng, uint64_t raft_group_id, PersistedHardState* hs,
                             std::vector<LogEntry>* entries) {
-  if (!hs || !entries) return false;
+  if (!hs || !entries) {
+    return false;
+  }
   auto st = eng.get_raft_state(raft_group_id);
-  if (!st) return false;
+  if (!st) {
+    return false;
+  }
   *hs = st->to_persisted();
   entries->clear();
   const uint64_t begin = hs->first_index;
@@ -165,9 +193,13 @@ size_t save_group_to_engine(RaftEngine& eng, uint64_t raft_group_id, const Persi
   auto batch = eng.make_log_batch();
   std::vector<LogEntry> ents;
   for (uint64_t i = log.first_index(); i <= log.last_index(); ++i) {
-    if (auto e = log.entry(i)) ents.push_back(*e);
+    if (auto e = log.entry(i)) {
+      ents.push_back(*e);
+    }
   }
-  if (!ents.empty()) batch->append(raft_group_id, std::move(ents));
+  if (!ents.empty()) {
+    batch->append(raft_group_id, std::move(ents));
+  }
   auto st = RaftLocalState::from_persisted(hs, log.last_index());
   batch->put_raft_state(raft_group_id, st);
   return eng.consume(*batch, sync);

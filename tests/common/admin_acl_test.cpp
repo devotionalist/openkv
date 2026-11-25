@@ -69,7 +69,9 @@ TEST(AdminAclTest, MetaHandleLineRequiresAuth) {
   MetaNode srv(boot);
   ASSERT_NO_THROW(srv.start());
   for (int i = 0; i < 40; ++i) {
-    if (srv.is_leader()) break;
+    if (srv.is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_TRUE(srv.is_leader());

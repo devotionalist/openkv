@@ -40,15 +40,15 @@
 namespace openkv::compute {
 namespace {
 
-/// 子串包含判断，用于错误分类（locked / not_leader / splitting 等）。
+// 子串包含判断，用于错误分类（locked / not_leader / splitting 等）。
 bool contains(std::string_view hay, std::string_view needle) {
   return hay.find(needle) != std::string_view::npos;
 }
 
 }  // namespace
 
-/// 判断 Store 错误是否可跳过并换副本重试（连通性 / 超时 / no_region）。
-/// 副本被杀时 TCP 半开常先打出 DeadlineExceeded，必须换人，不能直接打回客户端。
+// 判断 Store 错误是否可跳过并换副本重试（连通性 / 超时 / no_region）。
+// 副本被杀时 TCP 半开常先打出 DeadlineExceeded，必须换人，不能直接打回客户端。
 bool store_skip_err(const std::string& msg) {
   return contains(msg, "no_region") || contains(msg, "connection refused") ||
          contains(msg, "connection reset") || contains(msg, "transport: Error while dialing") ||
@@ -58,11 +58,13 @@ bool store_skip_err(const std::string& msg) {
          contains(msg, "Socket closed");
 }
 
-/// 从错误串解析 `expected=` 后的 epoch；解析失败返回 0。
+// 从错误串解析 `expected=` 后的 epoch；解析失败返回 0。
 uint64_t parse_epoch_expected(const std::string& msg) {
   constexpr std::string_view p = "expected=";
   const auto i = msg.find(p);
-  if (i == std::string::npos) return 0;
+  if (i == std::string::npos) {
+    return 0;
+  }
   size_t j = i + p.size();
   uint64_t out = 0;
   bool any = false;
@@ -74,11 +76,13 @@ uint64_t parse_epoch_expected(const std::string& msg) {
   return any ? out : 0;
 }
 
-/// 从 cas_failed 错误串解析 `current_revision=`。
+// 从 cas_failed 错误串解析 `current_revision=`。
 uint64_t parse_cas_current_rev(const std::string& msg) {
   constexpr std::string_view p = "current_revision=";
   const auto i = msg.find(p);
-  if (i == std::string::npos) return 0;
+  if (i == std::string::npos) {
+    return 0;
+  }
   size_t j = i + p.size();
   uint64_t out = 0;
   while (j < msg.size() && msg[j] >= '0' && msg[j] <= '9') {
@@ -88,9 +92,11 @@ uint64_t parse_cas_current_rev(const std::string& msg) {
   return out;
 }
 
-/// 计算 prefix 扫描上界（末字节 +1）；全 0xff 前缀返回空串。
+// 计算 prefix 扫描上界（末字节 +1）；全 0xff 前缀返回空串。
 std::string prefix_upper_bound(std::string_view prefix) {
-  if (prefix.empty()) return {};
+  if (prefix.empty()) {
+    return {};
+  }
   std::string out(prefix);
   for (int i = static_cast<int>(out.size()) - 1; i >= 0; --i) {
     auto& b = reinterpret_cast<unsigned char&>(out[static_cast<size_t>(i)]);
@@ -103,7 +109,7 @@ std::string prefix_upper_bound(std::string_view prefix) {
   return {};
 }
 
-/// 构造：建 WorkPool、空路由表、记录 storage_addrs（出站走 store_rpc）。
+// 构造：建 WorkPool、空路由表、记录 storage_addrs（出站走 store_rpc）。
 GatewayServer::GatewayServer(std::vector<std::string> storage_addrs,
                              std::vector<std::string> meta_addrs)
     : meta_addrs_(std::move(meta_addrs)),
@@ -113,7 +119,9 @@ GatewayServer::GatewayServer(std::vector<std::string> storage_addrs,
   size_t pool_n = 32;
   if (const char* e = std::getenv("SKV_GATEWAY_WORKERS")) {
     const auto v = std::strtoul(e, nullptr, 10);
-    if (v > 0) pool_n = v;
+    if (v > 0) {
+      pool_n = v;
+    }
   }
   pool_ = std::make_unique<openkv::WorkPool>(pool_n);
 
@@ -127,54 +135,66 @@ GatewayServer::GatewayServer(std::vector<std::string> storage_addrs,
   routes_.update(std::move(boot));
 }
 
-/// 停后台路由线程并关闭 WorkPool。
+// 停后台路由线程并关闭 WorkPool。
 GatewayServer::~GatewayServer() {
   stop_background();
-  if (pool_) pool_->stop();
+  if (pool_) {
+    pool_->stop();
+  }
 }
 
-/// 启动路由 watch 后台线程（幂等）。
+// 启动路由 watch 后台线程（幂等）。
 void GatewayServer::start_background() {
-  if (bg_thread_.joinable()) return;
+  if (bg_thread_.joinable()) {
+    return;
+  }
   bg_stop_ = false;
   bg_thread_ = std::thread([this] { route_watch_loop(); });
 }
 
-/// 置停标志并 join 后台线程。
+// 置停标志并 join 后台线程。
 void GatewayServer::stop_background() {
   bg_stop_ = true;
-  if (bg_thread_.joinable()) bg_thread_.join();
+  if (bg_thread_.joinable()) {
+    bg_thread_.join();
+  }
 }
 
-/// 客户端入站 RPC 计数 +1。
+// 客户端入站 RPC 计数 +1。
 void GatewayServer::note_client_rpc() { client_in_.fetch_add(1, std::memory_order_relaxed); }
-/// Store 出站计数 +1。
+// Store 出站计数 +1。
 void GatewayServer::note_to_store() { to_store_.fetch_add(1, std::memory_order_relaxed); }
-/// Store 出站计数 + 按 peer 分桶。
+// Store 出站计数 + 按 peer 分桶。
 void GatewayServer::note_to_store(const std::string& peer_addr) {
   note_to_store();
-  if (peer_addr.empty()) return;
+  if (peer_addr.empty()) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(peer_mu_);
   to_store_peers_[peer_addr] += 1;
 }
-/// Meta 出站计数 +1。
+// Meta 出站计数 +1。
 void GatewayServer::note_to_meta() { to_meta_.fetch_add(1, std::memory_order_relaxed); }
-/// Meta 出站计数 + 按 peer 分桶。
+// Meta 出站计数 + 按 peer 分桶。
 void GatewayServer::note_to_meta(const std::string& peer_addr) {
   note_to_meta();
-  if (peer_addr.empty()) return;
+  if (peer_addr.empty()) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(peer_mu_);
   to_meta_peers_[peer_addr] += 1;
 }
 
 namespace {
-/// 将 peer→count 映射编码为紧凑 JSON object。
+// 将 peer→count 映射编码为紧凑 JSON object。
 std::string encode_peer_json(const std::unordered_map<std::string, uint64_t>& m) {
   std::ostringstream oss;
   oss << '{';
   bool first = true;
   for (const auto& [k, v] : m) {
-    if (!first) oss << ',';
+    if (!first) {
+      oss << ',';
+    }
     first = false;
     oss << '"' << k << "\":" << v;
   }
@@ -183,7 +203,7 @@ std::string encode_peer_json(const std::unordered_map<std::string, uint64_t>& m)
 }
 }  // namespace
 
-/// 汇总 client/to_store/to_meta 及分 peer 计数为 JSON。
+// 汇总 client/to_store/to_meta 及分 peer 计数为 JSON。
 std::string GatewayServer::stats_json() const {
   const uint64_t client = client_in_.load(std::memory_order_relaxed);
   const uint64_t to_store = to_store_.load(std::memory_order_relaxed);
@@ -203,38 +223,48 @@ std::string GatewayServer::stats_json() const {
   return oss.str();
 }
 
-/// 按路由表计算 key 所属 region。
+// 按路由表计算 key 所属 region。
 uint32_t GatewayServer::region_of(std::string_view key) const { return routes_.shard_of(key); }
 
-/// 读取 region 当前 epoch。
+// 读取 region 当前 epoch。
 uint64_t GatewayServer::epoch_of(uint32_t region) const { return routes_.epoch(region); }
 
-/// 生成尝试顺序：leader hint → 路由副本 → boot storage_addrs（去重）。
+// 生成尝试顺序：leader hint → 路由副本 → boot storage_addrs（去重）。
 std::vector<std::string> GatewayServer::try_order(uint32_t region) {
   std::string hint;
   {
     std::lock_guard<std::mutex> lock(mu_);
     auto it = leader_hint_.find(region);
-    if (it != leader_hint_.end()) hint = it->second;
+    if (it != leader_hint_.end()) {
+      hint = it->second;
+    }
   }
   std::vector<std::string> out;
   out.reserve(storage_addrs_.size() + 4);
   std::unordered_set<std::string> seen;
   auto add = [&](const std::string& addr) {
-    if (addr.empty() || !seen.insert(addr).second) return;
+    if (addr.empty() || !seen.insert(addr).second) {
+      return;
+    }
     out.push_back(addr);
   };
   add(hint);
-  for (const auto& addr : routes_.replica_addrs(region)) add(addr);
-  for (const auto& addr : storage_addrs_) add(addr);
+  for (const auto& addr : routes_.replica_addrs(region)) {
+    add(addr);
+  }
+  for (const auto& addr : storage_addrs_) {
+    add(addr);
+  }
   return out;
 }
 
-/// 按 try_order 挑下一地址，跳过本轮已失败的副本。
+// 按 try_order 挑下一地址，跳过本轮已失败的副本。
 std::optional<std::string> GatewayServer::pick_leader_addr(
     uint32_t region, const std::unordered_set<std::string>& skip) {
   for (const auto& addr : try_order(region)) {
-    if (!skip.count(addr)) return addr;
+    if (!skip.count(addr)) {
+      return addr;
+    }
   }
   return std::nullopt;
 }
@@ -245,12 +275,16 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
                    std::make_shared<std::unordered_set<std::string>>());
 }
 
-/// CQ 安全 Store 调用：传输失败换副本；not_leader/redirect/splitting/epoch 回调内重试（≤4）。
+// CQ 安全 Store 调用：传输失败换副本；not_leader/redirect/splitting/epoch 回调内重试（≤4）。
 void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpcFn make_call,
                                      StoreAsyncDoneFn on_done,
                                      std::shared_ptr<std::unordered_set<std::string>> skipped) {
-  if (!make_call || !on_done) return;
-  if (!skipped) skipped = std::make_shared<std::unordered_set<std::string>>();
+  if (!make_call || !on_done) {
+    return;
+  }
+  if (!skipped) {
+    skipped = std::make_shared<std::unordered_set<std::string>>();
+  }
   if (attempt >= 4) {
     on_done(grpc::Status(grpc::StatusCode::ABORTED, "store: retries_exhausted"), false,
             "retries_exhausted", "", "");
@@ -274,7 +308,9 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
       if (transport_fail && attempt + 1 < 4) {
         clear_leader_hint(region);
         skipped->insert(addr);
-        if (attempt == 0) refresh_routes();
+        if (attempt == 0) {
+          refresh_routes();
+        }
         with_store_async(region, attempt + 1, make_call, on_done, skipped);
         return;
       }
@@ -307,25 +343,29 @@ void GatewayServer::with_store_async(uint32_t region, int attempt, StoreAsyncRpc
       with_store_async(region, attempt + 1, make_call, on_done, skipped);
       return;
     }
-    if (ok) remember_leader(region, addr);
+    if (ok) {
+      remember_leader(region, addr);
+    }
     on_done(sst, ok, std::move(error), std::move(redirect_to), addr);
   });
 }
 
-/// 缓存 region 的 leader 地址 hint。
+// 缓存 region 的 leader 地址 hint。
 void GatewayServer::remember_leader(uint32_t region, const std::string& addr) {
-  if (addr.empty()) return;
+  if (addr.empty()) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(mu_);
   leader_hint_[region] = addr;
 }
 
-/// 清除 region 的 leader hint（换副本重试前常用）。
+// 清除 region 的 leader hint（换副本重试前常用）。
 void GatewayServer::clear_leader_hint(uint32_t region) {
   std::lock_guard<std::mutex> lock(mu_);
   leader_hint_.erase(region);
 }
 
-/// 从 Meta 拉取路由并 update；随后 best-effort sync_epochs_async。
+// 从 Meta 拉取路由并 update；随后 best-effort sync_epochs_async。
 void GatewayServer::refresh_routes() {
   try {
     note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
@@ -347,14 +387,20 @@ void GatewayServer::sync_epochs_async(const RoutingTable& t) {
   };
   std::vector<Job> jobs;
   for (const auto& [id, reg] : t.regions) {
-    if (reg.epoch == 0) continue;
+    if (reg.epoch == 0) {
+      continue;
+    }
     std::unordered_set<std::string> seen;
     for (const auto& rep : reg.replicas) {
-      if (rep.address.empty() || !seen.insert(rep.address).second) continue;
+      if (rep.address.empty() || !seen.insert(rep.address).second) {
+        continue;
+      }
       jobs.push_back({rep.address, id, reg.epoch});
     }
   }
-  if (jobs.empty()) return;
+  if (jobs.empty()) {
+    return;
+  }
   std::thread([this, jobs = std::move(jobs)]() {
     for (const auto& j : jobs) {
       try {
@@ -367,7 +413,7 @@ void GatewayServer::sync_epochs_async(const RoutingTable& t) {
   }).detach();
 }
 
-/// 后台循环：watch/fetch 路由、同步 epoch、上报 min start_ts。
+// 后台循环：watch/fetch 路由、同步 epoch、上报 min start_ts。
 void GatewayServer::route_watch_loop() {
   uint64_t since = 0;
   while (!bg_stop_.load(std::memory_order_relaxed)) {
@@ -404,7 +450,7 @@ void GatewayServer::route_watch_loop() {
   }
 }
 
-/// 异步申请 start/commit_ts（alloc_async(2)），失败走 on_err，成功回调 cont。
+// 异步申请 start/commit_ts（alloc_async(2)），失败走 on_err，成功回调 cont。
 void GatewayServer::with_start_commit_ts(std::function<void(grpc::Status)> on_err,
                                          std::function<void(uint64_t, uint64_t)> cont) {
   note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
@@ -412,7 +458,9 @@ void GatewayServer::with_start_commit_ts(std::function<void(grpc::Status)> on_er
   ts_.alloc_async(
       2, [on_err = std::move(on_err), cont = std::move(cont)](grpc::Status st, uint64_t start) {
         if (!st.ok()) {
-          if (on_err) on_err(st);
+          if (on_err) {
+            on_err(st);
+          }
           return;
         }
         cont(start, start + 1);
@@ -429,13 +477,19 @@ bool GatewayServer::retry_async_write(std::string_view body, const std::string& 
   const bool splitting = contains(body, "splitting");
   const bool epoch_mismatch = contains(body, "epoch_not_match");
   const bool write_conflict = retry_write_conflict && contains(body, "write_conflict");
-  if (!not_leader && !locked && !splitting && !epoch_mismatch && !write_conflict) return false;
+  if (!not_leader && !locked && !splitting && !epoch_mismatch && !write_conflict) {
+    return false;
+  }
   if (not_leader) {
     const auto redir = parse_redirect(body);
-    if (!redir.empty()) remember_leader(region, redir);
+    if (!redir.empty()) {
+      remember_leader(region, redir);
+    }
     clear_leader_hint(region);
   }
-  if (splitting || epoch_mismatch) refresh_routes();
+  if (splitting || epoch_mismatch) {
+    refresh_routes();
+  }
   if (locked) {
     resolve_blocking_lock_async(key, parse_locked_error(std::string(body)),
                                 [retry](grpc::Status) { retry(); });
@@ -445,7 +499,7 @@ bool GatewayServer::retry_async_write(std::string_view body, const std::string& 
   return true;
 }
 
-/// Put 异步入口：把 reactor->Finish 包成 done，转 put_async_cb。
+// Put 异步入口：把 reactor->Finish 包成 done，转 put_async_cb。
 void GatewayServer::put_async(const kv::v1::PutRequest* req, kv::v1::PutResponse* resp,
                               grpc::ServerUnaryReactor* reactor, int attempt) {
   put_async_cb(req, resp, attempt, [reactor](grpc::Status st) { reactor->Finish(st); });
@@ -542,7 +596,7 @@ void GatewayServer::put_async_cb(const kv::v1::PutRequest* req, kv::v1::PutRespo
   });
 }
 
-/// 事务平面 Delete 异步：alloc_async → ONEPC(op=delete)；可重试错误经 retry_async_write 续跑。
+// 事务平面 Delete 异步：alloc_async → ONEPC(op=delete)；可重试错误经 retry_async_write 续跑。
 void GatewayServer::delete_async(const kv::v1::DeleteRequest* req, kv::v1::DeleteResponse* resp,
                                  grpc::ServerUnaryReactor* reactor, int attempt) {
   if (attempt >= 4) {
@@ -613,14 +667,14 @@ void GatewayServer::delete_async(const kv::v1::DeleteRequest* req, kv::v1::Delet
       });
 }
 
-/// Get 异步入口：reactor->Finish 转 get_async_cb。
+// Get 异步入口：reactor->Finish 转 get_async_cb。
 void GatewayServer::get_async(const kv::v1::GetRequest* req, kv::v1::GetResponse* resp,
                               grpc::ServerUnaryReactor* reactor, int attempt) {
   get_async_cb(req, resp, attempt, [reactor](grpc::Status st) { reactor->Finish(st); });
 }
 
-/// 事务平面 Get 异步：stale → store_get_async(linearizable=false)；线性 alloc_async + Get。
-/// 传输失败走 with_store_async 换副本（杀 Leader 后不能粘死旧地址）。
+// 事务平面 Get 异步：stale → store_get_async(linearizable=false)；线性 alloc_async + Get。
+// 传输失败走 with_store_async 换副本（杀 Leader 后不能粘死旧地址）。
 void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetResponse* resp,
                                  int attempt, std::function<void(grpc::Status)> done) {
   if (attempt >= 4) {
@@ -685,7 +739,9 @@ void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetRespo
           }
           resp->set_found(got->found);
           resp->set_revision(got->revision);
-          if (got->found) resp->set_value(std::move(got->value));
+          if (got->found) {
+            resp->set_value(std::move(got->value));
+          }
           done(grpc::Status::OK);
         });
   };
@@ -703,7 +759,7 @@ void GatewayServer::get_async_cb(const kv::v1::GetRequest* req, kv::v1::GetRespo
   });
 }
 
-/// gRPC Get 入口：记计数后启动 get_async。
+// gRPC Get 入口：记计数后启动 get_async。
 grpc::ServerUnaryReactor* GatewayServer::Get(grpc::CallbackServerContext* ctx,
                                              const kv::v1::GetRequest* req,
                                              kv::v1::GetResponse* resp) {
@@ -713,7 +769,7 @@ grpc::ServerUnaryReactor* GatewayServer::Get(grpc::CallbackServerContext* ctx,
   return reactor;
 }
 
-/// gRPC Put 入口：记计数后启动 put_async。
+// gRPC Put 入口：记计数后启动 put_async。
 grpc::ServerUnaryReactor* GatewayServer::Put(grpc::CallbackServerContext* ctx,
                                              const kv::v1::PutRequest* req,
                                              kv::v1::PutResponse* resp) {
@@ -723,7 +779,7 @@ grpc::ServerUnaryReactor* GatewayServer::Put(grpc::CallbackServerContext* ctx,
   return reactor;
 }
 
-/// gRPC Delete 入口：记计数后启动 delete_async。
+// gRPC Delete 入口：记计数后启动 delete_async。
 grpc::ServerUnaryReactor* GatewayServer::Delete(grpc::CallbackServerContext* ctx,
                                                 const kv::v1::DeleteRequest* req,
                                                 kv::v1::DeleteResponse* resp) {
@@ -735,7 +791,7 @@ grpc::ServerUnaryReactor* GatewayServer::Delete(grpc::CallbackServerContext* ctx
 
 namespace {
 
-/// 拼 ProposePlain 错误体，必要时附加 redirect=。
+// 拼 ProposePlain 错误体，必要时附加 redirect=。
 std::string propose_err_body(const ProposePlainResult& out) {
   std::string body = out.error;
   if (!out.redirect_to.empty() && body.find("redirect=") == std::string::npos) {
@@ -744,19 +800,19 @@ std::string propose_err_body(const ProposePlainResult& out) {
   return body;
 }
 
-/// 判断 Plain Propose 是否 CAS 失败（字段或错误串）。
+// 判断 Plain Propose 是否 CAS 失败（字段或错误串）。
 bool propose_cas_failed(const ProposePlainResult& out) {
   return out.cas_failed || contains(out.error, "cas_failed");
 }
 
-/// 取 CAS 当前 revision（优先结果字段，否则解析错误串）。
+// 取 CAS 当前 revision（优先结果字段，否则解析错误串）。
 uint64_t propose_cas_current_rev(const ProposePlainResult& out) {
   return out.current_revision != 0 ? out.current_revision : parse_cas_current_rev(out.error);
 }
 
 }  // namespace
 
-/// Raw 平面 Put 异步：store_propose_plain_async，无时间戳；可重试错误回调续跑（≤4）。
+// Raw 平面 Put 异步：store_propose_plain_async，无时间戳；可重试错误回调续跑（≤4）。
 void GatewayServer::raw_put_async(const kv::v1::RawPutRequest* req, kv::v1::RawPutResponse* resp,
                                   grpc::ServerUnaryReactor* reactor, int attempt) {
   if (attempt >= 4) {
@@ -812,7 +868,7 @@ void GatewayServer::raw_put_async(const kv::v1::RawPutRequest* req, kv::v1::RawP
       });
 }
 
-/// Raw 平面 Delete 异步：Plain Propose is_delete；流程同 raw_put_async。
+// Raw 平面 Delete 异步：Plain Propose is_delete；流程同 raw_put_async。
 void GatewayServer::raw_delete_async(const kv::v1::RawDeleteRequest* req,
                                      kv::v1::RawDeleteResponse* resp,
                                      grpc::ServerUnaryReactor* reactor, int attempt) {
@@ -867,7 +923,7 @@ void GatewayServer::raw_delete_async(const kv::v1::RawDeleteRequest* req,
       });
 }
 
-/// Raw 平面 Get 异步：store_get_async(start_ts=0)；传输失败/redirect 换副本重试。
+// Raw 平面 Get 异步：store_get_async(start_ts=0)；传输失败/redirect 换副本重试。
 void GatewayServer::raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawGetResponse* resp,
                                   grpc::ServerUnaryReactor* reactor, int attempt) {
   if (attempt >= 4) {
@@ -909,13 +965,15 @@ void GatewayServer::raw_get_async(const kv::v1::RawGetRequest* req, kv::v1::RawG
           return;
         }
         resp->set_found(got->found);
-        if (got->found) resp->set_value(std::move(got->value));
+        if (got->found) {
+          resp->set_value(std::move(got->value));
+        }
         resp->set_revision(got->revision);
         reactor->Finish(grpc::Status::OK);
       });
 }
 
-/// gRPC RawGet 入口。
+// gRPC RawGet 入口。
 grpc::ServerUnaryReactor* GatewayServer::RawGet(grpc::CallbackServerContext* ctx,
                                                 const kv::v1::RawGetRequest* req,
                                                 kv::v1::RawGetResponse* resp) {
@@ -925,7 +983,7 @@ grpc::ServerUnaryReactor* GatewayServer::RawGet(grpc::CallbackServerContext* ctx
   return reactor;
 }
 
-/// gRPC RawPut 入口。
+// gRPC RawPut 入口。
 grpc::ServerUnaryReactor* GatewayServer::RawPut(grpc::CallbackServerContext* ctx,
                                                 const kv::v1::RawPutRequest* req,
                                                 kv::v1::RawPutResponse* resp) {
@@ -935,7 +993,7 @@ grpc::ServerUnaryReactor* GatewayServer::RawPut(grpc::CallbackServerContext* ctx
   return reactor;
 }
 
-/// gRPC RawDelete 入口。
+// gRPC RawDelete 入口。
 grpc::ServerUnaryReactor* GatewayServer::RawDelete(grpc::CallbackServerContext* ctx,
                                                    const kv::v1::RawDeleteRequest* req,
                                                    kv::v1::RawDeleteResponse* resp) {
@@ -945,7 +1003,7 @@ grpc::ServerUnaryReactor* GatewayServer::RawDelete(grpc::CallbackServerContext* 
   return reactor;
 }
 
-/// 异步批量 Put：共享 State + pump，≤16 并行 put_async_cb，全部完成后按序 Finish。
+// 异步批量 Put：共享 State + pump，≤16 并行 put_async_cb，全部完成后按序 Finish。
 void GatewayServer::batch_put_async(const kv::v1::BatchPutRequest* req,
                                     kv::v1::BatchPutResponse* resp,
                                     grpc::ServerUnaryReactor* reactor) {
@@ -987,8 +1045,12 @@ void GatewayServer::batch_put_async(const kv::v1::BatchPutRequest* req,
     grpc::Status fail = grpc::Status::OK;
     {
       std::lock_guard<std::mutex> lock(st->mu);
-      if (st->finished) return;
-      if (st->done < static_cast<int>(st->outs.size())) return;
+      if (st->finished) {
+        return;
+      }
+      if (st->done < static_cast<int>(st->outs.size())) {
+        return;
+      }
       st->finished = true;
       for (size_t i = 0; i < st->statuses.size(); ++i) {
         if (!st->statuses[i].ok()) {
@@ -1007,7 +1069,9 @@ void GatewayServer::batch_put_async(const kv::v1::BatchPutRequest* req,
       int i = -1;
       {
         std::lock_guard<std::mutex> lock(st->mu);
-        if (st->finished) return;
+        if (st->finished) {
+          return;
+        }
         if (st->next >= static_cast<int>(st->outs.size()) || st->inflight >= kMaxParallel) {
           return;
         }
@@ -1031,7 +1095,7 @@ void GatewayServer::batch_put_async(const kv::v1::BatchPutRequest* req,
   (*pump)();
 }
 
-/// 异步批量 Get：同 batch_put_async 的 pump 模型，子请求走 get_async_cb。
+// 异步批量 Get：同 batch_put_async 的 pump 模型，子请求走 get_async_cb。
 void GatewayServer::batch_get_async(const kv::v1::BatchGetRequest* req,
                                     kv::v1::BatchGetResponse* resp,
                                     grpc::ServerUnaryReactor* reactor) {
@@ -1071,8 +1135,12 @@ void GatewayServer::batch_get_async(const kv::v1::BatchGetRequest* req,
     grpc::Status fail = grpc::Status::OK;
     {
       std::lock_guard<std::mutex> lock(st->mu);
-      if (st->finished) return;
-      if (st->done < static_cast<int>(st->outs.size())) return;
+      if (st->finished) {
+        return;
+      }
+      if (st->done < static_cast<int>(st->outs.size())) {
+        return;
+      }
       st->finished = true;
       for (size_t i = 0; i < st->statuses.size(); ++i) {
         if (!st->statuses[i].ok()) {
@@ -1091,7 +1159,9 @@ void GatewayServer::batch_get_async(const kv::v1::BatchGetRequest* req,
       int i = -1;
       {
         std::lock_guard<std::mutex> lock(st->mu);
-        if (st->finished) return;
+        if (st->finished) {
+          return;
+        }
         if (st->next >= static_cast<int>(st->outs.size()) || st->inflight >= kMaxParallel) {
           return;
         }
@@ -1115,7 +1185,7 @@ void GatewayServer::batch_get_async(const kv::v1::BatchGetRequest* req,
   (*pump)();
 }
 
-/// gRPC BatchGet 入口 → batch_get_async。
+// gRPC BatchGet 入口 → batch_get_async。
 grpc::ServerUnaryReactor* GatewayServer::BatchGet(grpc::CallbackServerContext* ctx,
                                                   const kv::v1::BatchGetRequest* req,
                                                   kv::v1::BatchGetResponse* resp) {
@@ -1125,7 +1195,7 @@ grpc::ServerUnaryReactor* GatewayServer::BatchGet(grpc::CallbackServerContext* c
   return reactor;
 }
 
-/// gRPC BatchPut 入口 → batch_put_async。
+// gRPC BatchPut 入口 → batch_put_async。
 grpc::ServerUnaryReactor* GatewayServer::BatchPut(grpc::CallbackServerContext* ctx,
                                                   const kv::v1::BatchPutRequest* req,
                                                   kv::v1::BatchPutResponse* resp) {

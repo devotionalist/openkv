@@ -64,7 +64,9 @@ TEST(StoreAdminRaftTest, EpochPersistsAcrossRestart) {
     StorageNode node(cfg);
     node.start();
     for (int i = 0; i < 80; ++i) {
-      if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
+      if (auto* g = node.multi_raft().get(0); g && g->is_leader()) {
+        break;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     ASSERT_TRUE(node.multi_raft().get(0)->is_leader());
@@ -88,7 +90,9 @@ TEST(StoreAdminRaftTest, EpochPersistsAcrossRestart) {
     StorageNode node(cfg);
     node.start();
     for (int i = 0; i < 80; ++i) {
-      if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
+      if (auto* g = node.multi_raft().get(0); g && g->is_leader()) {
+        break;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     EXPECT_EQ(node.region_epoch(0), 42u);
@@ -115,7 +119,9 @@ TEST(StoreAdminRaftTest, TxnGetLinearizableSmoke) {
   StoreFacade facade(node);
   node.start();
   for (int i = 0; i < 80; ++i) {
-    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
+    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   auto r = facade.txn_get(0, "k", 100, /*linearizable=*/true);
@@ -139,7 +145,9 @@ TEST(StoreAdminRaftTest, ApplyConflictVisibleToClient) {
   StoreFacade facade(node);
   node.start();
   for (int i = 0; i < 80; ++i) {
-    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
+    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_TRUE(node.multi_raft().get(0)->is_leader());
@@ -183,7 +191,9 @@ TEST(StoreAdminRaftTest, SplitSeedsRightWithLeftPeers) {
   StoreFacade facade(node);
   node.start();
   for (int i = 0; i < 80; ++i) {
-    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
+    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_TRUE(node.multi_raft().get(0)->is_leader());

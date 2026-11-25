@@ -27,8 +27,12 @@
 namespace openkv::raft {
 
 bool LinearRead::lease_valid_locked() const {
-  if (!n_.opts_.enable_lease_read || n_.opts_.leader_lease_ms == 0) return false;
-  if (n_.role_ != Role::kLeader) return false;
+  if (!n_.opts_.enable_lease_read || n_.opts_.leader_lease_ms == 0) {
+    return false;
+  }
+  if (n_.role_ != Role::kLeader) {
+    return false;
+  }
   return std::chrono::steady_clock::now() < lease_expire_;
 }
 
@@ -38,7 +42,9 @@ void LinearRead::renew_lease_locked() {
 }
 
 void LinearRead::note_read_index_ack(const std::string& peer_id) {
-  if (pending_read_gen_ == 0) return;
+  if (pending_read_gen_ == 0) {
+    return;
+  }
   read_index_acks_.insert(peer_id);
   read_index_acks_.insert(n_.opts_.self_id);
   if (read_index_acks_.size() >= n_.membership_.majority()) {
@@ -48,13 +54,19 @@ void LinearRead::note_read_index_ack(const std::string& peer_id) {
 }
 
 bool LinearRead::read_index(uint64_t* read_commit, uint32_t timeout_ms) {
-  if (!read_commit) return false;
+  if (!read_commit) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(n_.mu_);
-    if (n_.role_ != Role::kLeader) return false;
+    if (n_.role_ != Role::kLeader) {
+      return false;
+    }
     *read_commit = n_.commit_index_;
     // 单节点或租约仍有效：本地 commit 即可线性读。
-    if (n_.membership_.majority() <= 1 || lease_valid_locked()) return true;
+    if (n_.membership_.majority() <= 1 || lease_valid_locked()) {
+      return true;
+    }
     pending_read_commit_ = n_.commit_index_;
     pending_read_gen_ = ++read_index_gen_;
     read_index_acks_.clear();
@@ -72,7 +84,9 @@ bool LinearRead::read_index(uint64_t* read_commit, uint32_t timeout_ms) {
         return false;
       }
     }
-    if (n_.role_ != Role::kLeader) return false;
+    if (n_.role_ != Role::kLeader) {
+      return false;
+    }
     *read_commit = pending_read_commit_;
     renew_lease_locked();
   }

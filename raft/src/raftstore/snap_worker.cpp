@@ -25,20 +25,28 @@ namespace openkv::raftstore {
 
 SnapWorker::SnapWorker(Options opts, Provider provider, Sender sender)
     : opts_(opts), provider_(std::move(provider)), sender_(std::move(sender)) {
-  if (opts_.queue_capacity == 0) opts_.queue_capacity = 64;
+  if (opts_.queue_capacity == 0) {
+    opts_.queue_capacity = 64;
+  }
 }
 
 SnapWorker::~SnapWorker() { stop(); }
 
 void SnapWorker::start() {
-  if (running_.exchange(true)) return;
+  if (running_.exchange(true)) {
+    return;
+  }
   th_ = std::thread([this] { loop(); });
 }
 
 void SnapWorker::stop() {
-  if (!running_.exchange(false)) return;
+  if (!running_.exchange(false)) {
+    return;
+  }
   cv_.notify_all();
-  if (th_.joinable()) th_.join();
+  if (th_.joinable()) {
+    th_.join();
+  }
 }
 
 void SnapWorker::requeue_locked(SnapTask task) {
@@ -58,9 +66,13 @@ bool SnapWorker::enqueue(SnapTask task) {
     for (auto& existing : q_) {
       if (existing.region_id == task.region_id) {
         existing.meta = std::move(task.meta);
-        if (!task.data.empty()) existing.data = std::move(task.data);
+        if (!task.data.empty()) {
+          existing.data = std::move(task.data);
+        }
         // 合并后保留较小 attempt，避免已接近上限的任务被顶掉后立刻耗尽
-        if (task.attempt < existing.attempt) existing.attempt = task.attempt;
+        if (task.attempt < existing.attempt) {
+          existing.attempt = task.attempt;
+        }
         ++stats_.coalesced;
         ++stats_.enqueued;
         cv_.notify_one();
@@ -95,8 +107,12 @@ void SnapWorker::loop() {
     {
       std::unique_lock<std::mutex> lk(mu_);
       cv_.wait_for(lk, std::chrono::milliseconds(50), [&] { return !q_.empty() || !running_; });
-      if (!running_ && q_.empty()) break;
-      if (q_.empty()) continue;
+      if (!running_ && q_.empty()) {
+        break;
+      }
+      if (q_.empty()) {
+        continue;
+      }
       task = std::move(q_.front());
       q_.pop_front();
     }
@@ -104,7 +120,9 @@ void SnapWorker::loop() {
       if (task.data.empty() && provider_) {
         task.data = provider_(task.region_id, &task.meta);
       }
-      if (sender_) sender_(task.region_id, task.meta, task.data);
+      if (sender_) {
+        sender_(task.region_id, task.meta, task.data);
+      }
       {
         std::lock_guard<std::mutex> lk(mu_);
         ++stats_.sent;

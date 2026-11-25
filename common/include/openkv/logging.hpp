@@ -22,20 +22,47 @@
 
 namespace openkv {
 
-enum class LogLevel { kDebug, kInfo, kWarn, kError };
+/* 日志级别；由 set_log_level 过滤低于阈值的条目。 */
+enum class LogLevel {
+  kDebug,  // 调试细节
+  kInfo,   // 常规运行信息
+  kWarn,   // 可恢复异常 / 降级
+  kError,  // 失败路径
+};
 
+/**
+ * 设置进程级最低输出级别。
+ * @param level 新阈值
+ */
 void set_log_level(LogLevel level);
+/**
+ * 当前最低输出级别。
+ * @return 当前阈值
+ */
 LogLevel log_level();
 
-/// 确保默认 logger 已初始化（幂等；进程入口可显式调用）。
+/**
+ * 确保默认 logger 已初始化（幂等；进程入口可显式调用）。
+ */
 void init_logging();
 
-/// RAII：流式拼接，析构时写入 spdlog。
+/* RAII：流式拼接，析构时写入 spdlog。 */
 class LogMessage {
  public:
+  /**
+   * 构造一条待输出日志；通常经 SKV_* 宏传入 __FILE__/__LINE__。
+   * @param level 本条级别
+   * @param file 源文件
+   * @param line 源行号
+   */
   LogMessage(LogLevel level, const char* file, int line);
   ~LogMessage();
 
+  /**
+   * 追加一段可流式输出的值。
+   * @param v 任意支持 operator<< 的值
+   * @return *this，便于链式
+   */
   template <typename T>
   LogMessage& operator<<(const T& v) {
     ss_ << v;
@@ -43,10 +70,10 @@ class LogMessage {
   }
 
  private:
-  LogLevel level_;
-  const char* file_;
-  int line_;
-  std::ostringstream ss_;
+  LogLevel level_;         // 本条级别
+  const char* file_;       // 源文件
+  int line_;               // 源行号
+  std::ostringstream ss_;  // 拼接缓冲
 };
 
 }  // namespace openkv

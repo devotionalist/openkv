@@ -28,22 +28,24 @@
 
 namespace openkv::raft {
 
-// 必须落盘的协议元状态（重启靠它恢复选举/提交水位）。
-// 与 SoftState 不同：SoftState 可丢、仅观测；HardState 丢了会乱投票或丢 commit。
+/*
+ * 必须落盘的协议元状态（重启靠它恢复选举/提交水位）。
+ * 与 SoftState 不同：SoftState 可丢、仅观测；HardState 丢了会乱投票或丢 commit。
+ */
 struct HardState {
-  uint64_t term{0};    ///< 当前任期
-  std::string vote;    ///< 本任期投票对象（voted_for）
-  uint64_t commit{0};  ///< 已提交最大 index（commit_index）
+  uint64_t term{0};    // 当前任期
+  std::string vote;    // 本任期投票对象（voted_for）
+  uint64_t commit{0};  // 已提交最大 index（commit_index）
 };
 
-// 待发送的 Raft RPC（由外层 Transport 发出）。
+/* 待发送的 Raft RPC（由外层 Transport 发出）。 */
 struct Message {
-  std::string to;
-  std::string type;  // AppendEntries / RequestVote / RequestPreVote / InstallSnapshot
-  std::string payload;
+  std::string to;       // 目标 peer id
+  std::string type;     // AppendEntries / RequestVote / RequestPreVote / InstallSnapshot
+  std::string payload;  // 已序列化请求体
 };
 
-// 快照元数据；blob 由外层 SnapshotProvider 填充后发送。
+/* 快照元数据；blob 由外层 SnapshotProvider 填充后发送。 */
 struct SnapshotMeta {
   uint64_t index{0};       // 快照索引
   uint64_t term{0};        // 快照任期
@@ -52,7 +54,7 @@ struct SnapshotMeta {
                            // compact窗口吞掉 ConfChange 后 Learner 从新 Leader 成员表消失。
 };
 
-// 一轮协议输出：外层（Store）须按序 persist → 发网 → apply → advance。
+/* 一轮协议输出：外层（Store）须按序 persist → 发网 → apply → advance。 */
 struct Ready {
   std::optional<HardState> hard_state;      // 若有：本批需落盘的 HardState
   std::vector<LogEntry> entries;            // 需追加到 WAL 的新日志（unstable，可尚未 commit）。

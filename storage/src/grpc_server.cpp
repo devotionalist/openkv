@@ -42,10 +42,14 @@ namespace {
 
 std::string extract_redirect(std::string_view s) {
   auto p = s.find("redirect=");
-  if (p == std::string_view::npos) return {};
+  if (p == std::string_view::npos) {
+    return {};
+  }
   auto rest = s.substr(p + 9);
   auto sp = rest.find_first_of(" \t\r\n");
-  if (sp != std::string_view::npos) rest = rest.substr(0, sp);
+  if (sp != std::string_view::npos) {
+    rest = rest.substr(0, sp);
+  }
   return std::string(rest);
 }
 
@@ -102,7 +106,9 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
         resp->set_lock_primary(r.blocking_lock.primary);
         resp->set_lock_ts(r.blocking_lock.start_ts);
       }
-      if (!r.error.empty()) resp->set_error(r.error);
+      if (!r.error.empty()) {
+        resp->set_error(r.error);
+      }
     }
     reactor->Finish(Status::OK);
     return reactor;
@@ -170,7 +176,9 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
     resp->set_next_key(r.next_key);
     resp->set_is_leader(r.is_leader);
     resp->set_redirect_to(r.redirect_to);
-    if (!r.error.empty()) resp->set_error(r.error);
+    if (!r.error.empty()) {
+      resp->set_error(r.error);
+    }
     for (const auto& p : r.pairs) {
       auto* out = resp->add_pairs();
       out->set_key(p.key);
@@ -193,7 +201,9 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
       resp->set_lock_primary(r.blocking_lock.primary);
       resp->set_lock_ts(r.blocking_lock.start_ts);
     }
-    if (!r.error.empty()) resp->set_error(r.error);
+    if (!r.error.empty()) {
+      resp->set_error(r.error);
+    }
     reactor->Finish(Status::OK);
     return reactor;
   }
@@ -206,12 +216,14 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
     resp->set_is_leader(r.is_leader);
     resp->set_redirect_to(r.redirect_to);
     resp->set_commit_ts(r.commit_ts);
-    if (!r.error.empty()) resp->set_error(r.error);
+    if (!r.error.empty()) {
+      resp->set_error(r.error);
+    }
     // locked|expired|committed|rolledback
     const char* st = "rolledback";
-    if (r.status == TxnStatus::kLocked)
+    if (r.status == TxnStatus::kLocked) {
       st = r.lock_expired ? "expired" : "locked";
-    else if (r.status == TxnStatus::kCommitted)
+    } else if (r.status == TxnStatus::kCommitted)
       st = "committed";
     resp->set_status(st);
     reactor->Finish(Status::OK);
@@ -253,7 +265,9 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
     }
     uint64_t max_rev = since;
     for (const auto& e : evs) {
-      if (e.revision > max_rev) max_rev = e.revision;
+      if (e.revision > max_rev) {
+        max_rev = e.revision;
+      }
       auto* out = resp->add_events();
       out->set_key(e.key);
       out->set_value(e.value);
@@ -290,7 +304,9 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
 void parse_vote_line(std::string_view line, pb::RequestVoteResponse* resp) {
   resp->set_vote_granted(false);
   resp->set_term(0);
-  if (!proto::starts_with_ok(line)) return;
+  if (!proto::starts_with_ok(line)) {
+    return;
+  }
   std::istringstream iss{std::string(line)};
   std::string ok, tag;
   uint64_t term = 0;
@@ -330,7 +346,9 @@ void fill_install_snapshot_resp(std::string_view line, uint64_t term, uint64_t l
   } else {
     resp->set_ok(proto::starts_with_ok(line));
     resp->set_term(term);
-    if (resp->ok()) resp->set_match_index(last_idx);
+    if (resp->ok()) {
+      resp->set_match_index(last_idx);
+    }
   }
 }
 
@@ -447,7 +465,7 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
     return Status::OK;
   }
 
-  /// Auth → run body → Finish(OK)。失败时已 Finish，调用方直接 return reactor。
+  // Auth → run body → Finish(OK)。失败时已 Finish，调用方直接 return reactor。
   template <typename Fn>
   ServerUnaryReactor* with_auth(CallbackServerContext* ctx, Fn&& fn) {
     auto* reactor = ctx->DefaultReactor();
@@ -610,12 +628,15 @@ class AdminServiceImpl final : public pb::AdminService::CallbackService {
     resp->set_client(snap.client);
     resp->set_qdepth(snap.qdepth);
     resp->set_qdrop(snap.qdrop);
-    for (const auto& kv : snap.peer_raft_out)
+    for (const auto& kv : snap.peer_raft_out) {
       (*resp->mutable_peer_raft_out())[kv.first] = kv.second;
-    for (const auto& kv : snap.peer_sync_out)
+    }
+    for (const auto& kv : snap.peer_sync_out) {
       (*resp->mutable_peer_sync_out())[kv.first] = kv.second;
-    for (const auto& kv : snap.meta_out_peers)
+    }
+    for (const auto& kv : snap.meta_out_peers) {
       (*resp->mutable_meta_out_peers())[kv.first] = kv.second;
+    }
     reactor->Finish(Status::OK);
     return reactor;
   }
@@ -643,7 +664,9 @@ StorageGrpcServer::StorageGrpcServer(StoreFacade& facade, std::string listen_add
 StorageGrpcServer::~StorageGrpcServer() { stop(); }
 
 void StorageGrpcServer::start() {
-  if (running_.exchange(true)) return;
+  if (running_.exchange(true)) {
+    return;
+  }
   // Store/Admin/Raft 均为 CallbackService：热路径 Finish@apply / reactor，无 WorkPool。
   impl_->store = std::make_unique<StoreServiceImpl>(facade_, admin_token_);
   impl_->raft = std::make_unique<RaftServiceImpl>(facade_.node());
@@ -666,7 +689,9 @@ void StorageGrpcServer::start() {
 }
 
 void StorageGrpcServer::stop() {
-  if (!running_.exchange(false)) return;
+  if (!running_.exchange(false)) {
+    return;
+  }
   // 先拒新 RPC 并排空在途（apply 回调仍可 Finish）；再拆 service。
   if (impl_ && impl_->server) {
     openkv::graceful_grpc_shutdown(impl_->server);

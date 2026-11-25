@@ -91,12 +91,16 @@ TEST(RaftEngineTest, EntryCrcRoundTrip) {
 TEST(RaftEngineTest, RejectLegacyRlg1AndRle1) {
   // 旧 RLG1 容器、无 CRC 的 RLE1 条目均不再解码
   std::string legacy_rlg = "RLG1";
-  for (int i = 0; i < 8; ++i) legacy_rlg.push_back('\0');
+  for (int i = 0; i < 8; ++i) {
+    legacy_rlg.push_back('\0');
+  }
   std::vector<LogEntry> out;
   EXPECT_FALSE(openkv::raft::log_file::decode_container(legacy_rlg, &out));
 
   std::string legacy_rle = "RLE1";
-  for (int i = 0; i < 24; ++i) legacy_rle.push_back('\0');  // term/index/len=0
+  for (int i = 0; i < 24; ++i) {
+    legacy_rle.push_back('\0');
+  }
   LogEntry e;
   EXPECT_FALSE(openkv::raft::decode_log_entry(legacy_rle, &e));
   EXPECT_EQ(openkv::raft::log_file::entry_record_size(legacy_rle, 0), 0u);

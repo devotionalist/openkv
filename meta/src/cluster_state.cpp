@@ -69,7 +69,9 @@ void ClusterState::bootstrap_range(uint32_t replica_factor,
   for (size_t i = 0; i < storage_nodes.size(); ++i) {
     auto n = storage_nodes[i];
     n.state = (i < replica_factor_) ? NodeState::kActive : NodeState::kJoining;
-    if (n.state == NodeState::kJoining) ++joining;
+    if (n.state == NodeState::kJoining) {
+      ++joining;
+    }
     n.last_heartbeat_ms = now_ms();
     nodes_[n.node_id] = n;
   }
@@ -123,9 +125,13 @@ std::string ClusterState::register_node(NodeInfo node) {
             break;
           }
         }
-        if (holds_replica) break;
+        if (holds_replica) {
+          break;
+        }
       }
-      if (holds_replica) it->second.state = NodeState::kActive;
+      if (holds_replica) {
+        it->second.state = NodeState::kActive;
+      }
     }
     // Tombstone / Draining：拒绝因 REGISTER 复活（须 ACTIVATE / 清 tomb 后重建）
     if (it->second.state == NodeState::kTombstone || it->second.state == NodeState::kDraining) {
@@ -146,7 +152,9 @@ std::string ClusterState::register_node(NodeInfo node) {
 bool ClusterState::touch_lease(const std::string& node_id) {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = nodes_.find(node_id);
-  if (it == nodes_.end()) return false;
+  if (it == nodes_.end()) {
+    return false;
+  }
   it->second.last_heartbeat_ms = now_ms();
   if (it->second.state == NodeState::kTombstone || it->second.state == NodeState::kDraining ||
       it->second.state == NodeState::kJoining) {
@@ -162,13 +170,17 @@ bool ClusterState::touch_lease(const std::string& node_id) {
 bool ClusterState::heartbeat_changes_leaders(const std::string& node_id,
                                              const std::vector<uint32_t>& leader_regions) const {
   std::lock_guard<std::mutex> lock(mu_);
-  if (nodes_.find(node_id) == nodes_.end()) return false;
+  if (nodes_.find(node_id) == nodes_.end()) {
+    return false;
+  }
   const std::unordered_set<uint32_t> want(leader_regions.begin(), leader_regions.end());
   for (const auto& region : route_.regions) {
     for (const auto& rep : region.replicas) {
       if (rep.node_id == node_id) {
         const bool should = want.count(region.region_id) > 0;
-        if (rep.is_leader != should) return true;
+        if (rep.is_leader != should) {
+          return true;
+        }
       } else if (want.count(region.region_id) > 0 && rep.is_leader) {
         return true;
       }
@@ -182,7 +194,9 @@ bool ClusterState::heartbeat(const std::string& node_id,
                              const std::vector<uint32_t>& leader_regions) {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = nodes_.find(node_id);
-  if (it == nodes_.end()) return false;
+  if (it == nodes_.end()) {
+    return false;
+  }
   it->second.last_heartbeat_ms = now_ms();
   if (it->second.state == NodeState::kTombstone) {
     return true;  // tomb 节点心跳忽略升 Active
@@ -218,19 +232,27 @@ bool ClusterState::heartbeat(const std::string& node_id,
 }
 
 std::vector<std::string> ClusterState::list_stale_storage(int64_t ttl_ms) const {
-  if (ttl_ms <= 0) ttl_ms = 10000;
+  if (ttl_ms <= 0) {
+    ttl_ms = 10000;
+  }
   std::lock_guard<std::mutex> lock(mu_);
   const int64_t now = now_ms();
   std::vector<std::string> out;
   for (const auto& [id, node] : nodes_) {
-    if (node.role != NodeRole::kStorage) continue;
+    if (node.role != NodeRole::kStorage) {
+      continue;
+    }
     // Joining=待加入：不标 Offline（否则心跳/续租会误升 Active，JOIN 报 not_pending）
     if (node.state == NodeState::kOffline || node.state == NodeState::kDraining ||
         node.state == NodeState::kTombstone || node.state == NodeState::kJoining) {
       continue;
     }
-    if (node.last_heartbeat_ms <= 0) continue;
-    if (now - node.last_heartbeat_ms <= ttl_ms) continue;
+    if (node.last_heartbeat_ms <= 0) {
+      continue;
+    }
+    if (now - node.last_heartbeat_ms <= ttl_ms) {
+      continue;
+    }
     out.push_back(id);
   }
   return out;
@@ -240,14 +262,20 @@ std::vector<std::string> ClusterState::list_stale_storage(int64_t ttl_ms) const 
 bool ClusterState::set_node_state(const std::string& node_id, NodeState state) {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = nodes_.find(node_id);
-  if (it == nodes_.end()) return false;
-  if (it->second.state == state) return true;
+  if (it == nodes_.end()) {
+    return false;
+  }
+  if (it->second.state == state) {
+    return true;
+  }
   it->second.state = state;
   if (state == NodeState::kDraining || state == NodeState::kOffline ||
       state == NodeState::kTombstone) {
     for (auto& region : route_.regions) {
       for (auto& rep : region.replicas) {
-        if (rep.node_id == node_id) rep.is_leader = false;
+        if (rep.node_id == node_id) {
+          rep.is_leader = false;
+        }
       }
     }
   }
@@ -279,7 +307,9 @@ size_t ClusterState::leader_count_on(const std::string& node_id) const {
   size_t n = 0;
   for (const auto& region : route_.regions) {
     for (const auto& r : region.replicas) {
-      if (r.node_id == node_id && r.is_leader) ++n;
+      if (r.node_id == node_id && r.is_leader) {
+        ++n;
+      }
     }
   }
   return n;
@@ -289,18 +319,28 @@ std::vector<std::string> ClusterState::list_empty_draining() const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<std::string> out;
   for (const auto& [id, node] : nodes_) {
-    if (node.role != NodeRole::kStorage) continue;
-    if (node.state != NodeState::kDraining) continue;
+    if (node.role != NodeRole::kStorage) {
+      continue;
+    }
+    if (node.state != NodeState::kDraining) {
+      continue;
+    }
     size_t regions = 0, leaders = 0;
     for (const auto& region : route_.regions) {
       for (const auto& r : region.replicas) {
-        if (r.node_id != id) continue;
+        if (r.node_id != id) {
+          continue;
+        }
         ++regions;
-        if (r.is_leader) ++leaders;
+        if (r.is_leader) {
+          ++leaders;
+        }
         break;
       }
     }
-    if (regions == 0 && leaders == 0) out.push_back(id);
+    if (regions == 0 && leaders == 0) {
+      out.push_back(id);
+    }
   }
   return out;
 }
@@ -308,12 +348,18 @@ std::vector<std::string> ClusterState::list_empty_draining() const {
 bool ClusterState::erase_tombstone(const std::string& node_id) {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = nodes_.find(node_id);
-  if (it == nodes_.end()) return false;
+  if (it == nodes_.end()) {
+    return false;
+  }
   // 踢出：禁止仍 Active；须已下线（Tombstone / Draining / Offline / Joining）且路由无副本
-  if (it->second.state == NodeState::kActive) return false;
+  if (it->second.state == NodeState::kActive) {
+    return false;
+  }
   for (const auto& region : route_.regions) {
     for (const auto& r : region.replicas) {
-      if (r.node_id == node_id) return false;
+      if (r.node_id == node_id) {
+        return false;
+      }
     }
   }
   nodes_.erase(it);
@@ -326,7 +372,9 @@ bool ClusterState::erase_tombstone(const std::string& node_id) {
 // S2：按 task_id 覆盖写入 migrates_（随 serialize 落快照）。
 void ClusterState::upsert_migrate(PersistMigrate task) {
   std::lock_guard<std::mutex> lock(mu_);
-  if (task.task_id.empty()) return;
+  if (task.task_id.empty()) {
+    return;
+  }
   migrates_[task.task_id] = std::move(task);
 }
 
@@ -339,28 +387,40 @@ std::vector<PersistMigrate> ClusterState::list_migrates() const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<PersistMigrate> out;
   out.reserve(migrates_.size());
-  for (const auto& [_, t] : migrates_) out.push_back(t);
+  for (const auto& [_, t] : migrates_) {
+    out.push_back(t);
+  }
   return out;
 }
 
 // H2：超时未心跳 → Offline，并清 Leader；返回新下线个数。
 size_t ClusterState::sweep_stale(int64_t ttl_ms) {
-  if (ttl_ms <= 0) ttl_ms = 10000;
+  if (ttl_ms <= 0) {
+    ttl_ms = 10000;
+  }
   std::lock_guard<std::mutex> lock(mu_);
   const int64_t now = now_ms();
   size_t n = 0;
   for (auto& [id, node] : nodes_) {
-    if (node.role != NodeRole::kStorage) continue;
+    if (node.role != NodeRole::kStorage) {
+      continue;
+    }
     if (node.state == NodeState::kOffline || node.state == NodeState::kDraining ||
         node.state == NodeState::kTombstone || node.state == NodeState::kJoining) {
       continue;
     }
-    if (node.last_heartbeat_ms <= 0) continue;
-    if (now - node.last_heartbeat_ms <= ttl_ms) continue;
+    if (node.last_heartbeat_ms <= 0) {
+      continue;
+    }
+    if (now - node.last_heartbeat_ms <= ttl_ms) {
+      continue;
+    }
     node.state = NodeState::kOffline;
     for (auto& region : route_.regions) {
       for (auto& rep : region.replicas) {
-        if (rep.node_id == id) rep.is_leader = false;
+        if (rep.node_id == id) {
+          rep.is_leader = false;
+        }
       }
     }
     ++n;
@@ -383,14 +443,18 @@ std::vector<NodeInfo> ClusterState::list_nodes(std::optional<NodeRole> role) con
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<NodeInfo> out;
   for (const auto& [_, n] : nodes_) {
-    if (!role || *role == n.role) out.push_back(n);
+    if (!role || *role == n.role) {
+      out.push_back(n);
+    }
   }
   return out;
 }
 
 RegionInfo* ClusterState::mutable_region(openkv::RegionId id) {
   for (auto& r : route_.regions) {
-    if (r.region_id == id) return &r;
+    if (r.region_id == id) {
+      return &r;
+    }
   }
   return nullptr;
 }
@@ -399,9 +463,13 @@ RegionInfo* ClusterState::mutable_region(openkv::RegionId id) {
 bool ClusterState::set_learner(uint32_t region_id, const Replica& learner) {
   std::lock_guard<std::mutex> lock(mu_);
   auto* region = mutable_region(region_id);
-  if (!region) return false;
+  if (!region) {
+    return false;
+  }
   for (const auto& r : region->replicas) {
-    if (r.node_id == learner.node_id) return true;
+    if (r.node_id == learner.node_id) {
+      return true;
+    }
   }
   Replica l = learner;
   l.is_learner = true;
@@ -416,7 +484,9 @@ bool ClusterState::set_learner(uint32_t region_id, const Replica& learner) {
 bool ClusterState::promote_learner(uint32_t region_id, const std::string& node_id) {
   std::lock_guard<std::mutex> lock(mu_);
   auto* region = mutable_region(region_id);
-  if (!region) return false;
+  if (!region) {
+    return false;
+  }
   for (auto& r : region->replicas) {
     if (r.node_id == node_id) {
       r.is_learner = false;
@@ -431,7 +501,9 @@ bool ClusterState::promote_learner(uint32_t region_id, const std::string& node_i
 bool ClusterState::remove_replica(uint32_t region_id, const std::string& node_id) {
   std::lock_guard<std::mutex> lock(mu_);
   auto* region = mutable_region(region_id);
-  if (!region) return false;
+  if (!region) {
+    return false;
+  }
   auto& reps = region->replicas;
   const auto before = reps.size();
   reps.erase(std::remove_if(reps.begin(), reps.end(),
@@ -449,13 +521,19 @@ bool ClusterState::remove_replica(uint32_t region_id, const std::string& node_id
 bool ClusterState::place_replicas(uint32_t region_id, std::vector<Replica> replicas) {
   std::lock_guard<std::mutex> lock(mu_);
   auto* region = mutable_region(region_id);
-  if (!region) return false;
-  if (replicas.empty()) return false;
+  if (!region) {
+    return false;
+  }
+  if (replicas.empty()) {
+    return false;
+  }
   // 保留仍在目标集内的原 Leader；若 Leader 被摘掉则用新集首副本占位 *L（心跳会纠正）。
   // 禁止在「Leader 仍在集内」时强行改成 replicas[0]（会显示错节点）。
   std::string keep_leader;
   for (const auto& old : region->replicas) {
-    if (!old.is_leader) continue;
+    if (!old.is_leader) {
+      continue;
+    }
     for (const auto& n : replicas) {
       if (n.node_id == old.node_id) {
         keep_leader = old.node_id;
@@ -468,8 +546,12 @@ bool ClusterState::place_replicas(uint32_t region_id, std::vector<Replica> repli
   }
   for (auto& r : replicas) {
     auto it = nodes_.find(r.node_id);
-    if (it == nodes_.end()) return false;
-    if (r.address.empty()) r.address = it->second.address;
+    if (it == nodes_.end()) {
+      return false;
+    }
+    if (r.address.empty()) {
+      r.address = it->second.address;
+    }
     r.is_leader = (r.node_id == keep_leader);
     r.is_learner = false;
   }
@@ -491,8 +573,12 @@ std::optional<openkv::RegionId> ClusterState::split_region(
     openkv::RegionId region_id, std::string split_key, const std::vector<std::string>& peer_ids) {
   std::lock_guard<std::mutex> lock(mu_);
   auto* left = mutable_region(region_id);
-  if (!left) return std::nullopt;
-  if (!left->range.can_split_at(split_key)) return std::nullopt;
+  if (!left) {
+    return std::nullopt;
+  }
+  if (!left->range.can_split_at(split_key)) {
+    return std::nullopt;
+  }
 
   RegionInfo right;
   right.region_id = next_region_id_++;
@@ -503,7 +589,9 @@ std::optional<openkv::RegionId> ClusterState::split_region(
   } else {
     for (const auto& id : peer_ids) {
       auto it = nodes_.find(id);
-      if (it == nodes_.end()) return std::nullopt;
+      if (it == nodes_.end()) {
+        return std::nullopt;
+      }
       Replica rep;
       rep.node_id = id;
       rep.address = it->second.address;
@@ -532,12 +620,18 @@ std::optional<openkv::RegionId> ClusterState::split_region(
 // 要求相邻；删除 right，扩展 left.end，副本沿用 left。
 bool ClusterState::merge_regions(openkv::RegionId left_id, openkv::RegionId right_id) {
   std::lock_guard<std::mutex> lock(mu_);
-  if (left_id == right_id) return false;
+  if (left_id == right_id) {
+    return false;
+  }
   RegionInfo* left = mutable_region(left_id);
   RegionInfo* right = mutable_region(right_id);
-  if (!left || !right) return false;
+  if (!left || !right) {
+    return false;
+  }
   // 相邻：left.end == right.start（都为空仅当全空间单 region，不可自合并）
-  if (left->range.end_key != right->range.start_key) return false;
+  if (left->range.end_key != right->range.start_key) {
+    return false;
+  }
 
   left->range.end_key = right->range.end_key;
   ++left->epoch;
@@ -554,14 +648,18 @@ bool ClusterState::merge_regions(openkv::RegionId left_id, openkv::RegionId righ
 std::optional<NodeInfo> ClusterState::get_node(const std::string& id) const {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = nodes_.find(id);
-  if (it == nodes_.end()) return std::nullopt;
+  if (it == nodes_.end()) {
+    return std::nullopt;
+  }
   return it->second;
 }
 
 std::optional<RegionInfo> ClusterState::find_region(openkv::RegionId id) const {
   std::lock_guard<std::mutex> lock(mu_);
   for (const auto& r : route_.regions) {
-    if (r.region_id == id) return r;
+    if (r.region_id == id) {
+      return r;
+    }
   }
   return std::nullopt;
 }
@@ -584,19 +682,27 @@ std::vector<std::string> ClusterState::suggest_placement(
   std::unordered_map<std::string, int> load;
   std::unordered_map<std::string, std::string> addrs;
   for (const auto& [id, n] : nodes_) {
-    if (n.role != NodeRole::kStorage) continue;
+    if (n.role != NodeRole::kStorage) {
+      continue;
+    }
     // 仅 Active 可调度；Joining=待加入，不参与放置
-    if (n.state != NodeState::kActive) continue;
+    if (n.state != NodeState::kActive) {
+      continue;
+    }
     load[id] = 0;
     addrs[id] = n.address;
   }
   for (const auto& region : route_.regions) {
     for (const auto& r : region.replicas) {
-      if (load.count(r.node_id)) ++load[r.node_id];
+      if (load.count(r.node_id)) {
+        ++load[r.node_id];
+      }
     }
   }
   for (const auto& a : avoid) {
-    if (load.count(a)) load[a] += 1000;  // 强降权，优先换一批 Store
+    if (load.count(a)) {
+      load[a] += 1000;
+    }
   }
   std::vector<std::pair<int, std::string>> ranked;
   ranked.reserve(load.size());
@@ -621,46 +727,73 @@ std::vector<std::string> ClusterState::suggest_replace_away(
       break;
     }
   }
-  if (!region) return {};
+  if (!region) {
+    return {};
+  }
 
   std::unordered_set<std::string> avoid_set(avoid.begin(), avoid.end());
   std::vector<std::string> desired;
   for (const auto& rep : region->replicas) {
-    if (rep.is_learner) continue;
-    if (avoid_set.count(rep.node_id)) continue;
+    if (rep.is_learner) {
+      continue;
+    }
+    if (avoid_set.count(rep.node_id)) {
+      continue;
+    }
     auto nit = nodes_.find(rep.node_id);
-    if (nit == nodes_.end() || nit->second.role != NodeRole::kStorage) continue;
-    if (nit->second.state != NodeState::kActive) continue;
+    if (nit == nodes_.end() || nit->second.role != NodeRole::kStorage) {
+      continue;
+    }
+    if (nit->second.state != NodeState::kActive) {
+      continue;
+    }
     desired.push_back(rep.node_id);
   }
 
   // 补齐到 RF：优先轻载且不在 desired / avoid（仅 Active）
   std::unordered_map<std::string, int> load;
   for (const auto& [id, n] : nodes_) {
-    if (n.role != NodeRole::kStorage) continue;
-    if (n.state != NodeState::kActive) continue;
+    if (n.role != NodeRole::kStorage) {
+      continue;
+    }
+    if (n.state != NodeState::kActive) {
+      continue;
+    }
     load[id] = 0;
   }
   for (const auto& reg : route_.regions) {
     for (const auto& r : reg.replicas) {
-      if (load.count(r.node_id)) ++load[r.node_id];
+      if (load.count(r.node_id)) {
+        ++load[r.node_id];
+      }
     }
   }
   std::vector<std::pair<int, std::string>> ranked;
   for (const auto& [id, c] : load) {
     bool skip = avoid_set.count(id) > 0;
-    for (const auto& d : desired)
-      if (d == id) skip = true;
-    if (skip) continue;
+    for (const auto& d : desired) {
+      if (d == id) {
+        skip = true;
+      }
+    }
+    if (skip) {
+      continue;
+    }
     ranked.push_back({c, id});
   }
   std::sort(ranked.begin(), ranked.end());
   for (const auto& [_, id] : ranked) {
-    if (desired.size() >= replica_factor_) break;
+    if (desired.size() >= replica_factor_) {
+      break;
+    }
     desired.push_back(id);
   }
-  if (desired.size() < replica_factor_) return {};
-  if (desired.size() > replica_factor_) desired.resize(replica_factor_);
+  if (desired.size() < replica_factor_) {
+    return {};
+  }
+  if (desired.size() > replica_factor_) {
+    desired.resize(replica_factor_);
+  }
   return desired;
 }
 
@@ -670,16 +803,24 @@ std::optional<std::pair<uint32_t, std::vector<std::string>>> ClusterState::sugge
   std::unordered_map<std::string, int> load;
   std::vector<std::string> active;
   for (const auto& [id, n] : nodes_) {
-    if (n.role != NodeRole::kStorage) continue;
-    if (n.state != NodeState::kActive) continue;
+    if (n.role != NodeRole::kStorage) {
+      continue;
+    }
+    if (n.state != NodeState::kActive) {
+      continue;
+    }
     load[id] = 0;
     active.push_back(id);
   }
-  if (active.size() <= replica_factor_) return std::nullopt;
+  if (active.size() <= replica_factor_) {
+    return std::nullopt;
+  }
 
   for (const auto& reg : route_.regions) {
     for (const auto& r : reg.replicas) {
-      if (load.count(r.node_id)) ++load[r.node_id];
+      if (load.count(r.node_id)) {
+        ++load[r.node_id];
+      }
     }
   }
   std::string heavy, light;
@@ -704,20 +845,32 @@ std::optional<std::pair<uint32_t, std::vector<std::string>>> ClusterState::sugge
     bool on_light = false;
     std::vector<std::string> voters;
     for (const auto& r : reg.replicas) {
-      if (r.is_learner) continue;
+      if (r.is_learner) {
+        continue;
+      }
       voters.push_back(r.node_id);
-      if (r.node_id == heavy) on_heavy = true;
-      if (r.node_id == light) on_light = true;
+      if (r.node_id == heavy) {
+        on_heavy = true;
+      }
+      if (r.node_id == light) {
+        on_light = true;
+      }
     }
-    if (!on_heavy || on_light) continue;
+    if (!on_heavy || on_light) {
+      continue;
+    }
     // desired = voters - heavy + light
     std::vector<std::string> desired;
     for (const auto& id : voters) {
-      if (id == heavy) continue;
+      if (id == heavy) {
+        continue;
+      }
       desired.push_back(id);
     }
     desired.push_back(light);
-    if (desired.size() != replica_factor_) continue;
+    if (desired.size() != replica_factor_) {
+      continue;
+    }
     return std::make_pair(reg.region_id, desired);
   }
   return std::nullopt;
@@ -732,9 +885,13 @@ std::optional<openkv::RegionId> ClusterState::adjacent_right(openkv::RegionId le
       break;
     }
   }
-  if (!left) return std::nullopt;
+  if (!left) {
+    return std::nullopt;
+  }
   for (const auto& r : route_.regions) {
-    if (r.region_id == left_id) continue;
+    if (r.region_id == left_id) {
+      continue;
+    }
     if (left->range.end_key == r.range.start_key && !left->range.end_key.empty()) {
       return r.region_id;
     }
@@ -750,15 +907,21 @@ uint32_t ClusterState::replica_factor() const {
 // 返回 [start, start+count)；next_ts_ 前进 count。
 uint64_t ClusterState::alloc_ts(uint32_t count) {
   std::lock_guard<std::mutex> lock(mu_);
-  if (count == 0) count = 1;
-  if (count > 10000) count = 10000;  // T1：单次批上限，防误配打爆
+  if (count == 0) {
+    count = 1;
+  }
+  if (count > 10000) {
+    count = 10000;
+  }
   // Meta 硬重启丢快照时 next_ts_ 可能回退到 1，而 Storage MVCC 仍留有更高
   // commit_ts → 全面 write_conflict。用墙钟 ms 作下界（只升不降）。
   const uint64_t wall =
       static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::system_clock::now().time_since_epoch())
                                 .count());
-  if (next_ts_ < wall) next_ts_ = wall;
+  if (next_ts_ < wall) {
+    next_ts_ = wall;
+  }
   const uint64_t start = next_ts_;
   next_ts_ += count;
   return start;
@@ -781,7 +944,9 @@ void ClusterState::report_min_start_ts(uint64_t min_start_ts, const std::string&
   min_start_reporters_[key] = min_start_ts;
   uint64_t agg = std::numeric_limits<uint64_t>::max();
   for (const auto& [_, v] : min_start_reporters_) {
-    if (v < agg) agg = v;
+    if (v < agg) {
+      agg = v;
+    }
   }
   min_start_ts_hint_ = agg;
 }
@@ -794,7 +959,9 @@ uint64_t ClusterState::min_start_ts_hint() const {
 // safe = min(next_ts - retain, min_start_hint)；只升不降。
 uint64_t ClusterState::advance_gc_safe_ts(uint64_t retain_ts) {
   std::lock_guard<std::mutex> lock(mu_);
-  if (retain_ts == 0) retain_ts = gc_retain_ts_;
+  if (retain_ts == 0) {
+    retain_ts = gc_retain_ts_;
+  }
   // candidate：落后于 TSO 的水位，保证「很旧」的快照才被 GC
   uint64_t candidate = 0;
   if (next_ts_ > retain_ts) {
@@ -854,7 +1021,9 @@ std::string ClusterState::serialize() const {
   for (const auto& [_, m] : migrates_) {
     oss << '|' << m.task_id << '|' << m.region_id << '|' << m.state << '|'
         << m.desired_peers.size();
-    for (const auto& p : m.desired_peers) oss << '|' << p;
+    for (const auto& p : m.desired_peers) {
+      oss << '|' << p;
+    }
   }
   return oss.str();
 }
@@ -868,7 +1037,9 @@ bool ClusterState::load_snapshot(std::string_view data) {
   }
   auto parts = split_pipe(data);
   // MSK1 rf next_region next_ts gc_safe min_start gc_retain route_ver n_nodes ...
-  if (parts.size() < 9) return false;
+  if (parts.size() < 9) {
+    return false;
+  }
   try {
     size_t i = 1;
     uint32_t rf = static_cast<uint32_t>(std::stoul(parts[i++]));
@@ -882,7 +1053,9 @@ bool ClusterState::load_snapshot(std::string_view data) {
 
     std::unordered_map<std::string, NodeInfo> nodes;
     for (size_t n = 0; n < n_nodes; ++n) {
-      if (i + 5 > parts.size()) return false;
+      if (i + 5 > parts.size()) {
+        return false;
+      }
       NodeInfo info;
       info.node_id = parts[i++];
       info.role = static_cast<NodeRole>(std::stoi(parts[i++]));
@@ -891,20 +1064,30 @@ bool ClusterState::load_snapshot(std::string_view data) {
       info.last_heartbeat_ms = std::stoll(parts[i++]);
       nodes[info.node_id] = std::move(info);
     }
-    if (i >= parts.size()) return false;
+    if (i >= parts.size()) {
+      return false;
+    }
     size_t n_regions = static_cast<size_t>(std::stoull(parts[i++]));
     std::vector<RegionInfo> regions;
     regions.reserve(n_regions);
     for (size_t r = 0; r < n_regions; ++r) {
-      if (i + 5 > parts.size()) return false;
+      if (i + 5 > parts.size()) {
+        return false;
+      }
       RegionInfo info;
       info.region_id = static_cast<RegionId>(std::stoul(parts[i++]));
-      if (!from_hex(parts[i++], &info.range.start_key)) return false;
-      if (!from_hex(parts[i++], &info.range.end_key)) return false;
+      if (!from_hex(parts[i++], &info.range.start_key)) {
+        return false;
+      }
+      if (!from_hex(parts[i++], &info.range.end_key)) {
+        return false;
+      }
       info.epoch = std::stoull(parts[i++]);
       size_t nrep = static_cast<size_t>(std::stoull(parts[i++]));
       for (size_t k = 0; k < nrep; ++k) {
-        if (i + 4 > parts.size()) return false;
+        if (i + 4 > parts.size()) {
+          return false;
+        }
         Replica rep;
         rep.node_id = parts[i++];
         rep.address = parts[i++];
@@ -919,14 +1102,18 @@ bool ClusterState::load_snapshot(std::string_view data) {
     if (i < parts.size()) {
       size_t n_mig = static_cast<size_t>(std::stoull(parts[i++]));
       for (size_t m = 0; m < n_mig; ++m) {
-        if (i + 4 > parts.size()) return false;
+        if (i + 4 > parts.size()) {
+          return false;
+        }
         PersistMigrate pm;
         pm.task_id = parts[i++];
         pm.region_id = static_cast<uint32_t>(std::stoul(parts[i++]));
         pm.state = std::stoi(parts[i++]);
         size_t np = static_cast<size_t>(std::stoull(parts[i++]));
         for (size_t p = 0; p < np; ++p) {
-          if (i >= parts.size()) return false;
+          if (i >= parts.size()) {
+            return false;
+          }
           pm.desired_peers.push_back(parts[i++]);
         }
         migrates[pm.task_id] = std::move(pm);

@@ -25,7 +25,9 @@ namespace {
 
 void fire_cbs(std::vector<IndexWaiter::CompleteCb>& cbs, const IndexWaiter::WaitOutcome& out) {
   for (auto& cb : cbs) {
-    if (cb) cb(out);
+    if (cb) {
+      cb(out);
+    }
   }
 }
 
@@ -39,11 +41,15 @@ IndexWaiter::~IndexWaiter() {
     std::lock_guard<std::mutex> lock(mu_);
     timeout_cv_.notify_all();
   }
-  if (timeout_thread_.joinable()) timeout_thread_.join();
+  if (timeout_thread_.joinable()) {
+    timeout_thread_.join();
+  }
 }
 
 void IndexWaiter::prune_locked(uint64_t newest_index) {
-  if (slots_.size() <= 4096) return;
+  if (slots_.size() <= 4096) {
+    return;
+  }
   for (auto it = slots_.begin(); it != slots_.end() && slots_.size() > 2048;) {
     if (slot_idle(it->second) && it->first + 1024 < newest_index) {
       it = slots_.erase(it);
@@ -62,7 +68,9 @@ std::vector<IndexWaiter::CompleteCb> IndexWaiter::take_async_cbs_locked(Slot& sl
 }
 
 void IndexWaiter::ensure_timeout_thread_locked() {
-  if (timeout_thread_started_) return;
+  if (timeout_thread_started_) {
+    return;
+  }
   timeout_thread_started_ = true;
   timeout_thread_ = std::thread([this] { timeout_loop(); });
 }
@@ -82,13 +90,17 @@ void IndexWaiter::timeout_loop() {
                                            })
                               ->deadline;
     timeout_cv_.wait_until(lock, deadline);
-    if (stop_.load(std::memory_order_acquire)) break;
+    if (stop_.load(std::memory_order_acquire)) {
+      break;
+    }
 
     const auto now = std::chrono::steady_clock::now();
     std::vector<TimeoutItem> due;
     timeouts_.erase(std::remove_if(timeouts_.begin(), timeouts_.end(),
                                    [&](const TimeoutItem& t) {
-                                     if (t.deadline > now) return false;
+                                     if (t.deadline > now) {
+                                       return false;
+                                     }
                                      due.push_back(t);
                                      return true;
                                    }),
@@ -96,15 +108,21 @@ void IndexWaiter::timeout_loop() {
 
     for (const auto& t : due) {
       auto sit = slots_.find(t.index);
-      if (sit == slots_.end()) continue;
+      if (sit == slots_.end()) {
+        continue;
+      }
       auto& slot = sit->second;
-      if (slot.done || slot.gen != t.gen || slot.async_cbs.empty()) continue;
+      if (slot.done || slot.gen != t.gen || slot.async_cbs.empty()) {
+        continue;
+      }
 
       timeout_total_.fetch_add(1, std::memory_order_relaxed);
       WaitOutcome out;
       out.timed_out = true;
       auto cbs = take_async_cbs_locked(slot);
-      if (slot_idle(slot)) slots_.erase(sit);
+      if (slot_idle(slot)) {
+        slots_.erase(sit);
+      }
 
       lock.unlock();
       fire_cbs(cbs, out);
@@ -131,14 +149,18 @@ void IndexWaiter::invoke(uint64_t index, std::string error) {
 }
 
 void IndexWaiter::wait_async(uint64_t index, std::chrono::milliseconds timeout, CompleteCb cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   const auto t0 = std::chrono::steady_clock::now();
   std::unique_lock<std::mutex> lock(mu_);
   auto& slot = slots_[index];
   if (slot.done) {
     WaitOutcome out;
     out.error = slot.error;
-    if (slot_idle(slot)) slots_.erase(index);
+    if (slot_idle(slot)) {
+      slots_.erase(index);
+    }
     lock.unlock();
     cb(std::move(out));
     return;
@@ -162,7 +184,9 @@ IndexWaiter::WaitOutcome IndexWaiter::wait(uint64_t index, std::chrono::millisec
     auto& slot = slots_[index];
     if (slot.done) {
       out.error = slot.error;
-      if (slot_idle(slot)) slots_.erase(index);
+      if (slot_idle(slot)) {
+        slots_.erase(index);
+      }
       return out;
     }
     ++slot.waiters;
@@ -201,7 +225,9 @@ IndexWaiter::WaitOutcome IndexWaiter::wait(uint64_t index, std::chrono::millisec
 
   auto it = slots_.find(index);
   if (it != slots_.end()) {
-    if (it->second.waiters > 0) --it->second.waiters;
+    if (it->second.waiters > 0) {
+      --it->second.waiters;
+    }
     if (slot_idle(it->second)) {
       out.error = it->second.error;
       slots_.erase(it);

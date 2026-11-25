@@ -76,7 +76,9 @@ TEST(InflightGateTest, ConcurrentClientCap) {
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     });
   }
-  for (auto& t : ths) t.join();
+  for (auto& t : ths) {
+    t.join();
+  }
   EXPECT_LE(peak.load(), 4u);
   EXPECT_GT(busy.load(), 0);
   EXPECT_EQ(g.inflight(ReqClass::kClient), 0u);

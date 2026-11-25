@@ -29,48 +29,100 @@
 
 namespace openkv::raftstore {
 
-class Router {  // 路由器
+/* 按 Region 挂 Peer/Apply 邮箱，投递成功后通知 BatchSystem。 */
+class Router {
  public:
-  using PeerMailbox = Mailbox<PeerMsg>;        // 节点邮箱
-  using ApplyMailbox = Mailbox<ApplyControl>;  // 应用邮箱
+  using PeerMailbox = Mailbox<PeerMsg>;
+  using ApplyMailbox = Mailbox<ApplyControl>;
   // 投递成功后通知 BatchSystem schedule（有活 peer 入队）。
   using NotifyFn = std::function<void(uint32_t region_id)>;
 
-  // 注册节点
+  /**
+   * 为 Region 注册 Raft 邮箱；已存在则返回已有。
+   * @param region_id Region id
+   * @param cap 邮箱容量；0 时用默认
+   * @return 邮箱 shared_ptr
+   */
   std::shared_ptr<PeerMailbox> register_peer(uint32_t region_id, size_t cap = 4096);
-  // 注册应用
+  /**
+   * 为 Region 注册 Apply 邮箱；已存在则返回已有。
+   * @param region_id Region id
+   * @param cap 邮箱容量；0 时用默认
+   * @return 邮箱 shared_ptr
+   */
   std::shared_ptr<ApplyMailbox> register_apply(uint32_t region_id, size_t cap = 4096);
 
-  // 注销节点
+  /**
+   * 注销该 Region 的 Peer/Apply 邮箱。
+   * @param region_id Region id
+   */
   void deregister(uint32_t region_id);
-  // 设置raft通知
+  /**
+   * 挂 Raft 投递成功回调（通常 BatchSystem::schedule_raft）。
+   * @param fn region_id → 唤醒对应 worker
+   */
   void set_raft_notify(NotifyFn fn) { raft_notify_ = std::move(fn); }
-  // 设置应用通知
+  /**
+   * 挂 Apply 投递成功回调（通常 BatchSystem::schedule_apply）。
+   * @param fn region_id → 唤醒对应 worker
+   */
   void set_apply_notify(NotifyFn fn) { apply_notify_ = std::move(fn); }
-  // 发送raft消息
+  /**
+   * 向 Peer 邮箱投一条消息；成功则 raft_notify_。
+   * @param region_id Region id
+   * @param msg Tick / RaftMessage / SignificantMsg / ApplyRes
+   * @return 是否入队成功
+   */
   bool send_raft(uint32_t region_id, PeerMsg msg);
-  // 发送应用消息
+  /**
+   * 向 Apply 邮箱投一条消息；成功则 apply_notify_。
+   * @param region_id Region id
+   * @param msg ApplyMsg 或 SnapTask
+   * @return 是否入队成功
+   */
   bool send_apply(uint32_t region_id, ApplyControl msg);
-  // 广播tick
+  /**
+   * 向所有已注册 Peer 邮箱投 TickMsg。
+   * @return 是否至少投递成功一次
+   */
   bool broadcast_tick();
-  // 获取节点邮箱
+  /**
+   * 取 Peer 邮箱；未注册返回空。
+   * @param region_id Region id
+   * @return shared_ptr 或空
+   */
   std::shared_ptr<PeerMailbox> peer_mailbox(uint32_t region_id);
-  // 获取应用邮箱
+  /**
+   * 取 Apply 邮箱；未注册返回空。
+   * @param region_id Region id
+   * @return shared_ptr 或空
+   */
   std::shared_ptr<ApplyMailbox> apply_mailbox(uint32_t region_id);
-  // 获取节点区域列表
+  /**
+   * 已注册 Peer 邮箱的 Region 列表。
+   * @return region_id 集合
+   */
   std::vector<uint32_t> peer_regions() const;
 
-  // 获取节点队列深度
+  /**
+   * Peer 邮箱当前深度。
+   * @param region_id Region id
+   * @return 队列长度；未注册为 0
+   */
   size_t peer_queue_depth(uint32_t region_id) const;
-  // 获取应用队列深度
+  /**
+   * Apply 邮箱当前深度。
+   * @param region_id Region id
+   * @return 队列长度；未注册为 0
+   */
   size_t apply_queue_depth(uint32_t region_id) const;
 
  private:
-  mutable std::mutex mu_;                                                // 互斥锁
-  std::unordered_map<uint32_t, std::shared_ptr<PeerMailbox>> peers_;     // 节点邮箱列表
-  std::unordered_map<uint32_t, std::shared_ptr<ApplyMailbox>> applies_;  // 应用邮箱列表
-  NotifyFn raft_notify_;                                                 // raft通知
-  NotifyFn apply_notify_;                                                // 应用通知
+  mutable std::mutex mu_;                                                // 保护表与 notify
+  std::unordered_map<uint32_t, std::shared_ptr<PeerMailbox>> peers_;     // Raft 邮箱
+  std::unordered_map<uint32_t, std::shared_ptr<ApplyMailbox>> applies_;  // Apply 邮箱
+  NotifyFn raft_notify_;                                                 // Raft 唤醒
+  NotifyFn apply_notify_;                                                // Apply 唤醒
 };
 
 }  // namespace openkv::raftstore

@@ -24,10 +24,12 @@
 
 namespace openkv::raft {
 
-/// 跟踪每个 peer 的复制水位与在途消息配额。
+/* 跟踪每个 peer 的复制水位与在途消息配额。 */
 class ProgressTracker {
  public:
-  // 清除所有进度信息
+  /**
+   * 清空全部 peer 进度（换 Leader / 重建时）。
+   */
   void clear() {
     next_index_.clear();
     match_index_.clear();
@@ -37,14 +39,21 @@ class ProgressTracker {
     peer_send_blocked_.clear();
   }
 
-  // 初始化领导者进度信息
+  /**
+   * 当选后为 peer 初始化 next=last+1、match=0。
+   * @param peer_id 对端
+   * @param last_index Leader 当前日志末下标
+   */
   void init_leader(const std::string& peer_id, uint64_t last_index) {
     next_index_[peer_id] = last_index + 1;
     match_index_[peer_id] = 0;
     inflight_[peer_id] = 0;
   }
 
-  // 删除指定peer的进度信息
+  /**
+   * 成员删除时清掉该 peer 全部进度项。
+   * @param peer_id 对端
+   */
   void erase(const std::string& peer_id) {
     next_index_.erase(peer_id);
     match_index_.erase(peer_id);
@@ -54,33 +63,49 @@ class ProgressTracker {
     peer_send_blocked_.erase(peer_id);
   }
 
-  // 获取指定peer的匹配索引
+  /**
+   * 查 match_index；未知返回 0。
+   * @param peer_id 对端
+   * @return 已匹配下标
+   */
   uint64_t match_of(const std::string& peer_id) const {
     auto it = match_index_.find(peer_id);
     return it == match_index_.end() ? 0 : it->second;
   }
 
-  // 尝试增加指定peer的未确认消息数
+  /**
+   * 尝试占用一个在途 AE 名额。
+   * @param peer_id 对端
+   * @param max_inflight 该 peer 允许的最大在途数
+   * @return 是否占用成功
+   */
   bool try_inc_inflight(const std::string& peer_id, uint32_t max_inflight) {
     auto& n = inflight_[peer_id];
-    if (n >= max_inflight) return false;
+    if (n >= max_inflight) {
+      return false;
+    }
     ++n;
     return true;
   }
 
-  // 减少指定peer的未确认消息数
+  /**
+   * 释放一个在途 AE 名额（收到应答或失败）。
+   * @param peer_id 对端
+   */
   void dec_inflight(const std::string& peer_id) {
     auto it = inflight_.find(peer_id);
-    if (it == inflight_.end() || it->second == 0) return;
+    if (it == inflight_.end() || it->second == 0) {
+      return;
+    }
     --it->second;
   }
 
-  std::unordered_map<std::string, uint64_t> next_index_;   // next索引
-  std::unordered_map<std::string, uint64_t> match_index_;  // 匹配索引
-  std::unordered_map<std::string, uint32_t> inflight_;     // 未确认消息数
-  std::unordered_set<std::string> snap_inflight_;          // 快照未确认消息集合
-  std::unordered_set<std::string> probe_inflight_;         // 探测未确认消息集合
-  std::unordered_set<std::string> peer_send_blocked_;      // peer发送阻塞集合
+  std::unordered_map<std::string, uint64_t> next_index_;   // 下次要发给 peer 的 index
+  std::unordered_map<std::string, uint64_t> match_index_;  // peer 已确认匹配到的 index
+  std::unordered_map<std::string, uint32_t> inflight_;     // 在途 AE 条数
+  std::unordered_set<std::string> snap_inflight_;          // 正在等快照应答的 peer
+  std::unordered_set<std::string> probe_inflight_;         // 正在 probe（探 next）的 peer
+  std::unordered_set<std::string> peer_send_blocked_;      // 发送失败暂堵的 peer
 };
 
 }  // namespace openkv::raft

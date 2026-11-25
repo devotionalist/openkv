@@ -62,10 +62,12 @@ void fill_ts_response(pb::GetTsResponse* resp, std::string_view line) {
   uint32_t count = 1;
   if (iss >> ok >> tag >> ts) {
     resp->set_ts(ts);
-    if (iss >> count)
+    if (iss >> count) {
       resp->set_count(count);
-    else
+    } else {
       resp->set_count(1);
+    }
+    resp->set_count(1);
   }
 }
 
@@ -80,7 +82,7 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return Status::OK;
   }
 
-  /// 廉价读：接收线程同步跑完再 Finish。fn 内禁止长等 / 出站阻塞 RPC。
+  // 廉价读：接收线程同步跑完再 Finish。fn 内禁止长等 / 出站阻塞 RPC。
   template <typename Fn>
   ServerUnaryReactor* reply(CallbackServerContext* ctx, bool need_auth, Fn&& fn) {
     auto* reactor = ctx->DefaultReactor();
@@ -111,7 +113,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     meta_.register_node_async(std::move(n), [reactor, resp, id](std::string line) {
       resp->set_ok(line_ok(line));
       resp->set_assigned_id(id);
-      if (!resp->ok()) resp->set_error(line);
+      if (!resp->ok()) {
+        resp->set_error(line);
+      }
       reactor->Finish(Status::OK);
     });
     return reactor;
@@ -187,7 +191,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       if (!req->shard_ids().empty()) {
         oss << " ";
         for (int i = 0; i < req->shard_ids_size(); ++i) {
-          if (i) oss << ",";
+          if (i) {
+            oss << ",";
+          }
           oss << req->shard_ids(i);
         }
       }
@@ -218,24 +224,34 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                                 pb::ListNodesResponse* resp) override {
     return reply(ctx, false, [this, req, resp] {
       std::string line = "LIST_NODES";
-      if (req->role() == pb::STORAGE)
+      if (req->role() == pb::STORAGE) {
         line += " storage";
-      else if (req->role() == pb::COMPUTE)
+      } else if (req->role() == pb::COMPUTE)
         line += " compute";
       auto body = meta_.handle_line(line);
       std::istringstream iss(body);
       std::string ok, tag;
       size_t n = 0;
-      if (!(iss >> ok >> tag >> n) || ok != "OK") return;
+      if (!(iss >> ok >> tag >> n) || ok != "OK") {
+        return;
+      }
       for (size_t i = 0; i < n; ++i) {
         std::string tok;
-        if (!(iss >> tok)) break;
+        if (!(iss >> tok)) {
+          break;
+        }
         auto at = tok.find('@');
-        if (at == std::string::npos) continue;
+        if (at == std::string::npos) {
+          continue;
+        }
         auto r1 = tok.rfind(':');
-        if (r1 == std::string::npos || r1 == 0) continue;
+        if (r1 == std::string::npos || r1 == 0) {
+          continue;
+        }
         auto r2 = tok.rfind(':', r1 - 1);
-        if (r2 == std::string::npos || r2 <= at) continue;
+        if (r2 == std::string::npos || r2 <= at) {
+          continue;
+        }
         auto* ninfo = resp->add_nodes();
         ninfo->set_node_id(tok.substr(0, at));
         ninfo->set_address(tok.substr(at + 1, r2 - at - 1));
@@ -278,7 +294,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     meta_.activate_or_join_async(false, req->node_id(), [reactor, resp](std::string line) {
       resp->set_ok(line_ok(line));
       resp->set_message(line);
-      if (!resp->ok()) resp->set_error(line);
+      if (!resp->ok()) {
+        resp->set_error(line);
+      }
       reactor->Finish(Status::OK);
     });
     return reactor;
@@ -293,7 +311,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     meta_.activate_or_join_async(true, req->node_id(), [reactor, resp](std::string line) {
       resp->set_ok(line_ok(line));
       resp->set_message(line);
-      if (!resp->ok()) resp->set_error(line);
+      if (!resp->ok()) {
+        resp->set_error(line);
+      }
       reactor->Finish(Status::OK);
     });
     return reactor;
@@ -310,7 +330,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                                [reactor, resp](std::string line) {
                                  resp->set_ok(line_ok(line));
                                  resp->set_message(line);
-                                 if (!resp->ok()) resp->set_error(line);
+                                 if (!resp->ok()) {
+                                   resp->set_error(line);
+                                 }
                                  reactor->Finish(Status::OK);
                                });
     return reactor;
@@ -326,7 +348,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                                [reactor, resp](std::string line) {
                                  resp->set_ok(line_ok(line));
                                  resp->set_message(line);
-                                 if (!resp->ok()) resp->set_error(line);
+                                 if (!resp->ok()) {
+                                   resp->set_error(line);
+                                 }
                                  reactor->Finish(Status::OK);
                                });
     return reactor;
@@ -342,7 +366,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                                [reactor, resp](std::string line) {
                                  resp->set_ok(line_ok(line));
                                  resp->set_message(line);
-                                 if (!resp->ok()) resp->set_error(line);
+                                 if (!resp->ok()) {
+                                   resp->set_error(line);
+                                 }
                                  reactor->Finish(Status::OK);
                                });
     return reactor;
@@ -357,7 +383,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     meta_.kick_node_async(req->node_id(), [reactor, resp](std::string line) {
       resp->set_ok(line_ok(line));
       resp->set_message(line);
-      if (!resp->ok()) resp->set_error(line);
+      if (!resp->ok()) {
+        resp->set_error(line);
+      }
       reactor->Finish(Status::OK);
     });
     return reactor;
@@ -382,7 +410,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
         std::istringstream iss(line);
         std::string ok, tag;
         uint32_t left = 0, right = 0;
-        if (iss >> ok >> tag >> left >> right) resp->set_right_region_id(right);
+        if (iss >> ok >> tag >> left >> right) {
+          resp->set_right_region_id(right);
+        }
       }
       reactor->Finish(Status::OK);
     });
@@ -466,7 +496,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       if (!req->avoid_node_ids().empty()) {
         oss << " avoid=";
         for (int i = 0; i < req->avoid_node_ids_size(); ++i) {
-          if (i) oss << ',';
+          if (i) {
+            oss << ',';
+          }
           oss << req->avoid_node_ids(i);
         }
       }
@@ -477,7 +509,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       if (iss >> ok >> tag >> n) {
         for (size_t i = 0; i < n; ++i) {
           std::string id;
-          if (!(iss >> id)) break;
+          if (!(iss >> id)) {
+            break;
+          }
           resp->add_node_ids(id);
         }
       }
@@ -489,7 +523,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return reply(ctx, true, [this, req, resp] {
       std::ostringstream oss;
       oss << "CANCEL_SCALE " << req->node_id();
-      if (req->region_id() != 0) oss << " " << req->region_id();
+      if (req->region_id() != 0) {
+        oss << " " << req->region_id();
+      }
       auto line = meta_.handle_line(oss.str());
       resp->set_ok(line_ok(line));
       resp->set_message(line);
@@ -513,7 +549,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       resp->set_watch_waits(snap.watch_waits);
       resp->set_migrates(snap.migrates);
       auto fill = [](auto* dst, const auto& src) {
-        for (const auto& kv : src) (*dst)[kv.first] = kv.second;
+        for (const auto& kv : src) {
+          (*dst)[kv.first] = kv.second;
+        }
       };
       fill(resp->mutable_peer_raft(), snap.peer_raft);
       fill(resp->mutable_peer_sync(), snap.peer_sync);
@@ -543,7 +581,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
                             pb::GetTsResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
     uint32_t count = req->count() == 0 ? 1 : req->count();
-    if (count > 10000) count = 10000;
+    if (count > 10000) {
+      count = 10000;
+    }
     meta_.alloc_ts_async(count, [reactor, resp](std::string line) {
       fill_ts_response(resp, line);
       reactor->Finish(Status::OK);
@@ -560,8 +600,12 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       uint64_t sp = 0, next = 0, hint = 0;
       if (iss >> ok >> tag >> sp) {
         resp->set_safe_point(sp);
-        if (iss >> next) resp->set_next_ts(next);
-        if (iss >> hint) resp->set_min_start_hint(hint);
+        if (iss >> next) {
+          resp->set_next_ts(next);
+        }
+        if (iss >> hint) {
+          resp->set_min_start_hint(hint);
+        }
       }
     });
   }
@@ -602,7 +646,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     return reply(ctx, false, [this, req, resp] {
       auto line = meta_.handle_line("LOCATE " + openkv::to_hex(req->key()));
       resp->set_ok(line_ok(line));
-      if (!resp->ok()) resp->set_error(line);
+      if (!resp->ok()) {
+        resp->set_error(line);
+      }
     });
   }
 
@@ -620,7 +666,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       auto line = meta_.handle_line("STORE_STATUS " + req->node_id());
       resp->set_ok(line_ok(line));
       resp->set_status(line);
-      if (!resp->ok()) resp->set_error(line);
+      if (!resp->ok()) {
+        resp->set_error(line);
+      }
     });
   }
 
@@ -637,7 +685,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
       std::istringstream iss(line);
       std::string ok, tag;
       uint32_t left = 0, right = 0;
-      if (iss >> ok >> tag >> left >> right) resp->set_right_region_id(right);
+      if (iss >> ok >> tag >> left >> right) {
+        resp->set_right_region_id(right);
+      }
     });
   }
 
@@ -649,7 +699,9 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
 void parse_vote_line(std::string_view line, ::storage::v1::RequestVoteResponse* resp) {
   resp->set_vote_granted(false);
   resp->set_term(0);
-  if (!proto::starts_with_ok(line)) return;
+  if (!proto::starts_with_ok(line)) {
+    return;
+  }
   std::istringstream iss{std::string(line)};
   std::string ok, tag;
   uint64_t term = 0;
@@ -689,7 +741,9 @@ void fill_install_snapshot_resp(std::string_view line, uint64_t term, uint64_t l
   } else {
     resp->set_ok(proto::starts_with_ok(line));
     resp->set_term(term);
-    if (resp->ok()) resp->set_match_index(last_idx);
+    if (resp->ok()) {
+      resp->set_match_index(last_idx);
+    }
   }
 }
 
@@ -736,7 +790,7 @@ class MetaInstallSnapshotReactor final : public ServerReadReactor<::storage::v1:
   uint64_t last_term_{0};
 };
 
-/// Meta 组内 Raft 与 Storage 共用 storage.v1.RaftService（shard 固定 0）。
+/* Meta 组内 Raft 与 Storage 共用 storage.v1.RaftService（shard 固定 0）。 */
 class MetaRaftServiceImpl final : public ::storage::v1::RaftService::CallbackService {
  public:
   explicit MetaRaftServiceImpl(MetaNode& m) : meta_(m) {}
@@ -805,7 +859,9 @@ MetaGrpcServer::MetaGrpcServer(MetaNode& meta, std::string listen_addr)
 MetaGrpcServer::~MetaGrpcServer() { stop(); }
 
 void MetaGrpcServer::start() {
-  if (running_.exchange(true)) return;
+  if (running_.exchange(true)) {
+    return;
+  }
   impl_->svc = std::make_unique<MetaServiceImpl>(meta_, admin_token_);
   impl_->raft = std::make_unique<MetaRaftServiceImpl>(meta_);
   grpc::ServerBuilder builder;
@@ -824,7 +880,9 @@ void MetaGrpcServer::start() {
 }
 
 void MetaGrpcServer::stop() {
-  if (!running_.exchange(false)) return;
+  if (!running_.exchange(false)) {
+    return;
+  }
   // 先拒新 RPC 并排空在途（Watch/async Finish 须在 Wait 前仍可跑）。
   if (impl_ && impl_->server) {
     openkv::graceful_grpc_shutdown(impl_->server);

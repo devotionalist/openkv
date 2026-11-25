@@ -21,9 +21,15 @@ namespace openkv::raftstore {
 
 BatchSystem::BatchSystem(std::shared_ptr<Router> router, Options opts)
     : router_(std::move(router)), opts_(opts) {
-  if (opts_.raft_workers == 0) opts_.raft_workers = 1;
-  if (opts_.apply_workers == 0) opts_.apply_workers = 1;
-  if (opts_.batch_size == 0) opts_.batch_size = 256;
+  if (opts_.raft_workers == 0) {
+    opts_.raft_workers = 1;
+  }
+  if (opts_.apply_workers == 0) {
+    opts_.apply_workers = 1;
+  }
+  if (opts_.batch_size == 0) {
+    opts_.batch_size = 256;
+  }
   raft_sched_ = std::vector<ScheduleQueue>(opts_.raft_workers);
   apply_sched_ = std::vector<ScheduleQueue>(opts_.apply_workers);
 }
@@ -31,7 +37,9 @@ BatchSystem::BatchSystem(std::shared_ptr<Router> router, Options opts)
 BatchSystem::~BatchSystem() { stop(); }
 
 void BatchSystem::start() {
-  if (running_.exchange(true)) return;
+  if (running_.exchange(true)) {
+    return;
+  }
   raft_threads_.reserve(opts_.raft_workers);
   apply_threads_.reserve(opts_.apply_workers);
   for (size_t i = 0; i < opts_.raft_workers; ++i) {
@@ -43,36 +51,54 @@ void BatchSystem::start() {
 }
 
 void BatchSystem::stop() {
-  if (!running_.exchange(false)) return;
-  for (auto& s : raft_sched_) s.wake();
-  for (auto& s : apply_sched_) s.wake();
+  if (!running_.exchange(false)) {
+    return;
+  }
+  for (auto& s : raft_sched_) {
+    s.wake();
+  }
+  for (auto& s : apply_sched_) {
+    s.wake();
+  }
   for (auto& t : raft_threads_) {
-    if (t.joinable()) t.join();
+    if (t.joinable()) {
+      t.join();
+    }
   }
   for (auto& t : apply_threads_) {
-    if (t.joinable()) t.join();
+    if (t.joinable()) {
+      t.join();
+    }
   }
   raft_threads_.clear();
   apply_threads_.clear();
 }
 
 void BatchSystem::schedule_raft(uint32_t region_id) {
-  if (raft_sched_.empty()) return;
+  if (raft_sched_.empty()) {
+    return;
+  }
   raft_sched_[region_id % raft_sched_.size()].push(region_id);
 }
 
 void BatchSystem::schedule_apply(uint32_t region_id) {
-  if (apply_sched_.empty()) return;
+  if (apply_sched_.empty()) {
+    return;
+  }
   apply_sched_[region_id % apply_sched_.size()].push(region_id);
 }
 
 bool BatchSystem::apply_overloaded(uint32_t region_id) const {
-  if (opts_.max_apply_queue_depth == 0) return false;
+  if (opts_.max_apply_queue_depth == 0) {
+    return false;
+  }
   return router_->apply_queue_depth(region_id) >= opts_.max_apply_queue_depth;
 }
 
 bool BatchSystem::snap_overloaded() const {
-  if (opts_.max_snap_queue_depth == 0) return false;
+  if (opts_.max_snap_queue_depth == 0) {
+    return false;
+  }
   return snap_inflight_.load() >= opts_.max_snap_queue_depth;
 }
 
@@ -81,14 +107,20 @@ void BatchSystem::raft_worker_loop(size_t worker_id) {
   auto& sched = raft_sched_[worker_id];
   while (running_.load(std::memory_order_acquire)) {
     auto rid_opt = sched.pop(opts_.poll_timeout_ms, running_);
-    if (!rid_opt) continue;
+    if (!rid_opt) {
+      continue;
+    }
     const uint32_t rid = *rid_opt;
     auto mb = router_->peer_mailbox(rid);
-    if (!mb || !raft_handler_) continue;
+    if (!mb || !raft_handler_) {
+      continue;
+    }
     // drain-until-empty：同 Region 连续多批再让出，减少调度抖动。
     for (;;) {
       auto batch = mb->recv_batch(opts_.batch_size, 0);
-      if (batch.empty()) break;
+      if (batch.empty()) {
+        break;
+      }
       raft_handler_(rid, std::move(batch));
     }
   }
@@ -99,13 +131,19 @@ void BatchSystem::apply_worker_loop(size_t worker_id) {
   auto& sched = apply_sched_[worker_id];
   while (running_.load(std::memory_order_acquire)) {
     auto rid_opt = sched.pop(opts_.poll_timeout_ms, running_);
-    if (!rid_opt) continue;
+    if (!rid_opt) {
+      continue;
+    }
     const uint32_t rid = *rid_opt;
     auto mb = router_->apply_mailbox(rid);
-    if (!mb || !apply_handler_) continue;
+    if (!mb || !apply_handler_) {
+      continue;
+    }
     for (;;) {
       auto batch = mb->recv_batch(opts_.batch_size, 0);
-      if (batch.empty()) break;
+      if (batch.empty()) {
+        break;
+      }
       apply_handler_(rid, std::move(batch));
     }
   }

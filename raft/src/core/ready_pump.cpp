@@ -31,7 +31,9 @@ void ReadyPump::enqueue(std::string peer_id, std::string type, std::string paylo
 
 // external_io：不发，留给 Store。嵌入路径：经 send_（常即 GrpcRaftTransport::bind）→ 真正出网。
 void ReadyPump::flush_transport() {
-  if (n_.opts_.external_io) return;
+  if (n_.opts_.external_io) {
+    return;
+  }
   std::vector<Outbound> batch;
   {
     std::lock_guard<std::mutex> lock(n_.mu_);
@@ -39,7 +41,9 @@ void ReadyPump::flush_transport() {
   }
   for (auto& m : batch) {
     // 【出网入口·嵌入】send_ 最终进 gRPC 发送队列（见 grpc_transport.cpp bind）。
-    if (n_.send_) n_.send_(m.peer_id, m.type, m.payload);
+    if (n_.send_) {
+      n_.send_(m.peer_id, m.type, m.payload);
+    }
   }
 }
 
@@ -68,19 +72,10 @@ SoftState ReadyPump::soft_state_locked() const {
   return st;
 }
 
-/**
- * @brief 获取待发送消息：获取待发送消息是获取待发送消息的外部io，用于获取待发送消息的外部io。
- *
- * 如果硬状态脏，则获取硬状态。
- * 否则，获取未落盘日志。
- * 否则，获取待提交日志。
- * 否则，获取出站消息。
- * 否则，获取快照消息。
- */
 Ready ReadyPump::take_ready() {
   std::lock_guard<std::mutex> lock(n_.mu_);
   Ready rd;
-  if (n_.ready_io_.ready_hs_dirty_) {  // 硬状态脏
+  if (n_.ready_io_.ready_hs_dirty_) {
     rd.hard_state = n_.ready_io_.ready_hs_;
     rd.must_sync = true;
     n_.ready_io_.ready_hs_dirty_ = false;
@@ -102,15 +97,21 @@ Ready ReadyPump::take_ready() {
 
 void ReadyPump::advance(const Ready& /*rd*/) {
   std::lock_guard<std::mutex> lock(n_.mu_);
-  if (!n_.opts_.external_io) return;
+  if (!n_.opts_.external_io) {
+    return;
+  }
   // 普通条目 last_applied 由 report_applied（ApplyFsm）推进，避免 propose 误以为已落 KV。
 }
 
 void ReadyPump::set_ready_notify(std::function<void()> cb) { ready_notify_ = std::move(cb); }
 
 void ReadyPump::maybe_notify_ready() {
-  if (!n_.opts_.external_io || !ready_notify_) return;
-  if (has_ready()) ready_notify_();
+  if (!n_.opts_.external_io || !ready_notify_) {
+    return;
+  }
+  if (has_ready()) {
+    ready_notify_();
+  }
 }
 
 }  // namespace openkv::raft

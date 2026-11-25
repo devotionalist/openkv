@@ -37,20 +37,39 @@
 
 namespace skv {
 
+/**
+ * 把 host:port 拆开。
+ * @param addr 形如 127.0.0.1:8500
+ * @param host 输出主机
+ * @param port 输出端口
+ * @return 是否解析成功
+ */
 inline bool parse_host_port(std::string_view addr, std::string* host, uint16_t* port) {
   auto pos = addr.rfind(':');
-  if (pos == std::string_view::npos) return false;
+  if (pos == std::string_view::npos) {
+    return false;
+  }
   *host = std::string(addr.substr(0, pos));
   *port = static_cast<uint16_t>(std::stoul(std::string(addr.substr(pos + 1))));
   return true;
 }
 
+/**
+ * TCP 探活：超时内能否 connect。
+ * @param addr host:port
+ * @param timeout_ms 连接超时
+ * @return 可达为 true
+ */
 inline bool tcp_reachable(std::string_view addr, int timeout_ms = 300) {
   std::string host;
   uint16_t port = 0;
-  if (!parse_host_port(addr, &host, &port)) return false;
+  if (!parse_host_port(addr, &host, &port)) {
+    return false;
+  }
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) return false;
+  if (fd < 0) {
+    return false;
+  }
   timeval tv{.tv_sec = timeout_ms / 1000, .tv_usec = (timeout_ms % 1000) * 1000};
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -70,6 +89,11 @@ inline bool tcp_reachable(std::string_view addr, int timeout_ms = 300) {
   return ok;
 }
 
+/**
+ * 行命令是否走 Meta 面（否则当 Admin）。
+ * @param req 首词命令
+ * @return true=MetaService
+ */
 inline bool looks_meta_req(std::string_view req) {
   return req.rfind("REGISTER", 0) == 0 || req.rfind("HEARTBEAT", 0) == 0 ||
          req.rfind("GET_ROUTE", 0) == 0 || req.rfind("GET_TS", 0) == 0 ||
@@ -87,6 +111,13 @@ inline bool looks_meta_req(std::string_view req) {
          req.rfind("REMOVE_", 0) == 0 || req.rfind("METRICS", 0) == 0 || req.rfind("STATS", 0) == 0;
 }
 
+/**
+ * 发一行运维命令并收回包（自动选 Meta/Admin + ACL token）。
+ * @param addr 目标 host:port
+ * @param req 行协议请求
+ * @param timeout_ms RPC 超时
+ * @return 响应字符串
+ */
 inline std::string tcp_line(std::string_view addr, std::string_view req, int timeout_ms = 3000) {
   std::string host;
   uint16_t port = 0;
@@ -99,22 +130,50 @@ inline std::string tcp_line(std::string_view addr, std::string_view req, int tim
   return openkv::admin_typed_call(addr, req, token, timeout_ms);
 }
 
+/**
+ * 从响应里抠 redirect=host:port。
+ * @param resp 行响应
+ * @return 重定向地址；没有则 nullopt
+ */
 inline std::optional<std::string> redirect_of(std::string_view resp) {
   const std::string_view key = "redirect=";
   auto i = resp.find(key);
-  if (i == std::string_view::npos) return std::nullopt;
+  if (i == std::string_view::npos) {
+    return std::nullopt;
+  }
   auto rest = resp.substr(i + key.size());
   size_t end = 0;
-  while (end < rest.size() && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '\r') ++end;
-  if (end == 0) return std::nullopt;
+  while (end < rest.size() && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '\r') {
+    ++end;
+  }
+  if (end == 0) {
+    return std::nullopt;
+  }
   return std::string(rest.substr(0, end));
 }
 
+/**
+ * 字节转十六进制（给 CLI 打印 key）。
+ * @param s 原始字节
+ * @return hex 串
+ */
 inline std::string to_hex(std::string_view s) { return ::openkv::to_hex(s); }
+
+/**
+ * 十六进制转字节。
+ * @param hex hex 串
+ * @param out 输出缓冲
+ * @return 是否合法
+ */
 inline bool from_hex(std::string_view hex, std::string* out) {
   return ::openkv::from_hex(hex, out);
 }
 
+/**
+ * 按空白拆词（CLI 参数）。
+ * @param s 输入行
+ * @return 词列表
+ */
 inline std::vector<std::string> split_ws(std::string_view s) {
   std::vector<std::string> out;
   std::string cur;
@@ -128,7 +187,9 @@ inline std::vector<std::string> split_ws(std::string_view s) {
       cur.push_back(c);
     }
   }
-  if (!cur.empty()) out.push_back(cur);
+  if (!cur.empty()) {
+    out.push_back(cur);
+  }
   return out;
 }
 

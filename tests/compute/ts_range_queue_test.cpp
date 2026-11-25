@@ -63,7 +63,9 @@ TEST(TsRangeQueueTest, ConcurrentUnique) {
       }
     });
   }
-  for (auto& th : ths) th.join();
+  for (auto& th : ths) {
+    th.join();
+  }
   std::sort(got.begin(), got.end());
   for (size_t i = 1; i < got.size(); ++i) {
     EXPECT_NE(got[i], got[i - 1]);

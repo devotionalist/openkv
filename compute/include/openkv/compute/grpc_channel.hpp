@@ -28,19 +28,47 @@
 
 namespace openkv::compute {
 
-/// 从 "… redirect=<addr> …" 解析重定向地址；无则空串。
+/**
+ * 从 "… redirect=<addr> …" 解析重定向地址；无则空串。
+ * @param resp 响应正文或错误串
+ */
 std::string parse_redirect(std::string_view resp);
 
-/// 按 addr 复用 insecure Channel；无则创建并放入进程级缓存。
+/**
+ * 按 addr 复用 insecure Channel；无则创建并放入进程级缓存。
+ * @param addr 对端地址 host:port
+ */
 std::shared_ptr<grpc::Channel> cached_channel(const std::string& addr);
-/// 丢弃该 addr 的缓存 Channel 与全部 stub（传输错误后调用）。
+/**
+ * 丢弃该 addr 的缓存 Channel 与全部 stub（传输错误后调用）。
+ * @param addr 对端地址 host:port
+ */
 void drop_cached_channel(const std::string& addr);
 
-/// 设 deadline，并挂上环境 Admin token。
+/**
+ * 设 deadline，并挂上环境 Admin token。
+ * @param ctx gRPC ClientContext
+ * @param timeout_ms 超时毫秒
+ */
 void attach_deadline_and_token(grpc::ClientContext* ctx, int timeout_ms);
 
+/**
+ * 按 addr 复用 StoreService stub。
+ * @param addr Storage 地址
+ * @return 共享 stub
+ */
 std::shared_ptr<::storage::v1::StoreService::Stub> cached_store_stub(const std::string& addr);
+/**
+ * 按 addr 复用 AdminService stub。
+ * @param addr Storage 地址
+ * @return 共享 stub
+ */
 std::shared_ptr<::storage::v1::AdminService::Stub> cached_admin_stub(const std::string& addr);
+/**
+ * 按 addr 复用 MetaService stub。
+ * @param addr Meta 地址
+ * @return 共享 stub
+ */
 std::shared_ptr<::meta::v1::MetaService::Stub> cached_meta_stub(const std::string& addr);
 
 }  // namespace openkv::compute

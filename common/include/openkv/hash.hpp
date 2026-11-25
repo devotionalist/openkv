@@ -23,8 +23,11 @@
 
 namespace openkv {
 
-// FNV-1a 64-bit — 稳定、无依赖，用于 Key → Shard 映射
-/// 对任意字节序列计算 FNV-1a 64 位哈希；跨进程/版本稳定，适合分片。
+/**
+ * 对任意字节序列计算 FNV-1a 64 位哈希；跨进程/版本稳定，适合分片。
+ * @param data 输入字节
+ * @return 64 位哈希
+ */
 inline uint64_t fnv1a64(std::string_view data) noexcept {
   uint64_t hash = 14695981039346656037ULL;
   for (unsigned char c : data) {
@@ -34,7 +37,12 @@ inline uint64_t fnv1a64(std::string_view data) noexcept {
   return hash;
 }
 
-/// 将 key 映射到 [0, shard_count) 分片号；shard_count==0 时返回 0（防御性约定）。
+/**
+ * 将 key 映射到 [0, shard_count) 分片号；shard_count==0 时返回 0（防御性约定）。
+ * @param key 用户键
+ * @param shard_count 分片总数
+ * @return 分片下标
+ */
 inline uint32_t shard_of(std::string_view key, uint32_t shard_count) noexcept {
   if (shard_count == 0) {
     return 0;

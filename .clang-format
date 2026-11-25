@@ -13,3 +13,8 @@ Standard: c++20
 ColumnLimit: 100
 SortIncludes: CaseSensitive
 IncludeBlocks: Regroup
+# 禁止 if (cond) return; / if (cond) { return; } 挤一行（与 cpp-control-braces 一致）。
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false

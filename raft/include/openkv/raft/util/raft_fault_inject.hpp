@@ -27,22 +27,40 @@
 
 namespace openkv::raft {
 
+/* 出站故障注入参数：丢包概率与发送前延迟。 */
 struct RaftOutboundFault {
-  int drop_ae_pct{0};    ///< 0–100：AppendEntries 丢弃概率
-  int delay_ae_ms{0};    ///< AppendEntries 发送前额外睡眠
-  int drop_raft_pct{0};  ///< 0–100：任意出站 Raft 丢弃概率
-  int delay_raft_ms{0};  ///< 任意出站 Raft 发送前额外睡眠
+  int drop_ae_pct{0};    // 0–100：AppendEntries 丢弃概率
+  int delay_ae_ms{0};    // AppendEntries 发送前额外睡眠（毫秒）
+  int drop_raft_pct{0};  // 0–100：任意出站 Raft 丢弃概率
+  int delay_raft_ms{0};  // 任意出站 Raft 发送前额外睡眠（毫秒）
 
+  /**
+   * 从环境变量读一份配置（进程启动时调用一次即可）。
+   * @return 解析后的故障参数
+   */
   static RaftOutboundFault from_env();
 
+  /**
+   * 是否有任一注入项开启。
+   * @return true 表示需要走故障路径
+   */
   bool enabled() const {
     return drop_ae_pct > 0 || delay_ae_ms > 0 || drop_raft_pct > 0 || delay_raft_ms > 0;
   }
 
-  /// rand01_99 ∈ [0,99]；命中则本条应丢弃。
+  /**
+   * rand01_99 ∈ [0,99]；命中则本条应丢弃。
+   * @param type RPC 类型名
+   * @param rand01_99 调用方提供的随机数
+   * @return true 表示应丢弃
+   */
   bool should_drop(std::string_view type, int rand01_99) const;
 
-  /// 本条发送前应 sleep 的毫秒数（AE 与全量延迟取较大者）。
+  /**
+   * 本条发送前应 sleep 的毫秒数（AE 与全量延迟取较大者）。
+   * @param type RPC 类型名
+   * @return 延迟毫秒；0=不睡
+   */
   int delay_ms_for(std::string_view type) const;
 };
 

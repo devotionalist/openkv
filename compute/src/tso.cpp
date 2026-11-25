@@ -30,7 +30,9 @@ uint32_t env_u32(const char* key, uint32_t fallback) {
   if (const char* e = std::getenv(key)) {
     char* end = nullptr;
     unsigned long n = std::strtoul(e, &end, 10);
-    if (end != e) return static_cast<uint32_t>(n);
+    if (end != e) {
+      return static_cast<uint32_t>(n);
+    }
   }
   return fallback;
 }
@@ -47,23 +49,33 @@ TSOracle::TSOracle(std::vector<std::string> meta_addrs, uint32_t batch_size, uin
   }
   if (batch_size_ > 1 && low_watermark_ >= batch_size_) {
     low_watermark_ = batch_size_ / 2;
-    if (low_watermark_ == 0) low_watermark_ = 1;
+    if (low_watermark_ == 0) {
+      low_watermark_ = 1;
+    }
   }
 }
 
 void TSOracle::push_batch(uint64_t start, uint32_t got) {
-  if (got == 0) return;
+  if (got == 0) {
+    return;
+  }
   (void)q_.push(start, got);
 }
 
 bool TSOracle::arm_prefetch(uint32_t* out_req) {
-  if (batch_size_ <= 1 || meta_addrs_.empty()) return false;
-  if (q_.remaining() >= low_watermark_) return false;
+  if (batch_size_ <= 1 || meta_addrs_.empty()) {
+    return false;
+  }
+  if (q_.remaining() >= low_watermark_) {
+    return false;
+  }
   bool expected = false;
   if (!refill_inflight_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
     return false;
   }
-  if (out_req) *out_req = batch_size_;
+  if (out_req) {
+    *out_req = batch_size_;
+  }
   return true;
 }
 
@@ -73,7 +85,9 @@ bool TSOracle::enqueue_waiter_and_arm(uint32_t n, std::function<void(grpc::Statu
   // 入队前再试一次：补货可能刚好 push 完成。
   uint64_t start = 0;
   if (batch_size_ > 1 && q_.try_take(n, &start)) {
-    if (cb) cb(grpc::Status::OK, start);
+    if (cb) {
+      cb(grpc::Status::OK, start);
+    }
     return false;
   }
 
@@ -87,18 +101,26 @@ bool TSOracle::enqueue_waiter_and_arm(uint32_t n, std::function<void(grpc::Statu
     return false;
   }
   uint32_t req = batch_size_ <= 1 ? n : batch_size_;
-  if (n > req) req = n;
-  for (const auto& waiter : waiters_) {
-    if (waiter.n > req) req = waiter.n;
+  if (n > req) {
+    req = n;
   }
-  if (out_req) *out_req = req;
+  for (const auto& waiter : waiters_) {
+    if (waiter.n > req) {
+      req = waiter.n;
+    }
+  }
+  if (out_req) {
+    *out_req = req;
+  }
   return true;
 }
 
 void TSOracle::start_refill_async(uint32_t req) {
   meta_alloc_ts_range_async(
       meta_addrs_, req, 3000, [this](grpc::Status st, uint64_t start, uint32_t got) {
-        if (st.ok() && got > 0) push_batch(start, got);
+        if (st.ok() && got > 0) {
+          push_batch(start, got);
+        }
         refill_inflight_.store(false, std::memory_order_release);
 
         std::vector<Waiter> waiters;
@@ -108,11 +130,15 @@ void TSOracle::start_refill_async(uint32_t req) {
         }
 
         if (!st.ok() || got == 0) {
-          if (waiters.empty()) return;
+          if (waiters.empty()) {
+            return;
+          }
           const auto err =
               st.ok() ? grpc::Status(grpc::StatusCode::UNAVAILABLE, "tso: empty batch") : st;
           for (auto& w : waiters) {
-            if (w.cb) w.cb(err, 0);
+            if (w.cb) {
+              w.cb(err, 0);
+            }
           }
           return;
         }
@@ -126,13 +152,17 @@ void TSOracle::start_refill_async(uint32_t req) {
             retry.push_back(std::move(w));
           }
         }
-        if (retry.empty()) return;
+        if (retry.empty()) {
+          return;
+        }
 
         uint32_t need = batch_size_;
         {
           std::lock_guard<std::mutex> lock(wait_mu_);
           for (auto& w : retry) {
-            if (w.n > need) need = w.n;
+            if (w.n > need) {
+              need = w.n;
+            }
             waiters_.push_back(std::move(w));
           }
         }
@@ -144,7 +174,9 @@ void TSOracle::start_refill_async(uint32_t req) {
 }
 
 uint64_t TSOracle::alloc(uint32_t n) {
-  if (n == 0) n = 1;
+  if (n == 0) {
+    n = 1;
+  }
   if (batch_size_ <= 1) {
     return alloc_ts(meta_addrs_, n);
   }
@@ -152,7 +184,9 @@ uint64_t TSOracle::alloc(uint32_t n) {
   uint64_t start = 0;
   if (q_.try_take(n, &start)) {
     uint32_t prefetch_req = 0;
-    if (arm_prefetch(&prefetch_req)) start_refill_async(prefetch_req);
+    if (arm_prefetch(&prefetch_req)) {
+      start_refill_async(prefetch_req);
+    }
     return start;
   }
 
@@ -161,9 +195,13 @@ uint64_t TSOracle::alloc(uint32_t n) {
   if (refill_inflight_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
     try {
       uint32_t req = batch_size_;
-      if (n > req) req = n;
+      if (n > req) {
+        req = n;
+      }
       auto [s, got] = alloc_ts_range(meta_addrs_, req);
-      if (got == 0) throw std::runtime_error("tso: empty batch");
+      if (got == 0) {
+        throw std::runtime_error("tso: empty batch");
+      }
       push_batch(s, got);
     } catch (...) {
       refill_inflight_.store(false, std::memory_order_release);
@@ -174,12 +212,16 @@ uint64_t TSOracle::alloc(uint32_t n) {
     for (int i = 0; i < 2000; ++i) {
       if (q_.try_take(n, &start)) {
         uint32_t prefetch_req = 0;
-        if (arm_prefetch(&prefetch_req)) start_refill_async(prefetch_req);
+        if (arm_prefetch(&prefetch_req)) {
+          start_refill_async(prefetch_req);
+        }
         return start;
       }
     }
     auto [s, got] = alloc_ts_range(meta_addrs_, n > batch_size_ ? n : batch_size_);
-    if (got == 0) throw std::runtime_error("tso: empty batch");
+    if (got == 0) {
+      throw std::runtime_error("tso: empty batch");
+    }
     push_batch(s, got);
   }
 
@@ -187,20 +229,28 @@ uint64_t TSOracle::alloc(uint32_t n) {
     throw std::runtime_error("tso: batch short after refill");
   }
   uint32_t prefetch_req = 0;
-  if (arm_prefetch(&prefetch_req)) start_refill_async(prefetch_req);
+  if (arm_prefetch(&prefetch_req)) {
+    start_refill_async(prefetch_req);
+  }
   return start;
 }
 
 void TSOracle::alloc_async(uint32_t n, std::function<void(grpc::Status, uint64_t start)> cb) {
-  if (!cb) return;
-  if (n == 0) n = 1;
+  if (!cb) {
+    return;
+  }
+  if (n == 0) {
+    n = 1;
+  }
 
   if (batch_size_ > 1) {
     uint64_t start = 0;
     if (q_.try_take(n, &start)) {
       cb(grpc::Status::OK, start);
       uint32_t prefetch_req = 0;
-      if (arm_prefetch(&prefetch_req)) start_refill_async(prefetch_req);
+      if (arm_prefetch(&prefetch_req)) {
+        start_refill_async(prefetch_req);
+      }
       return;
     }
   }
@@ -211,7 +261,9 @@ void TSOracle::alloc_async(uint32_t n, std::function<void(grpc::Status, uint64_t
   } else {
     // 入队前已命中，或他人正在补货：仍尝试低水位预取。
     uint32_t prefetch_req = 0;
-    if (arm_prefetch(&prefetch_req)) start_refill_async(prefetch_req);
+    if (arm_prefetch(&prefetch_req)) {
+      start_refill_async(prefetch_req);
+    }
   }
 }
 

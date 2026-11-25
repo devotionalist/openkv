@@ -115,7 +115,9 @@ std::string encode_meta_command(const MetaCommand& cmd) {
       break;
     case MetaOp::kReportMinStartTs:
       oss << '|' << cmd.ts_value;
-      if (!cmd.node.node_id.empty()) oss << '|' << escape(cmd.node.node_id);
+      if (!cmd.node.node_id.empty()) {
+        oss << '|' << escape(cmd.node.node_id);
+      }
       break;
     case MetaOp::kSweepStale:
       oss << '|' << cmd.ts_count;  // ttl_ms
@@ -126,7 +128,9 @@ std::string encode_meta_command(const MetaCommand& cmd) {
     case MetaOp::kUpsertMigrate:
       oss << '|' << escape(cmd.migrate.task_id) << '|' << cmd.migrate.region_id << '|'
           << cmd.migrate.state << '|' << cmd.migrate.desired_peers.size();
-      for (const auto& p : cmd.migrate.desired_peers) oss << '|' << escape(p);
+      for (const auto& p : cmd.migrate.desired_peers) {
+        oss << '|' << escape(p);
+      }
       break;
     case MetaOp::kEraseMigrate:
       oss << '|' << escape(cmd.migrate.task_id);
@@ -148,16 +152,22 @@ bool decode_meta_command(std::string_view data, MetaCommand* out) {
   try {
     switch (out->op) {
       case MetaOp::kRegister:
-        if (parts.size() < 4) return false;
+        if (parts.size() < 4) {
+          return false;
+        }
         out->node.role = static_cast<NodeRole>(std::stoi(parts[1]));
         out->node.node_id = unescape(parts[2]);
         out->node.address = unescape(parts[3]);
         return true;
       case MetaOp::kHeartbeat: {
-        if (parts.size() < 3) return false;
+        if (parts.size() < 3) {
+          return false;
+        }
         out->node.node_id = unescape(parts[1]);
         size_t n = static_cast<size_t>(std::stoul(parts[2]));
-        if (parts.size() < 3 + n) return false;
+        if (parts.size() < 3 + n) {
+          return false;
+        }
         out->leader_shards.clear();
         for (size_t i = 0; i < n; ++i) {
           out->leader_shards.push_back(static_cast<uint32_t>(std::stoul(parts[3 + i])));
@@ -165,39 +175,53 @@ bool decode_meta_command(std::string_view data, MetaCommand* out) {
         return true;
       }
       case MetaOp::kSetLearner:
-        if (parts.size() < 4) return false;
+        if (parts.size() < 4) {
+          return false;
+        }
         out->shard_id = static_cast<uint32_t>(std::stoul(parts[1]));
         out->learner.node_id = unescape(parts[2]);
         out->learner.address = unescape(parts[3]);
         out->learner.is_learner = true;
         return true;
       case MetaOp::kPromote:
-        if (parts.size() < 3) return false;
+        if (parts.size() < 3) {
+          return false;
+        }
         out->shard_id = static_cast<uint32_t>(std::stoul(parts[1]));
         out->learner.node_id = unescape(parts[2]);
         return true;
       case MetaOp::kBumpRoute:
         return true;
       case MetaOp::kSplitRegion:
-        if (parts.size() < 3) return false;
+        if (parts.size() < 3) {
+          return false;
+        }
         out->shard_id = static_cast<uint32_t>(std::stoul(parts[1]));
         out->split_key = unescape(parts[2]);
         return true;
       case MetaOp::kMergeRegions:
-        if (parts.size() < 3) return false;
+        if (parts.size() < 3) {
+          return false;
+        }
         out->shard_id = static_cast<uint32_t>(std::stoul(parts[1]));
         out->merge_right_id = static_cast<uint32_t>(std::stoul(parts[2]));
         return true;
       case MetaOp::kRemoveReplica:
-        if (parts.size() < 3) return false;
+        if (parts.size() < 3) {
+          return false;
+        }
         out->shard_id = static_cast<uint32_t>(std::stoul(parts[1]));
         out->learner.node_id = unescape(parts[2]);
         return true;
       case MetaOp::kPlaceRegion: {
-        if (parts.size() < 3) return false;
+        if (parts.size() < 3) {
+          return false;
+        }
         out->shard_id = static_cast<uint32_t>(std::stoul(parts[1]));
         size_t n = static_cast<size_t>(std::stoul(parts[2]));
-        if (parts.size() < 3 + n * 2) return false;
+        if (parts.size() < 3 + n * 2) {
+          return false;
+        }
         out->place_replicas.clear();
         for (size_t i = 0; i < n; ++i) {
           Replica r;
@@ -208,36 +232,56 @@ bool decode_meta_command(std::string_view data, MetaCommand* out) {
         return true;
       }
       case MetaOp::kAllocTs:
-        if (parts.size() < 2) return false;
+        if (parts.size() < 2) {
+          return false;
+        }
         out->ts_count = static_cast<uint32_t>(std::stoul(parts[1]));
-        if (out->ts_count == 0) out->ts_count = 1;
+        if (out->ts_count == 0) {
+          out->ts_count = 1;
+        }
         return true;
       case MetaOp::kAdvanceSafePoint:
-        if (parts.size() < 2) return false;
+        if (parts.size() < 2) {
+          return false;
+        }
         out->ts_count = static_cast<uint32_t>(std::stoul(parts[1]));
         return true;
       case MetaOp::kReportMinStartTs:
-        if (parts.size() < 2) return false;
+        if (parts.size() < 2) {
+          return false;
+        }
         out->ts_value = std::stoull(parts[1]);
-        if (parts.size() >= 3) out->node.node_id = unescape(parts[2]);
+        if (parts.size() >= 3) {
+          out->node.node_id = unescape(parts[2]);
+        }
         return true;
       case MetaOp::kSweepStale:
-        if (parts.size() < 2) return false;
+        if (parts.size() < 2) {
+          return false;
+        }
         out->ts_count = static_cast<uint32_t>(std::stoul(parts[1]));
-        if (out->ts_count == 0) out->ts_count = 10000;
+        if (out->ts_count == 0) {
+          out->ts_count = 10000;
+        }
         return true;
       case MetaOp::kSetNodeState:
-        if (parts.size() < 3) return false;
+        if (parts.size() < 3) {
+          return false;
+        }
         out->node.node_id = unescape(parts[1]);
         out->ts_value = std::stoull(parts[2]);
         return true;
       case MetaOp::kUpsertMigrate: {
-        if (parts.size() < 5) return false;
+        if (parts.size() < 5) {
+          return false;
+        }
         out->migrate.task_id = unescape(parts[1]);
         out->migrate.region_id = static_cast<uint32_t>(std::stoul(parts[2]));
         out->migrate.state = std::stoi(parts[3]);
         size_t np = static_cast<size_t>(std::stoul(parts[4]));
-        if (parts.size() < 5 + np) return false;
+        if (parts.size() < 5 + np) {
+          return false;
+        }
         out->migrate.desired_peers.clear();
         for (size_t i = 0; i < np; ++i) {
           out->migrate.desired_peers.push_back(unescape(parts[5 + i]));
@@ -245,11 +289,15 @@ bool decode_meta_command(std::string_view data, MetaCommand* out) {
         return true;
       }
       case MetaOp::kEraseMigrate:
-        if (parts.size() < 2) return false;
+        if (parts.size() < 2) {
+          return false;
+        }
         out->migrate.task_id = unescape(parts[1]);
         return true;
       case MetaOp::kEraseTombstone:
-        if (parts.size() < 2) return false;
+        if (parts.size() < 2) {
+          return false;
+        }
         out->node.node_id = unescape(parts[1]);
         return true;
     }

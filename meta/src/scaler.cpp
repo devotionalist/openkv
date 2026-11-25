@@ -49,14 +49,24 @@ bool Scaler::overlaps_inflight_locked(const std::string& node_id,
                                       const std::vector<uint32_t>& shard_ids) const {
   for (const auto& tid : queue_) {
     auto it = tasks_.find(tid);
-    if (it == tasks_.end()) continue;
+    if (it == tasks_.end()) {
+      continue;
+    }
     const auto& t = it->second;
-    if (t.state == ScaleTaskState::kCompleted || t.state == ScaleTaskState::kFailed) continue;
-    if (t.new_node_id != node_id) continue;
-    if (shard_ids.empty() || t.shard_ids.empty()) return true;
+    if (t.state == ScaleTaskState::kCompleted || t.state == ScaleTaskState::kFailed) {
+      continue;
+    }
+    if (t.new_node_id != node_id) {
+      continue;
+    }
+    if (shard_ids.empty() || t.shard_ids.empty()) {
+      return true;
+    }
     for (uint32_t a : shard_ids) {
       for (uint32_t b : t.shard_ids) {
-        if (a == b) return true;
+        if (a == b) {
+          return true;
+        }
       }
     }
   }
@@ -125,7 +135,9 @@ std::vector<ScaleTask> Scaler::list_tasks() const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<ScaleTask> out;
   out.reserve(tasks_.size());
-  for (const auto& [_, t] : tasks_) out.push_back(t);
+  for (const auto& [_, t] : tasks_) {
+    out.push_back(t);
+  }
   return out;
 }
 
@@ -143,8 +155,12 @@ int Scaler::cancel_inflight(const std::string& node_id, std::optional<uint32_t> 
   std::lock_guard<std::mutex> lock(mu_);
   int n = 0;
   for (auto& [id, t] : tasks_) {
-    if (t.state == ScaleTaskState::kCompleted || t.state == ScaleTaskState::kFailed) continue;
-    if (!node_id.empty() && t.new_node_id != node_id) continue;
+    if (t.state == ScaleTaskState::kCompleted || t.state == ScaleTaskState::kFailed) {
+      continue;
+    }
+    if (!node_id.empty() && t.new_node_id != node_id) {
+      continue;
+    }
     if (shard_id) {
       bool hit = t.shard_ids.empty();
       for (uint32_t s : t.shard_ids) {
@@ -153,7 +169,9 @@ int Scaler::cancel_inflight(const std::string& node_id, std::optional<uint32_t> 
           break;
         }
       }
-      if (!hit) continue;
+      if (!hit) {
+        continue;
+      }
     }
     t.state = ScaleTaskState::kFailed;
     t.error = "cancelled";
@@ -164,7 +182,9 @@ int Scaler::cancel_inflight(const std::string& node_id, std::optional<uint32_t> 
   queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
                               [&](const std::string& tid) {
                                 auto it = tasks_.find(tid);
-                                if (it == tasks_.end()) return true;
+                                if (it == tasks_.end()) {
+                                  return true;
+                                }
                                 return it->second.state == ScaleTaskState::kCompleted ||
                                        it->second.state == ScaleTaskState::kFailed;
                               }),
@@ -198,7 +218,9 @@ void Scaler::worker_loop() {
         auto it = tasks_.find(head);
         if (it != tasks_.end() && (it->second.state == ScaleTaskState::kCompleted ||
                                    it->second.state == ScaleTaskState::kFailed)) {
-          if (!queue_.empty() && queue_.front() == head) queue_.erase(queue_.begin());
+          if (!queue_.empty() && queue_.front() == head) {
+            queue_.erase(queue_.begin());
+          }
         }
       }
     }
@@ -208,7 +230,9 @@ void Scaler::worker_loop() {
 
 // 单步推进：每阶段对 shard_ids 循环调用对应钩子；失败写 error→kFailed。
 void Scaler::advance(ScaleTask& task) {
-  if (task.state == ScaleTaskState::kFailed || task.state == ScaleTaskState::kCompleted) return;
+  if (task.state == ScaleTaskState::kFailed || task.state == ScaleTaskState::kCompleted) {
+    return;
+  }
   auto node = state_.get_node(task.new_node_id);
   if (!node) {
     task.state = ScaleTaskState::kFailed;
@@ -250,7 +274,9 @@ void Scaler::advance(ScaleTask& task) {
       if (catch_up_) {
         size_t ready = 0;
         for (uint32_t sid : task.shard_ids) {
-          if (catch_up_(sid, task.new_node_id)) ++ready;
+          if (catch_up_(sid, task.new_node_id)) {
+            ++ready;
+          }
         }
         task.progress =
             0.4 + 0.3 * (static_cast<double>(ready) /
@@ -267,7 +293,9 @@ void Scaler::advance(ScaleTask& task) {
       size_t ok = 0;
       for (uint32_t sid : task.shard_ids) {
         if (promote_) {
-          if (promote_(sid, task.new_node_id)) ++ok;
+          if (promote_(sid, task.new_node_id)) {
+            ++ok;
+          }
         } else if (state_.promote_learner(sid, task.new_node_id)) {
           ++ok;
         }

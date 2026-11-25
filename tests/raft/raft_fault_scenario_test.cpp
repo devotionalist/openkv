@@ -158,13 +158,17 @@ class RaftFaultCluster {
 
   void tick_all(int n = 1) {
     for (int i = 0; i < n; ++i) {
-      for (auto& [_, s] : nodes_) s->node->tick();
+      for (auto& [_, s] : nodes_) {
+        s->node->tick();
+      }
     }
   }
 
   void tick_ids(const std::vector<std::string>& ids, int n = 1) {
     for (int i = 0; i < n; ++i) {
-      for (const auto& id : ids) nodes_.at(id)->node->tick();
+      for (const auto& id : ids) {
+        nodes_.at(id)->node->tick();
+      }
     }
   }
 
@@ -172,7 +176,9 @@ class RaftFaultCluster {
     for (int i = 0; i < max_ticks; ++i) {
       tick_all(1);
       auto leaders = leader_ids();
-      if (leaders.size() == 1) return leaders[0];
+      if (leaders.size() == 1) {
+        return leaders[0];
+      }
     }
     return {};
   }
@@ -180,7 +186,9 @@ class RaftFaultCluster {
   std::vector<std::string> leader_ids() const {
     std::vector<std::string> out;
     for (const auto& [id, s] : nodes_) {
-      if (s->node->is_leader()) out.push_back(id);
+      if (s->node->is_leader()) {
+        out.push_back(id);
+      }
     }
     return out;
   }
@@ -188,19 +196,25 @@ class RaftFaultCluster {
   bool wait_applied(const std::string& id, const std::string& data, int max_ticks = 80) {
     for (int i = 0; i < max_ticks; ++i) {
       for (const auto& d : nodes_.at(id)->applied) {
-        if (d == data) return true;
+        if (d == data) {
+          return true;
+        }
       }
       tick_all(1);
     }
     for (const auto& d : nodes_.at(id)->applied) {
-      if (d == data) return true;
+      if (d == data) {
+        return true;
+      }
     }
     return false;
   }
 
   bool has_applied(const std::string& id, const std::string& data) const {
     for (const auto& d : applied(id)) {
-      if (d == data) return true;
+      if (d == data) {
+        return true;
+      }
     }
     return false;
   }
@@ -250,13 +264,17 @@ class RaftFaultCluster {
       ++dropped_;
       if (type == "AppendEntries" || type == "InstallSnapshot") {
         auto sit = nodes_.find(from);
-        if (sit != nodes_.end()) sit->second->node->on_rpc_transport_fail(to);
+        if (sit != nodes_.end()) {
+          sit->second->node->on_rpc_transport_fail(to);
+        }
       }
       return;
     }
     auto dit = nodes_.find(to);
     auto sit = nodes_.find(from);
-    if (dit == nodes_.end() || sit == nodes_.end()) return;
+    if (dit == nodes_.end() || sit == nodes_.end()) {
+      return;
+    }
 
     RaftNode& dst = *dit->second->node;
     RaftNode& src = *sit->second->node;
@@ -264,22 +282,30 @@ class RaftFaultCluster {
 
     try {
       if (type == "RequestVote" || type == "RequestPreVote") {
-        if (parts.size() < 3) return;
+        if (parts.size() < 3) {
+          return;
+        }
         const uint64_t term = std::stoull(parts[0]);
         const uint64_t last_idx = std::stoull(parts[1]);
         const uint64_t last_term = std::stoull(parts[2]);
         bool granted = false;
         if (type == "RequestPreVote") {
           dst.on_request_pre_vote(from, term, last_idx, last_term, &granted);
-          if (!drop_replies_) src.on_request_pre_vote_reply(to, dst.soft_state().term, granted);
+          if (!drop_replies_) {
+            src.on_request_pre_vote_reply(to, dst.soft_state().term, granted);
+          }
         } else {
           dst.on_request_vote(from, term, last_idx, last_term, &granted);
-          if (!drop_replies_) src.on_request_vote_reply(to, dst.soft_state().term, granted);
+          if (!drop_replies_) {
+            src.on_request_vote_reply(to, dst.soft_state().term, granted);
+          }
         }
         return;
       }
       if (type == "AppendEntries") {
-        if (parts.size() < 5) return;
+        if (parts.size() < 5) {
+          return;
+        }
         const uint64_t term = std::stoull(parts[0]);
         const uint64_t prev_idx = std::stoull(parts[1]);
         const uint64_t prev_term = std::stoull(parts[2]);
@@ -288,11 +314,15 @@ class RaftFaultCluster {
         std::vector<LogEntry> entries;
         size_t off = 5;
         for (uint64_t i = 0; i < nent; ++i) {
-          if (off + 2 >= parts.size()) return;
+          if (off + 2 >= parts.size()) {
+            return;
+          }
           LogEntry e;
           e.term = std::stoull(parts[off]);
           e.index = std::stoull(parts[off + 1]);
-          if (!openkv::from_hex(parts[off + 2], &e.data)) return;
+          if (!openkv::from_hex(parts[off + 2], &e.data)) {
+            return;
+          }
           entries.push_back(std::move(e));
           off += 3;
         }
@@ -309,12 +339,16 @@ class RaftFaultCluster {
         return;
       }
       if (type == "InstallSnapshot") {
-        if (parts.size() < 4) return;
+        if (parts.size() < 4) {
+          return;
+        }
         const uint64_t term = std::stoull(parts[0]);
         const uint64_t last_idx = std::stoull(parts[1]);
         const uint64_t last_term = std::stoull(parts[2]);
         std::string data;
-        if (!openkv::from_hex(parts[3], &data)) return;
+        if (!openkv::from_hex(parts[3], &data)) {
+          return;
+        }
         bool success = false;
         dst.on_install_snapshot(from, term, last_idx, last_term, data, &success);
         if (drop_replies_) {
@@ -434,7 +468,9 @@ TEST(RaftFaultScenario, A6_AfterTimeoutCanGrantPreVote) {
   // 只 tick follower 直到选举超时清 leader_id
   for (int i = 0; i < 80; ++i) {
     c.at(follower).tick();
-    if (c.at(follower).soft_state().leader_id.empty()) break;
+    if (c.at(follower).soft_state().leader_id.empty()) {
+      break;
+    }
   }
   EXPECT_TRUE(c.at(follower).soft_state().leader_id.empty());
   bool granted = false;
@@ -478,7 +514,9 @@ TEST(RaftFaultScenario, A9_AbdicateAndForceElection) {
   ASSERT_TRUE(c.at(other).force_election());
   // 喂票
   for (const char* id : {"a", "b", "c"}) {
-    if (id == other) continue;
+    if (id == other) {
+      continue;
+    }
     bool g = false;
     c.at(id).on_request_vote(other, c.at(other).soft_state().term, c.at(other).last_index(),
                              c.at(other).soft_state().term, &g);
@@ -509,7 +547,9 @@ TEST(RaftFaultScenario, A11_SplitVoteEventuallyOneLeader) {
   // 多轮空转后仍应收敛到一名 Leader
   for (int i = 0; i < 300; ++i) {
     c.tick_all(1);
-    if (c.leader_ids().size() == 1) break;
+    if (c.leader_ids().size() == 1) {
+      break;
+    }
   }
   EXPECT_EQ(c.leader_ids().size(), 1u);
 }
@@ -651,7 +691,9 @@ TEST(RaftFaultScenario, C2_QuorumGraceKeepsNewLeader) {
   bool still = true;
   for (int i = 0; i < 3; ++i) {
     c.at(leader).tick();
-    if (!c.at(leader).is_leader()) still = false;
+    if (!c.at(leader).is_leader()) {
+      still = false;
+    }
   }
   EXPECT_TRUE(still);
 }
@@ -666,7 +708,9 @@ TEST(RaftFaultScenario, C3_OnePeerDownLeaderStays) {
   c.isolate(victim);
   for (int i = 0; i < 40; ++i) {
     for (const char* id : {"a", "b", "c"}) {
-      if (std::string(id) == victim) continue;
+      if (std::string(id) == victim) {
+        continue;
+      }
       c.at(id).tick();
     }
   }
@@ -732,7 +776,9 @@ TEST(RaftFaultScenario, D2_LeaderChangeDuringPartitionThenHeal) {
   std::string neu;
   for (int i = 0; i < 250; ++i) {
     for (const char* id : {"a", "b", "c"}) {
-      if (std::string(id) == old) continue;
+      if (std::string(id) == old) {
+        continue;
+      }
       c.at(id).tick();
     }
     auto ls = c.leader_ids();
@@ -742,7 +788,9 @@ TEST(RaftFaultScenario, D2_LeaderChangeDuringPartitionThenHeal) {
         break;
       }
     }
-    if (!neu.empty()) break;
+    if (!neu.empty()) {
+      break;
+    }
   }
   ASSERT_FALSE(neu.empty());
   ASSERT_TRUE(c.at(neu).propose("from-new"));
@@ -893,7 +941,9 @@ TEST(RaftFaultScenario, E4_RemoveNodeJointWithVictimIsolated) {
   // 喂 b 的复制水位以便 Leave
   for (int i = 0; i < 50; ++i) {
     c.tick_ids({leader, "a", "b"}, 1);
-    if (!c.at(leader).in_joint()) break;
+    if (!c.at(leader).in_joint()) {
+      break;
+    }
     c.at(leader).on_append_entries_reply("b", c.at(leader).soft_state().term, true,
                                          c.at(leader).last_index());
   }
@@ -901,7 +951,9 @@ TEST(RaftFaultScenario, E4_RemoveNodeJointWithVictimIsolated) {
   EXPECT_FALSE(c.at(leader).in_joint());
   bool has_c = false;
   for (const auto& p : c.at(leader).peers()) {
-    if (p.id == "c" && !p.learner) has_c = true;
+    if (p.id == "c" && !p.learner) {
+      has_c = true;
+    }
   }
   EXPECT_FALSE(has_c);
 }
@@ -922,7 +974,9 @@ TEST(RaftFaultScenario, E5_AddLearnerUnderFollowerIsolate) {
   c.tick_ids({leader, leader == "b" ? "a" : "b"}, 20);
   bool has = false;
   for (const auto& p : c.at(leader).peers()) {
-    if (p.id == "nL" && p.learner) has = true;
+    if (p.id == "nL" && p.learner) {
+      has = true;
+    }
   }
   EXPECT_TRUE(has);
 }
@@ -948,7 +1002,9 @@ TEST(RaftFaultScenario, F1_RestartRecoversHardState) {
     std::vector<std::string> applied;
     RaftNode n(
         opts, [&](uint64_t, const std::string& d) { applied.push_back(d); }, [](auto&&...) {});
-    for (int i = 0; i < 40 && !n.is_leader(); ++i) n.tick();
+    for (int i = 0; i < 40 && !n.is_leader(); ++i) {
+      n.tick();
+    }
     ASSERT_TRUE(n.is_leader());
     ASSERT_TRUE(n.propose("persisted"));
     EXPECT_FALSE(applied.empty());
@@ -994,7 +1050,9 @@ TEST(RaftFaultScenario, F2_UncommittedLostAfterLeaderCrash) {
   std::string neu;
   for (int i = 0; i < 250; ++i) {
     for (const char* id : {"a", "b", "c"}) {
-      if (std::string(id) == leader) continue;
+      if (std::string(id) == leader) {
+        continue;
+      }
       c.at(id).tick();
     }
     for (const auto& L : c.leader_ids()) {
@@ -1003,7 +1061,9 @@ TEST(RaftFaultScenario, F2_UncommittedLostAfterLeaderCrash) {
         break;
       }
     }
-    if (!neu.empty()) break;
+    if (!neu.empty()) {
+      break;
+    }
   }
   ASSERT_FALSE(neu.empty());
   ASSERT_TRUE(c.at(neu).propose("after-crash"));
@@ -1028,7 +1088,9 @@ TEST(RaftFaultScenario, F3_PersistNoneIgnoresMustSync) {
   opts.check_quorum = false;
   opts.persist_sync = openkv::raft::SyncMode::kNone;
   RaftNode n(opts, nullptr, nullptr);
-  for (int i = 0; i < 40 && !n.is_leader(); ++i) n.tick();
+  for (int i = 0; i < 40 && !n.is_leader(); ++i) {
+    n.tick();
+  }
   ASSERT_TRUE(n.is_leader());
   uint64_t idx = 0;
   ASSERT_TRUE(n.propose("x", &idx));
@@ -1068,7 +1130,9 @@ TEST(RaftFaultScenario, H1_LoseTwoReplicasBlocksCommit) {
   const std::string leader = c.wait_one_leader();
   ASSERT_FALSE(leader.empty());
   for (const char* id : {"a", "b", "c"}) {
-    if (std::string(id) != leader) c.isolate(id);
+    if (std::string(id) != leader) {
+      c.isolate(id);
+    }
   }
   ASSERT_TRUE(c.at(leader).propose("no-quorum"));
   c.tick_ids({leader}, 30);
@@ -1099,7 +1163,9 @@ TEST(RaftFaultScenario, H2_EngineDirReadonlyRejectsPersist) {
   opts.check_quorum = false;
   opts.persist_dir = dir.string();
   RaftNode n(opts, [](uint64_t, const std::string&) {}, [](auto&&...) {});
-  for (int i = 0; i < 40 && !n.is_leader(); ++i) n.tick();
+  for (int i = 0; i < 40 && !n.is_leader(); ++i) {
+    n.tick();
+  }
   ASSERT_TRUE(n.is_leader());
   fs::permissions(dir,
                   fs::perms::owner_read | fs::perms::owner_exec | fs::perms::group_read |
@@ -1107,7 +1173,9 @@ TEST(RaftFaultScenario, H2_EngineDirReadonlyRejectsPersist) {
                   fs::perm_options::replace);
   // 再 propose：应不崩；落盘可能失败，进程仍存活
   (void)n.propose("after-ro");
-  for (int i = 0; i < 5; ++i) n.tick();
+  for (int i = 0; i < 5; ++i) {
+    n.tick();
+  }
   SUCCEED();
   fs::permissions(dir, fs::perms::all, fs::perm_options::replace);
   fs::remove_all(dir);
@@ -1146,7 +1214,9 @@ TEST(RaftFaultScenario, H4_LocalMatrixSmoke) {
   ASSERT_TRUE(c.at(leader).propose("lose-one"));
   EXPECT_TRUE(c.wait_applied(leader, "lose-one", 80));
   for (const char* id : {"a", "b", "c"}) {
-    if (std::string(id) == leader || std::string(id) == one) continue;
+    if (std::string(id) == leader || std::string(id) == one) {
+      continue;
+    }
     c.isolate(id);
   }
   ASSERT_TRUE(c.at(leader).propose("lose-two"));
@@ -1273,7 +1343,9 @@ TEST(RaftFaultScenario, X7_OldLeaderHealedDoesNotStayDual) {
   std::string neu;
   for (int i = 0; i < 250; ++i) {
     for (const char* id : {"a", "b", "c"}) {
-      if (std::string(id) == old) continue;
+      if (std::string(id) == old) {
+        continue;
+      }
       c.at(id).tick();
     }
     for (const auto& x : c.leader_ids()) {
@@ -1282,7 +1354,9 @@ TEST(RaftFaultScenario, X7_OldLeaderHealedDoesNotStayDual) {
         break;
       }
     }
-    if (!neu.empty()) break;
+    if (!neu.empty()) {
+      break;
+    }
   }
   ASSERT_FALSE(neu.empty());
   ASSERT_TRUE(c.at(neu).propose("new-era"));
@@ -1372,7 +1446,9 @@ TEST(RaftFaultScenario, X10_RandomChaosManyRounds) {
         break;
       case 8: {
         auto ls = c.leader_ids();
-        if (ls.size() == 1) (void)c.at(ls[0]).propose("chaos-" + std::to_string(r));
+        if (ls.size() == 1) {
+          (void)c.at(ls[0]).propose("chaos-" + std::to_string(r));
+        }
         break;
       }
       default:
@@ -1431,7 +1507,9 @@ TEST(RaftFaultScenario, X11_RandomChaosDifferentSeeds) {
           break;
         default: {
           auto ls = c.leader_ids();
-          if (ls.size() == 1) (void)c.at(ls[0]).abdicate();
+          if (ls.size() == 1) {
+            (void)c.at(ls[0]).abdicate();
+          }
           break;
         }
       }
@@ -1523,9 +1601,9 @@ TEST(RaftFaultScenario, X15_MultiSeedHealAlwaysWritable) {
     ASSERT_FALSE(c.wait_one_leader(200).empty()) << seed;
     for (int r = 0; r < 25; ++r) {
       const int a = static_cast<int>(rng() % 5);
-      if (a == 0)
+      if (a == 0) {
         c.isolate("a");
-      else if (a == 1)
+      } else if (a == 1)
         c.isolate("b");
       else if (a == 2)
         c.drop_type("AppendEntries");

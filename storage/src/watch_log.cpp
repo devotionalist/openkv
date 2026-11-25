@@ -30,7 +30,9 @@ void append_u32(std::string& out, uint32_t v) {
 }
 
 bool read_u32(std::string_view in, size_t* i, uint32_t* v) {
-  if (*i + 4 > in.size()) return false;
+  if (*i + 4 > in.size()) {
+    return false;
+  }
   *v = static_cast<uint8_t>(in[*i]) |
        (static_cast<uint32_t>(static_cast<uint8_t>(in[*i + 1])) << 8) |
        (static_cast<uint32_t>(static_cast<uint8_t>(in[*i + 2])) << 16) |
@@ -51,13 +53,19 @@ std::string WatchLog::make_key(uint64_t revision) {
 }
 
 bool WatchLog::parse_key(std::string_view key, uint64_t* revision) {
-  if (key.size() != kWatchLogPrefix.size() + 8) return false;
-  if (key.compare(0, kWatchLogPrefix.size(), kWatchLogPrefix) != 0) return false;
+  if (key.size() != kWatchLogPrefix.size() + 8) {
+    return false;
+  }
+  if (key.compare(0, kWatchLogPrefix.size(), kWatchLogPrefix) != 0) {
+    return false;
+  }
   uint64_t rev = 0;
   for (size_t i = 0; i < 8; ++i) {
     rev = (rev << 8) | static_cast<uint8_t>(key[kWatchLogPrefix.size() + i]);
   }
-  if (revision) *revision = rev;
+  if (revision) {
+    *revision = rev;
+  }
   return true;
 }
 
@@ -74,27 +82,43 @@ std::string WatchLog::encode_payload(bool deleted, std::string_view key, std::st
 
 bool WatchLog::decode_payload(std::string_view payload, bool* deleted, std::string* key,
                               std::string* value) {
-  if (payload.empty()) return false;
+  if (payload.empty()) {
+    return false;
+  }
   size_t i = 0;
   const bool del = payload[i++] != 0;
   uint32_t klen = 0, vlen = 0;
-  if (!read_u32(payload, &i, &klen) || !read_u32(payload, &i, &vlen)) return false;
-  if (i + klen + vlen > payload.size()) return false;
-  if (deleted) *deleted = del;
-  if (key) *key = std::string(payload.substr(i, klen));
+  if (!read_u32(payload, &i, &klen) || !read_u32(payload, &i, &vlen)) {
+    return false;
+  }
+  if (i + klen + vlen > payload.size()) {
+    return false;
+  }
+  if (deleted) {
+    *deleted = del;
+  }
+  if (key) {
+    *key = std::string(payload.substr(i, klen));
+  }
   i += klen;
-  if (value) *value = std::string(payload.substr(i, vlen));
+  if (value) {
+    *value = std::string(payload.substr(i, vlen));
+  }
   return true;
 }
 
 void WatchLog::trim(KvEngine& eng, size_t capacity) {
-  if (capacity == 0) capacity = kDefaultCapacity;
+  if (capacity == 0) {
+    capacity = kDefaultCapacity;
+  }
   std::vector<std::string> keys;
   eng.scan_prefix(kWatchLogPrefix, [&](std::string_view key, const KvRecord&) {
     keys.emplace_back(key);
     return true;
   });
-  if (keys.size() <= capacity) return;
+  if (keys.size() <= capacity) {
+    return;
+  }
   const size_t excess = keys.size() - capacity;
   for (size_t i = 0; i < excess; ++i) {
     eng.del(keys[i], 0);
@@ -108,16 +132,24 @@ void WatchLog::append(KvEngine& eng, const WatchRecord& rec, size_t capacity) {
 
 std::vector<WatchRecord> WatchLog::poll(const KvEngine& eng, uint32_t region_id, uint64_t since,
                                         size_t limit) {
-  if (limit == 0) limit = 64;
+  if (limit == 0) {
+    limit = 64;
+  }
   std::vector<WatchRecord> out;
   const std::string start = make_key(since + 1);
   eng.scan_prefix(kWatchLogPrefix, [&](std::string_view key, const KvRecord& rec) {
-    if (key < start) return true;
+    if (key < start) {
+      return true;
+    }
     uint64_t rev = 0;
-    if (!parse_key(key, &rev) || rev <= since) return true;
+    if (!parse_key(key, &rev) || rev <= since) {
+      return true;
+    }
     bool deleted = false;
     std::string k, v;
-    if (!decode_payload(rec.value, &deleted, &k, &v)) return true;
+    if (!decode_payload(rec.value, &deleted, &k, &v)) {
+      return true;
+    }
     out.push_back(WatchRecord{region_id, rev, deleted, std::move(k), std::move(v)});
     return out.size() < limit;
   });

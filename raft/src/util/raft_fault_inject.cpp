@@ -27,7 +27,9 @@ namespace {
 
 int env_int(const char* key, int def, int lo, int hi) {
   const char* e = std::getenv(key);
-  if (!e || !*e) return def;
+  if (!e || !*e) {
+    return def;
+  }
   try {
     int v = std::stoi(e);
     return std::clamp(v, lo, hi);
@@ -50,12 +52,16 @@ RaftOutboundFault RaftOutboundFault::from_env() {
 bool RaftOutboundFault::should_drop(std::string_view type, int rand01_99) const {
   // r ∈ [0,99]；pct=0 时 r < pct 恒假，不必再写 >0。
   const int r = std::clamp(rand01_99, 0, 99);
-  if (r < drop_raft_pct) return true;
+  if (r < drop_raft_pct) {
+    return true;
+  }
   return type == "AppendEntries" && r < drop_ae_pct;
 }
 
 int RaftOutboundFault::delay_ms_for(std::string_view type) const {
-  if (type == "AppendEntries") return std::max(delay_raft_ms, delay_ae_ms);
+  if (type == "AppendEntries") {
+    return std::max(delay_raft_ms, delay_ae_ms);
+  }
   return delay_raft_ms;
 }
 

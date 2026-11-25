@@ -68,7 +68,9 @@ TEST(RaftNodeReadyTest, SingleNodeElectAndPropose) {
   ASSERT_FALSE(rd.entries.empty());
   bool saw = false;
   for (const auto& e : rd.committed_entries) {
-    if (e.data == "hello") saw = true;
+    if (e.data == "hello") {
+      saw = true;
+    }
   }
   EXPECT_TRUE(saw) << "committed_entries size=" << rd.committed_entries.size();
   if (rd.hard_state) {
@@ -130,11 +132,17 @@ TEST(RaftNodeReadyTest, ThreeNodeVoteAndProposeReady) {
     }
     Ready rd = a.take_ready();
     for (const auto& m : rd.messages) {
-      if (m.type != "RequestVote") continue;
+      if (m.type != "RequestVote") {
+        continue;
+      }
       RaftNode* dst = m.to == "b" ? &b : (m.to == "c" ? &c : nullptr);
-      if (!dst) continue;
+      if (!dst) {
+        continue;
+      }
       unsigned long long term = 0, li = 0, lt = 0;
-      if (sscanf(m.payload.c_str(), "%llu|%llu|%llu", &term, &li, &lt) != 3) continue;
+      if (sscanf(m.payload.c_str(), "%llu|%llu|%llu", &term, &li, &lt) != 3) {
+        continue;
+      }
       bool granted = false;
       dst->on_request_vote("a", static_cast<uint64_t>(term), static_cast<uint64_t>(li),
                            static_cast<uint64_t>(lt), &granted);

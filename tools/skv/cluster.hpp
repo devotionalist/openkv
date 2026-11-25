@@ -21,20 +21,71 @@
 
 namespace skv {
 
+/* 本地进程组件（meta / storage / gateway 等）的名字、探活地址与配置路径。 */
 struct Component {
-  std::string name;
-  std::string addr;  // host:port for health
-  std::string conf;  // relative to root, empty for gateway
+  std::string name;  // 组件名（如 meta0、storage1）
+  std::string addr;  // 探活 host:port
+  std::string conf;  // 相对 root 的配置路径；gateway 可为空
 };
 
+/**
+ * 向上查找含 Makefile / conf 的仓库根目录。
+ * @return 绝对路径；找不到则空串或抛错（实现侧约定）
+ */
 std::string find_root();
+
+/**
+ * 默认本地拓扑（开发用）。
+ * @return 组件列表只读引用
+ */
 const std::vector<Component>& default_components();
 
+/**
+ * 打印各组件是否可达。
+ * @param root 仓库根
+ * @return 进程退出码（0=全好）
+ */
 int cmd_status(const std::string& root);
+
+/**
+ * 按默认拓扑拉起本地进程。
+ * @param root 仓库根
+ * @param fresh true 时清数据再起
+ * @return 进程退出码
+ */
 int cmd_start(const std::string& root, bool fresh);
+
+/**
+ * 停掉本地集群进程。
+ * @param root 仓库根
+ * @return 进程退出码
+ */
 int cmd_stop(const std::string& root);
+
+/**
+ * 重启单个组件。
+ * @param root 仓库根
+ * @param name 组件名
+ * @return 进程退出码
+ */
 int cmd_restart(const std::string& root, const std::string& name);
+
+/**
+ * 强制杀单个组件进程。
+ * @param root 仓库根
+ * @param name 组件名
+ * @return 进程退出码
+ */
 int cmd_kill(const std::string& root, const std::string& name);
+
+/**
+ * 看组件日志。
+ * @param root 仓库根
+ * @param name 组件名
+ * @param lines 尾部行数
+ * @param follow 是否跟随
+ * @return 进程退出码
+ */
 int cmd_logs(const std::string& root, const std::string& name, int lines, bool follow);
 
 }  // namespace skv

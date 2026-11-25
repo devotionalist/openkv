@@ -131,8 +131,12 @@ TEST(RaftstoreTest, RequestReadyCoalescesByCount) {
   store.set_persist_fn([&](uint32_t rid, const Ready& rd) {
     ++persists;
     const auto nent = rd.entries.size();
-    if (nent > max_entries.load()) max_entries.store(nent);
-    if (auto* n = store.get(rid)) n->persist_ready(rd);
+    if (nent > max_entries.load()) {
+      max_entries.store(nent);
+    }
+    if (auto* n = store.get(rid)) {
+      n->persist_ready(rd);
+    }
   });
   store.set_apply_fn([](uint32_t, uint64_t, const std::string&) {});
   store.start();
@@ -151,7 +155,9 @@ TEST(RaftstoreTest, RequestReadyCoalescesByCount) {
     store.request_ready(1);
   }
   for (int i = 0; i < 100; ++i) {
-    if (persists.load() >= 2 && max_entries.load() >= 4) break;
+    if (persists.load() >= 2 && max_entries.load() >= 4) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   store.stop();
@@ -198,10 +204,14 @@ TEST(RaftstoreTest, DriveReadyCoalescesPersist) {
   store.set_persist_fn([&](uint32_t rid, const Ready& rd) {
     ++persists;
     const auto nent = rd.entries.size();
-    if (nent > max_entries.load()) max_entries.store(nent);
+    if (nent > max_entries.load()) {
+      max_entries.store(nent);
+    }
     // 模拟 fsync 占住 raft worker，让后续 Wake 堆积后合并。
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    if (auto* n = store.get(rid)) n->persist_ready(rd);
+    if (auto* n = store.get(rid)) {
+      n->persist_ready(rd);
+    }
   });
   store.set_apply_fn([](uint32_t, uint64_t, const std::string&) {});
   store.start();
@@ -221,7 +231,9 @@ TEST(RaftstoreTest, DriveReadyCoalescesPersist) {
   }
   // 等到至少一次合并 Ready，或已刷完一段时间。
   for (int i = 0; i < 200; ++i) {
-    if (max_entries.load() >= 2 || (persists.load() >= 1 && i > 40)) break;
+    if (max_entries.load() >= 2 || (persists.load() >= 1 && i > 40)) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   store.stop();
@@ -274,7 +286,9 @@ TEST(RaftstoreTest, PersistPipelineUnblocksRaftWorker) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     }
-    if (auto* n = store.get(rid)) n->persist_ready(rd);
+    if (auto* n = store.get(rid)) {
+      n->persist_ready(rd);
+    }
   });
   store.set_apply_fn([](uint32_t, uint64_t, const std::string&) {});
   store.start();
@@ -366,7 +380,9 @@ TEST(SnapWorkerTest, RetryThenSucceed) {
   SnapWorker w(
       opts, [](uint32_t, openkv::raft::SnapshotMeta*) { return std::string("x"); },
       [&](uint32_t, const openkv::raft::SnapshotMeta&, const std::string&) {
-        if (++calls <= 2) throw std::runtime_error("transient");
+        if (++calls <= 2) {
+          throw std::runtime_error("transient");
+        }
       });
   w.start();
   SnapTask t;

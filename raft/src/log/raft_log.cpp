@@ -55,7 +55,9 @@ std::vector<LogEntry> RaftLog::entries_from(uint64_t index, size_t limit, size_t
   size_t bytes = 0;
   for (uint64_t i = index; i <= last_index() && out.size() < limit; ++i) {
     const auto& e = entries_[i - first_index_];
-    if (!out.empty() && bytes + e.data.size() > max_bytes) break;
+    if (!out.empty() && bytes + e.data.size() > max_bytes) {
+      break;
+    }
     bytes += e.data.size();
     out.push_back(e);
   }

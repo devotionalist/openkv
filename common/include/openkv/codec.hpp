@@ -22,6 +22,11 @@
 
 namespace openkv {
 
+/**
+ * 字节串 → 小写 hex（每字节两位）。
+ * @param s 原始字节
+ * @return hex 字符串（长度 = 2 * s.size()）
+ */
 inline std::string to_hex(std::string_view s) {
   static constexpr char kHex[] = "0123456789abcdef";
   std::string out(s.size() * 2, '\0');
@@ -33,20 +38,36 @@ inline std::string to_hex(std::string_view s) {
   return out;
 }
 
+/**
+ * hex → 字节串；奇数长度或非法字符返回 false，*out 未保证完整。
+ * @param hex 十六进制文本（大小写均可）
+ * @param out 写出解码结果；不可空
+ * @return 是否解码成功
+ */
 inline bool from_hex(std::string_view hex, std::string* out) {
-  if (!out || hex.size() % 2 != 0) return false;
+  if (!out || hex.size() % 2 != 0) {
+    return false;
+  }
   out->clear();
   out->reserve(hex.size() / 2);
   auto nibble = [](char c) -> int {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= '0' && c <= '9') {
+      return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+      return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+      return c - 'A' + 10;
+    }
     return -1;
   };
   for (size_t i = 0; i < hex.size(); i += 2) {
     const int hi = nibble(hex[i]);
     const int lo = nibble(hex[i + 1]);
-    if (hi < 0 || lo < 0) return false;
+    if (hi < 0 || lo < 0) {
+      return false;
+    }
     out->push_back(static_cast<char>((hi << 4) | lo));
   }
   return true;

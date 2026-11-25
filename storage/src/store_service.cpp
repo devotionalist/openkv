@@ -44,7 +44,9 @@ struct ScopedRegionTimer {
   ScopedRegionTimer(ScopedRegionTimer&& o) noexcept
       : metrics(std::move(o.metrics)), region(o.region), propose(o.propose), t0(o.t0) {}
   ScopedRegionTimer& operator=(ScopedRegionTimer&& o) noexcept {
-    if (this == &o) return *this;
+    if (this == &o) {
+      return *this;
+    }
     metrics = std::move(o.metrics);
     region = o.region;
     propose = o.propose;
@@ -52,7 +54,9 @@ struct ScopedRegionTimer {
     return *this;
   }
   ~ScopedRegionTimer() {
-    if (!metrics) return;
+    if (!metrics) {
+      return;
+    }
     const auto us = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
             .count());
@@ -73,14 +77,18 @@ void append_u32(std::string& out, uint32_t v) {
 }
 
 bool read_u32(std::string_view s, size_t& off, uint32_t& v) {
-  if (off + sizeof(uint32_t) > s.size()) return false;
+  if (off + sizeof(uint32_t) > s.size()) {
+    return false;
+  }
   std::memcpy(&v, s.data() + off, sizeof(v));
   off += sizeof(v);
   return true;
 }
 
 bool read_u64(std::string_view s, size_t& off, uint64_t& v) {
-  if (off + sizeof(uint64_t) > s.size()) return false;
+  if (off + sizeof(uint64_t) > s.size()) {
+    return false;
+  }
   std::memcpy(&v, s.data() + off, sizeof(v));
   off += sizeof(v);
   return true;
@@ -105,13 +113,19 @@ bool decode_prewrite_value(std::string_view data, uint64_t* start_ts, uint8_t* m
                            std::string* primary, std::string* value) {
   // 1) start_ts → 2) mvcc_op → 3) primary → 4) value；任一字段越界则失败。
   size_t off = 0;
-  if (!read_u64(data, off, *start_ts) || off >= data.size()) return false;
+  if (!read_u64(data, off, *start_ts) || off >= data.size()) {
+    return false;
+  }
   *mvcc_op = static_cast<uint8_t>(data[off++]);
   uint32_t plen = 0, vlen = 0;
-  if (!read_u32(data, off, plen) || off + plen > data.size()) return false;
+  if (!read_u32(data, off, plen) || off + plen > data.size()) {
+    return false;
+  }
   primary->assign(data.data() + off, plen);
   off += plen;
-  if (!read_u32(data, off, vlen) || off + vlen > data.size()) return false;
+  if (!read_u32(data, off, vlen) || off + vlen > data.size()) {
+    return false;
+  }
   value->assign(data.data() + off, vlen);
   return true;
 }
@@ -141,7 +155,9 @@ std::string encode_onepc_value(uint64_t start_ts, uint64_t commit_ts, uint8_t mv
 bool decode_onepc_value(std::string_view data, uint64_t* start_ts, uint64_t* commit_ts,
                         uint8_t* mvcc_op, std::string* primary, std::string* value) {
   size_t off = 0;
-  if (!read_u64(data, off, *commit_ts)) return false;
+  if (!read_u64(data, off, *commit_ts)) {
+    return false;
+  }
   return decode_prewrite_value(data.substr(off), start_ts, mvcc_op, primary, value);
 }
 
@@ -178,7 +194,9 @@ bool decode_pessimistic_lock_value(std::string_view data, uint64_t* start_ts,
     return false;
   }
   uint32_t plen = 0;
-  if (!read_u32(data, off, plen) || off + plen > data.size()) return false;
+  if (!read_u32(data, off, plen) || off + plen > data.size()) {
+    return false;
+  }
   primary->assign(data.data() + off, plen);
   return true;
 }
@@ -227,11 +245,15 @@ bool decode_command(const std::string& data, Command* out) {
   off += vlen;
   out->cas = false;
   out->expected_revision = 0;
-  if (off == data.size()) return true;
+  if (off == data.size()) {
+    return true;
+  }
 
   // rem: 8=旧 request_id（忽略）；9=CAS；17=旧 request_id+CAS（跳过 request_id）
   const size_t rem = data.size() - off;
-  if (rem == sizeof(uint64_t)) return true;
+  if (rem == sizeof(uint64_t)) {
+    return true;
+  }
   if (rem == sizeof(uint64_t) + 1 + sizeof(uint64_t)) {
     off += sizeof(uint64_t);
   } else if (rem != 1 + sizeof(uint64_t)) {
@@ -244,7 +266,9 @@ bool decode_command(const std::string& data, Command* out) {
 
 int64_t stamp_expire_at_ms(int64_t ttl_ms) {
   // 相对 TTL → 绝对 expire_at；≤0 表示永久（存 0）。
-  if (ttl_ms <= 0) return 0;
+  if (ttl_ms <= 0) {
+    return 0;
+  }
   return wall_ms_now() + ttl_ms;
 }
 
@@ -287,8 +311,8 @@ ProposeResult StoreFacade::require_leader(uint32_t shard_id, uint64_t expected_e
 }
 
 namespace {
-/// 用户数据写（含 Raw / 事务 / CAS）：分裂窗拒写、校验 key 归属、可按 key 占 latch。
-/// Admin / GC 等返回 false，分裂过程本身仍可 propose。
+// 用户数据写（含 Raw / 事务 / CAS）：分裂窗拒写、校验 key 归属、可按 key 占 latch。
+// Admin / GC 等返回 false，分裂过程本身仍可 propose。
 bool cmd_is_user_data_write(CmdOp op) {
   switch (op) {
     case CmdOp::kPut:
@@ -312,15 +336,21 @@ bool ensure_applied_catchup(StorageNode& node, raft::RaftNode* group, uint32_t s
                             uint64_t read_ci) {
   // ---- Leader 线性读：ReadIndex 拿到 commit 点后，等到 last_applied ≥ read_ci。
   // 1) 已追上则立即成功；2) 否则 CV 等待，等待期间 drive_ready 推进 Ready（无 sleep 自旋）。
-  if (!group) return false;
-  if (group->soft_state().last_applied >= read_ci) return true;
+  if (!group) {
+    return false;
+  }
+  if (group->soft_state().last_applied >= read_ci) {
+    return true;
+  }
   return group->wait_applied(read_ci, 400,
                              [&] { node.multi_raft().store().drive_ready(shard_id); });
 }
 
 void fill_cas_meta(ProposeResult& pr) {
   // 从 apply 错误串解析 cas_failed + current_revision，供 Gateway 回客户端。
-  if (pr.error.rfind("cas_failed", 0) != 0) return;
+  if (pr.error.rfind("cas_failed", 0) != 0) {
+    return;
+  }
   pr.cas_failed = true;
   const auto pos = pr.error.find("current_revision=");
   if (pos != std::string::npos) {
@@ -354,7 +384,9 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
                                 std::function<void(ProposeResult)> cb, uint64_t expected_epoch) {
   // ---- 入口：异步 Propose；本函数不阻塞等 apply，结果经 cb 回传（gRPC Finish / 同步 propose 的
   // future）。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
 
   // 1) 延迟直方图：shared_ptr 保证临时 StoreFacade（如 txn GC）析构后，apply 回调仍能 observe。
   auto timer = std::make_shared<ScopedRegionTimer>(metrics_, shard_id, true);
@@ -376,7 +408,9 @@ void StoreFacade::propose_async(uint32_t shard_id, const Command& cmd,
   // 3) 仅 Leader 可写；Follower 带回 redirect，供 Gateway 重路由。
   if (!group->is_leader()) {
     std::string redir = group->leader_address();
-    if (redir.empty()) redir = node.peer_address(group->soft_state().leader_id);
+    if (redir.empty()) {
+      redir = node.peer_address(group->soft_state().leader_id);
+    }
     fail("not_leader", std::move(redir));
     return;
   }
@@ -478,7 +512,9 @@ GetResult StoreFacade::get(uint32_t shard_id, std::string_view key, bool lineari
   }
   // 6) 引擎直读 plain KvRecord（非 MVCC txn_get）。
   auto* eng = node_.engines().get(shard_id);
-  if (!eng) return r;
+  if (!eng) {
+    return r;
+  }
   if (auto rec = eng->get(key)) {
     r.found = true;
     r.value = rec->value;
@@ -493,7 +529,9 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
                                uint64_t expected_revision, int64_t expire_at_ms,
                                std::function<void(ProposeResult)> cb) {
   // ---- 异步 1PC（Put/Delete 热路径）：预检失败同步 cb；成功走 propose_async。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   // 1) Leader / epoch / 分裂。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err, bool cas_failed = false, uint64_t cur_rev = 0) {
@@ -558,7 +596,9 @@ void StoreFacade::one_pc_async(uint32_t shard_id, std::string key, uint64_t star
   cmd.cas = cas;
   cmd.expected_revision = expected_revision;
   propose_async(shard_id, cmd, [commit_ts, cb = std::move(cb)](ProposeResult r) {
-    if (r.ok) r.revision = commit_ts;
+    if (r.ok) {
+      r.revision = commit_ts;
+    }
     cb(std::move(r));
   });
 }
@@ -568,7 +608,9 @@ void StoreFacade::prewrite_async(uint32_t shard_id, std::string key, uint64_t st
                                  uint64_t expected_epoch, bool cas, uint64_t expected_revision,
                                  int64_t expire_at_ms, std::function<void(ProposeResult)> cb) {
   // ---- 异步 Prewrite：预检同 sync；成功走 propose_async（不占 CQ 等 apply）。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   // 1) 门闩。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err, bool cas_failed = false, uint64_t cur_rev = 0) {
@@ -629,7 +671,9 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
                                uint64_t commit_ts, uint64_t expected_epoch,
                                std::function<void(ProposeResult)> cb) {
   // ---- 异步 Commit：预检同 sync；成功走 propose_async。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   // 1) 门闩。
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err) {
@@ -681,7 +725,9 @@ void StoreFacade::commit_async(uint32_t shard_id, std::string key, uint64_t star
 void StoreFacade::rollback_async(uint32_t shard_id, std::string key, uint64_t start_ts,
                                  uint64_t expected_epoch, std::function<void(ProposeResult)> cb) {
   // ---- 异步 Rollback。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) {
     cb(std::move(gate));
@@ -699,7 +745,9 @@ void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uin
                                          uint64_t ttl_ms, uint64_t expected_epoch,
                                          std::function<void(ProposeResult)> cb) {
   // ---- 异步悲观锁：预检同 sync。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   auto fail = [&](std::string err) {
     gate.ok = false;
@@ -729,7 +777,9 @@ void StoreFacade::pessimistic_lock_async(uint32_t shard_id, std::string key, uin
     fail("write_conflict");
     return;
   }
-  if (ttl_ms == 0) ttl_ms = 5000;  // 默认锁 TTL
+  if (ttl_ms == 0) {
+    ttl_ms = 5000;
+  }
   Command cmd;
   cmd.op = CmdOp::kPessimisticLock;
   cmd.key = std::move(key);
@@ -741,7 +791,9 @@ void StoreFacade::pessimistic_rollback_async(uint32_t shard_id, std::string key,
                                              uint64_t expected_epoch,
                                              std::function<void(ProposeResult)> cb) {
   // ---- 异步悲观回滚。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   ProposeResult gate = require_leader(shard_id, expected_epoch);
   if (!gate.ok) {
     cb(std::move(gate));
@@ -758,7 +810,9 @@ void StoreFacade::resolve_lock_async(uint32_t shard_id, std::string key, uint64_
                                      uint64_t commit_ts, uint64_t expected_epoch,
                                      std::function<void(ProposeResult)> cb) {
   // ---- 异步 resolve：同上分支。
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   if (commit_ts == 0) {
     rollback_async(shard_id, std::move(key), start_ts, expected_epoch, std::move(cb));
     return;
@@ -796,7 +850,9 @@ TxnGetResult StoreFacade::txn_get(uint32_t shard_id, std::string_view key, uint6
   }
   // 3) MvccStore::txn_get：锁挡 → locked；否则返回可见 value + commit_ts。
   auto* eng = node_.engines().get(shard_id);
-  if (!eng) return r;
+  if (!eng) {
+    return r;
+  }
   MvccStore mvcc(*eng);
   bool locked = false;
   LockInfo blk;
@@ -846,10 +902,16 @@ TxnScanResult StoreFacade::txn_scan(uint32_t shard_id, std::string_view start_ke
     (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
   auto* eng = node_.engines().get(shard_id);
-  if (!eng) return r;
+  if (!eng) {
+    return r;
+  }
   // 2) 规范化 limit。
-  if (limit == 0) limit = 256;
-  if (limit > 4096) limit = 4096;
+  if (limit == 0) {
+    limit = 256;
+  }
+  if (limit > 4096) {
+    limit = 4096;
+  }
   // 3) 扫引擎；truncated/next_key 供客户端续扫。
   auto range = node_.region_range(shard_id);
   auto sr =
@@ -887,7 +949,9 @@ TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint6
     (void)ensure_applied_catchup(node_, group, shard_id, read_ci);
   }
   auto* eng = node_.engines().get(shard_id);
-  if (!eng) return r;
+  if (!eng) {
+    return r;
+  }
   bool locked = false;
   LockInfo blk;
   auto ttl = MvccStore(*eng).txn_ttl(key, start_ts, &locked, &blk);
@@ -897,7 +961,9 @@ TxnTtlResult StoreFacade::txn_ttl(uint32_t shard_id, std::string_view key, uint6
     r.error = "locked";
     return r;
   }
-  if (ttl) r.ttl_ms = *ttl;
+  if (ttl) {
+    r.ttl_ms = *ttl;
+  }
   return r;
 }
 
@@ -920,7 +986,9 @@ GetLockResult StoreFacade::get_lock(uint32_t shard_id, std::string_view key) {
   }
   // 2) 有锁则填 LockInfo。
   auto* eng = node_.engines().get(shard_id);
-  if (!eng) return r;
+  if (!eng) {
+    return r;
+  }
   if (auto lk = MvccStore(*eng).get_lock(key)) {
     r.found = true;
     r.lock = *lk;
@@ -946,7 +1014,9 @@ CheckTxnResult StoreFacade::check_txn_status(uint32_t shard_id, std::string_view
     return r;
   }
   auto* eng = node_.engines().get(shard_id);
-  if (!eng) return r;
+  if (!eng) {
+    return r;
+  }
   auto st = MvccStore(*eng).check_txn_status(primary, lock_ts);
   r.status = st.status;
   r.commit_ts = st.commit_ts;

@@ -32,14 +32,22 @@ bool contains(std::string_view hay, std::string_view needle) {
 }
 
 std::string min_end(const std::string& a, const std::string& b) {
-  if (a.empty()) return b;
-  if (b.empty()) return a;
+  if (a.empty()) {
+    return b;
+  }
+  if (b.empty()) {
+    return a;
+  }
   return a <= b ? a : b;
 }
 
 std::string max_start(const std::string& a, const std::string& b) {
-  if (a.empty()) return b;
-  if (b.empty()) return a;
+  if (a.empty()) {
+    return b;
+  }
+  if (b.empty()) {
+    return a;
+  }
   return a >= b ? a : b;
 }
 
@@ -57,8 +65,12 @@ void resolve_scan_range(const kv::v1::ScanRequest& req, std::string* start, std:
 void GatewayServer::scan_async(const kv::v1::ScanRequest* req, kv::v1::ScanResponse* resp,
                                std::function<void(grpc::Status)> done) {
   uint32_t limit = req->limit();
-  if (limit == 0) limit = kScanDefaultLimit;
-  if (limit > kScanHardLimit) limit = kScanHardLimit;
+  if (limit == 0) {
+    limit = kScanDefaultLimit;
+  }
+  if (limit > kScanHardLimit) {
+    limit = kScanHardLimit;
+  }
 
   std::string start;
   std::string end;
@@ -327,7 +339,9 @@ void GatewayServer::expire_async(const kv::v1::ExpireRequest* req, kv::v1::Expir
                    return;
                  }
                  int64_t ttl = req->ttl_ms();
-                 if (ttl < 0) ttl = 0;
+                 if (ttl < 0) {
+                   ttl = 0;
+                 }
                  auto put_req = std::make_shared<kv::v1::PutRequest>();
                  put_req->set_key(req->key());
                  put_req->set_value(get_resp->value());

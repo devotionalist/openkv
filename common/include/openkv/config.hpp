@@ -25,55 +25,65 @@
 
 namespace openkv {
 
-/// 集群内一个对等节点的标识与可达地址。
+/* 集群内一个对等节点的标识与可达地址。 */
 struct PeerConfig {
-  std::string node_id;
-  std::string address;
+  std::string node_id;  // 节点唯一 id
+  std::string address;  // 可拨号 host:port
 };
 
-/// 单节点运行时参数（监听地址、数据目录、Raft/RocksDB 相关 tunable）。
+/* 单节点运行时参数（监听地址、数据目录、Raft/RocksDB 相关 tunable）。 */
 struct NodeConfig {
-  std::string node_id;
-  std::string listen_addr{"0.0.0.0:9000"};
-  /// 对外可达地址（REGISTER / peer 自描述）；空则 listen_addr，且 0.0.0.0→127.0.0.1。
+  std::string node_id;                      // 本节点 id
+  std::string listen_addr{"0.0.0.0:9000"};  // 监听地址
+  // 对外可达地址（REGISTER / peer 自描述）；空则 listen_addr，且 0.0.0.0→127.0.0.1。
   std::string advertise_addr;
-  std::string meta_addr{"127.0.0.1:8500"};
-  std::string data_dir{"./data"};
-  uint32_t shard_count{16};
-  uint32_t raft_election_timeout_ms{1000};
-  uint32_t raft_heartbeat_ms{100};
-  uint32_t rocksdb_write_buffer_mb{64};
-  /// E1：耐久级别 none|data|all（SKV_PERSIST_SYNC 可覆盖）。
-  /// 默认 data：Raft log sync；RocksDB apply 异步（崩溃靠日志重放）。
+  std::string meta_addr{"127.0.0.1:8500"};  // Meta 入口
+  std::string data_dir{"./data"};           // 本地数据根目录
+  uint32_t shard_count{16};                 // 历史分片数（Range 时代多由 Meta 管）
+  uint32_t raft_election_timeout_ms{1000};  // Raft 选举超时
+  uint32_t raft_heartbeat_ms{100};          // Raft 心跳间隔
+  uint32_t rocksdb_write_buffer_mb{64};     // RocksDB memtable 写缓冲（MB）
+  // E1：耐久级别 none|data|all（SKV_PERSIST_SYNC 可覆盖）。
+  // 默认 data：Raft log sync；RocksDB apply 异步（崩溃靠日志重放）。
   std::string persist_sync{"data"};
-  /// 多副本：id@host:port,... ；空则单节点（仅自己）。
+  // 多副本：id@host:port,... ；空则单节点（仅自己）。
   std::vector<PeerConfig> raft_peers;
-  /// 启动时创建的 Region（逗号分隔）；缺省 "0"。空字符串 = 不预建（等待 PLACE/ENSURE）。
+  // 启动时创建的 Region（逗号分隔）；缺省 "0"。空字符串 = 不预建（等待 PLACE/ENSURE）。
   std::vector<uint32_t> bootstrap_regions{0};
 };
 
-// 初始集群静态配置（bootstrap）；运行时以 Meta 路由表为准
-/// 集群引导信息：存储/计算/Meta 节点列表、分片数与副本因子。
+/*
+ * 初始集群静态配置（bootstrap）；运行时以 Meta 路由表为准。
+ * 含存储/计算/Meta 节点列表、分片数与副本因子。
+ */
 struct ClusterBootstrap {
-  std::vector<PeerConfig> storage_peers;
-  std::vector<PeerConfig> compute_peers;
-  std::vector<PeerConfig> meta_peers;  // Meta Raft 副本（>=3 时多数派 HA）
-  std::string meta_addr;
-  std::string node_id;  // 本 Meta 进程 id（多副本时必填）
-  std::string listen_addr{"0.0.0.0:8500"};
-  /// Meta 本地数据根（raft persist 在 data_dir/raft）；空则 ./data/<node_id>
+  std::vector<PeerConfig> storage_peers;    // 初始 Storage 列表
+  std::vector<PeerConfig> compute_peers;    // 初始 Compute/Gateway 列表
+  std::vector<PeerConfig> meta_peers;       // Meta Raft 副本（>=3 时多数派 HA）
+  std::string meta_addr;                    // 对外 Meta 入口（可与 listen 不同）
+  std::string node_id;                      // 本 Meta 进程 id（多副本时必填）
+  std::string listen_addr{"0.0.0.0:8500"};  // Meta 监听
+  // Meta 本地数据根（raft persist 在 data_dir/raft）；空则 ./data/<node_id>
   std::string data_dir;
-  uint32_t shard_count{16};
-  uint32_t replica_factor{3};
-  uint32_t raft_election_timeout_ms{800};
-  uint32_t raft_heartbeat_ms{100};
-  /// Meta 日志压缩阈值；0=不压缩。有 ClusterState 快照后默认 256。
+  uint32_t shard_count{16};                // bootstrap 分片提示
+  uint32_t replica_factor{3};              // 目标 RF
+  uint32_t raft_election_timeout_ms{800};  // Meta Raft 选举超时
+  uint32_t raft_heartbeat_ms{100};         // Meta Raft 心跳
+  // Meta 日志压缩阈值；0=不压缩。有 ClusterState 快照后默认 256。
   size_t raft_compact_threshold{256};
 };
 
-/// 从 path 加载节点配置；文件不存在或格式错误时抛出 std::runtime_error。
+/**
+ * 从 path 加载节点配置；文件不存在或格式错误时抛出 std::runtime_error。
+ * @param path 配置文件路径
+ * @return 解析后的 NodeConfig
+ */
 NodeConfig load_node_config(const std::string& path);
-/// 从 path 加载集群 bootstrap；peer 列表格式见 config.cpp 注释。
+/**
+ * 从 path 加载集群 bootstrap；peer 列表格式见 config.cpp 注释。
+ * @param path 配置文件路径
+ * @return 解析后的 ClusterBootstrap
+ */
 ClusterBootstrap load_bootstrap(const std::string& path);
 
 }  // namespace openkv

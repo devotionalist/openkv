@@ -47,27 +47,25 @@ void Router::deregister(uint32_t region_id) {
   }
 }
 
-/**
- * @brief 发送raft消息
- *
- * @param region_id 区域id
- * @param msg raft消息
- * @return true 发送成功
- * @return false 发送失败
- */
 bool Router::send_raft(uint32_t region_id, PeerMsg msg) {
   std::shared_ptr<PeerMailbox> mb;
-  NotifyFn notify;  // 通知函数
+  NotifyFn notify;
   {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = peers_.find(region_id);
-    if (it == peers_.end()) return false;
+    if (it == peers_.end()) {
+      return false;
+    }
     mb = it->second;
-    notify = raft_notify_;  // 设置通知
+    notify = raft_notify_;
   }
   // 【非网络】投递本机 Peer 邮箱 + schedule；出网在 Ready 之后。
-  if (!mb->try_send(std::move(msg))) return false;
-  if (notify) notify(region_id);
+  if (!mb->try_send(std::move(msg))) {
+    return false;
+  }
+  if (notify) {
+    notify(region_id);
+  }
   return true;
 }
 
@@ -77,12 +75,18 @@ bool Router::send_apply(uint32_t region_id, ApplyControl msg) {
   {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = applies_.find(region_id);
-    if (it == applies_.end()) return false;
+    if (it == applies_.end()) {
+      return false;
+    }
     mb = it->second;
     notify = apply_notify_;
   }
-  if (!mb->try_send(std::move(msg))) return false;
-  if (notify) notify(region_id);
+  if (!mb->try_send(std::move(msg))) {
+    return false;
+  }
+  if (notify) {
+    notify(region_id);
+  }
   return true;
 }
 
@@ -92,14 +96,20 @@ bool Router::broadcast_tick() {
   {
     std::lock_guard<std::mutex> lk(mu_);
     mbs.reserve(peers_.size());
-    for (auto& [id, mb] : peers_) mbs.emplace_back(id, mb);
+    for (auto& [id, mb] : peers_) {
+      mbs.emplace_back(id, mb);
+    }
     notify = raft_notify_;
   }
   bool any = false;
   for (auto& [id, mb] : mbs) {
-    if (!mb->try_send(TickMsg{})) continue;
+    if (!mb->try_send(TickMsg{})) {
+      continue;
+    }
     any = true;
-    if (notify) notify(id);
+    if (notify) {
+      notify(id);
+    }
   }
   return any;
 }
@@ -120,7 +130,9 @@ std::vector<uint32_t> Router::peer_regions() const {
   std::lock_guard<std::mutex> lk(mu_);
   std::vector<uint32_t> out;
   out.reserve(peers_.size());
-  for (const auto& [id, _] : peers_) out.push_back(id);
+  for (const auto& [id, _] : peers_) {
+    out.push_back(id);
+  }
   return out;
 }
 

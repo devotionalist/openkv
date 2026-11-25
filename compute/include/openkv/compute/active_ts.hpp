@@ -28,24 +28,35 @@
 
 namespace openkv::compute {
 
-/// 本 Gateway 已知活跃 start_ts；过期自动剔除，避免挡住 GC。
+/* 本 Gateway 已知活跃 start_ts；过期自动剔除，避免挡住 GC。 */
 class ActiveTsTracker {
  public:
-  /// 构造；ttl 内未 remove 的条目在 min()/扫描时剔除。
+  /**
+   * 构造；ttl 内未 remove 的条目在 min()/扫描时剔除。
+   * @param ttl 条目存活时间；超时未 remove 则剔除
+   */
   explicit ActiveTsTracker(std::chrono::milliseconds ttl = std::chrono::seconds(60));
 
-  /// 登记一个活跃 start_ts（Put/TxnBegin 占用时调用）。
+  /**
+   * 登记一个活跃 start_ts（Put/TxnBegin 占用时调用）。
+   * @param ts 逻辑时间戳 start_ts
+   */
   void add(uint64_t ts);
-  /// 事务结束或 Put 完成后注销该 ts。
+  /**
+   * 事务结束或 Put 完成后注销该 ts。
+   * @param ts 逻辑时间戳 start_ts
+   */
   void remove(uint64_t ts);
 
-  /// 当前活跃集合中的最小 start_ts；无活跃则为 UINT64_MAX（上报 Meta 表示「无挡」）。
+  /**
+   * 当前活跃集合中的最小 start_ts；无活跃则为 UINT64_MAX（上报 Meta 表示「无挡」）。
+   */
   uint64_t min();
 
  private:
-  std::mutex mu_;
-  std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> m_;
-  std::chrono::milliseconds ttl_;
+  std::mutex mu_;                                                          // 保护 m_
+  std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> m_;  // ts → 登记时刻
+  std::chrono::milliseconds ttl_;                                          // 过期剔除阈值
 };
 
 }  // namespace openkv::compute

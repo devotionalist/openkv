@@ -39,35 +39,49 @@ using ::openkv::to_hex;
 std::string encode_peers_csv(const std::vector<Peer>& peers) {
   std::ostringstream oss;
   for (size_t i = 0; i < peers.size(); ++i) {
-    if (i) oss << ',';
+    if (i) {
+      oss << ',';
+    }
     oss << peers[i].id << '@' << peers[i].address;
-    if (peers[i].learner) oss << "*N";
+    if (peers[i].learner) {
+      oss << "*N";
+    }
   }
   return oss.str();
 }
 
 std::string wrap_snap_conf(const std::string& conf_csv, std::string kv) {
-  if (conf_csv.empty()) return kv;
+  if (conf_csv.empty()) {
+    return kv;
+  }
   return std::string(kMagicSnapConf) + conf_csv + "\n" + std::move(kv);
 }
 
 bool parse_peers_csv(std::string_view csv, std::vector<Peer>* out) {
-  if (!out) return false;
+  if (!out) {
+    return false;
+  }
   out->clear();
   size_t i = 0;
   while (i < csv.size()) {
     size_t j = csv.find(',', i);
-    if (j == std::string_view::npos) j = csv.size();
+    if (j == std::string_view::npos) {
+      j = csv.size();
+    }
     auto item = csv.substr(i, j - i);
     i = j + 1;
-    if (item.empty()) continue;
+    if (item.empty()) {
+      continue;
+    }
     bool learner = false;
     if (item.size() >= 2 && item.substr(item.size() - 2) == "*N") {
       learner = true;
       item.remove_suffix(2);
     }
     const auto at = item.find('@');
-    if (at == std::string_view::npos || at == 0) continue;
+    if (at == std::string_view::npos || at == 0) {
+      continue;
+    }
     Peer p;
     p.id = std::string(item.substr(0, at));
     p.address = std::string(item.substr(at + 1));
@@ -78,54 +92,65 @@ bool parse_peers_csv(std::string_view csv, std::vector<Peer>* out) {
 }
 
 void peel_snap_conf(std::string_view data, std::vector<Peer>* conf, std::string_view* kv) {
-  if (conf) conf->clear();
+  if (conf) {
+    conf->clear();
+  }
   if (!data.starts_with(kMagicSnapConf)) {
-    if (kv) *kv = data;
+    if (kv) {
+      *kv = data;
+    }
     return;
   }
   const auto rest = data.substr(kMagicSnapConf.size());
   const auto nl = rest.find('\n');
   if (nl == std::string_view::npos) {
-    if (kv) *kv = data;
+    if (kv) {
+      *kv = data;
+    }
     return;
   }
-  if (conf) parse_peers_csv(rest.substr(0, nl), conf);
-  if (kv) *kv = rest.substr(nl + 1);
+  if (conf) {
+    parse_peers_csv(rest.substr(0, nl), conf);
+  }
+  if (kv) {
+    *kv = rest.substr(nl + 1);
+  }
 }
 
 }  // namespace
 
 void Replication::dec_inflight(const std::string& peer_id) {
   auto it = n_.progress_.inflight_.find(peer_id);
-  if (it != n_.progress_.inflight_.end() && it->second > 0) --it->second;
+  if (it != n_.progress_.inflight_.end() && it->second > 0) {
+    --it->second;
+  }
   n_.progress_.snap_inflight_.erase(peer_id);
   n_.progress_.probe_inflight_.erase(peer_id);
 }
 
 bool Replication::try_inc_inflight(const std::string& peer_id) {
   auto& cnt = n_.progress_.inflight_[peer_id];
-  if (cnt >= n_.opts_.max_inflight_msgs) return false;
+  if (cnt >= n_.opts_.max_inflight_msgs) {
+    return false;
+  }
   ++cnt;
   return true;
 }
 
 // Leader 且被标了 need_replicate_ 时，立刻推一轮 AE/快照（不等下一个 heartbeat tick）。
 void Replication::maybe_replicate() {
-  if (n_.role_ != Role::kLeader || !need_replicate_) return;
+  if (n_.role_ != Role::kLeader || !need_replicate_) {
+    return;
+  }
   broadcast_replicate();
   need_replicate_ = false;
 }
 
-/**
- * 提交日志：如果日志的 term 等于当前任期，并且日志的索引大于当前提交索引，则更新当前提交索引。
- *
- * 从当前提交索引到日志的最后一个索引，遍历每个索引，如果索引的 term
- * 等于当前任期，并且索引的索引大于当前提交索引，则更新当前提交索引。 如果索引的 term
- * 不等于当前任期，则跳过。 如果索引的 term
- * 等于当前任期，并且索引的索引大于当前提交索引，则更新当前提交索引。
- */
+// Leader：在多数派已复制的前提下抬 commit_index（Joint 要双多数）。
 void Replication::maybe_commit() {
-  if (n_.role_ != Role::kLeader) return;
+  if (n_.role_ != Role::kLeader) {
+    return;
+  }
   uint64_t lo = n_.commit_index_ + 1;
   uint64_t hi = n_.log_.last_index();
   uint64_t best = n_.commit_index_;
@@ -137,7 +162,9 @@ void Replication::maybe_commit() {
     } else {
       ok = n_.membership_.quorate_at(n_.membership_.voter_ids(), cand);
     }
-    if (!ok) continue;
+    if (!ok) {
+      continue;
+    }
     auto e = n_.log_.entry(cand);
     if (e && e->term == n_.term_) {
       best = std::max(best, cand);  // 更新当前提交索引
@@ -145,7 +172,9 @@ void Replication::maybe_commit() {
     }
   }
   // 更新当前提交索引
-  if (best > n_.commit_index_) n_.commit_index_ = best;
+  if (best > n_.commit_index_) {
+    n_.commit_index_ = best;
+  }
 }
 
 // 对每个 peer 推一轮（只入队；发网交给 Ready/Store）。
@@ -156,7 +185,9 @@ void Replication::broadcast_replicate() {
 
   for (const auto& p : n_.opts_.peers) {
     // —— 1. 跳过自己 ——
-    if (p.id == n_.opts_.self_id) continue;
+    if (p.id == n_.opts_.self_id) {
+      continue;
+    }
 
     // —— 2. 分支 A：next 掉出日志窗 → InstallSnapshot ——
     if (n_.progress_.next_index_[p.id] < n_.log_.first_index()) {
@@ -167,7 +198,9 @@ void Replication::broadcast_replicate() {
         continue;
       }
       // 2.2 快照已在途，勿重复发
-      if (n_.progress_.snap_inflight_.count(p.id)) continue;
+      if (n_.progress_.snap_inflight_.count(p.id)) {
+        continue;
+      }
       // 2.3 距上次发快照太近，限流
       if (n_.opts_.snapshot_min_interval_ms > 0) {
         const auto now = std::chrono::steady_clock::now();
@@ -187,7 +220,9 @@ void Replication::broadcast_replicate() {
       n_.progress_.snap_inflight_.insert(p.id);
       uint64_t last_idx = n_.last_applied_ > 0 ? n_.last_applied_ : (n_.log_.first_index() - 1);
       uint64_t last_term = n_.log_.snapshot_term();
-      if (auto e = n_.log_.entry(last_idx)) last_term = e->term;
+      if (auto e = n_.log_.entry(last_idx)) {
+        last_term = e->term;
+      }
       const std::string conf_csv = encode_peers_csv(n_.opts_.peers);
 
       // 2.6 入队：external_io 只塞 meta 壳（blob 给 SnapWorker）；否则当场打包
@@ -231,7 +266,9 @@ void Replication::broadcast_replicate() {
     // 3.3 空批次 = probe/心跳；有条目则占 inflight
     const bool probe = ents.empty();
     if (probe) {
-      if (n_.progress_.probe_inflight_.count(p.id)) continue;
+      if (n_.progress_.probe_inflight_.count(p.id)) {
+        continue;
+      }
       n_.progress_.probe_inflight_.insert(p.id);
     } else if (!try_inc_inflight(p.id)) {
       n_.progress_.peer_send_blocked_.insert(p.id);
@@ -254,7 +291,9 @@ void Replication::on_append_entries(const std::string& from, uint64_t term, uint
                                     uint64_t leader_commit, bool* success, uint64_t* match_index) {
   *success = false;
   *match_index = 0;
-  if (term < n_.term_) return;
+  if (term < n_.term_) {
+    return;
+  }
   n_.election_.step_down_if_stale(term);
   n_.election_.become_follower(n_.term_, from);
   n_.election_.election_elapsed_ = 0;
@@ -265,7 +304,9 @@ void Replication::on_append_entries(const std::string& from, uint64_t term, uint
   }
   if (n_.opts_.external_io && !entries.empty()) {
     for (const auto& e : entries) {
-      if (auto got = n_.log_.entry(e.index)) n_.ready_io_.ready_unstable_.push_back(*got);
+      if (auto got = n_.log_.entry(e.index)) {
+        n_.ready_io_.ready_unstable_.push_back(*got);
+      }
     }
   }
   *success = true;
@@ -280,7 +321,9 @@ void Replication::on_append_entries(const std::string& from, uint64_t term, uint
 void Replication::on_append_entries_reply_locked(const std::string& from, uint64_t term,
                                                  bool success, uint64_t match_index) {
   n_.election_.step_down_if_stale(term);
-  if (n_.role_ != Role::kLeader || term != n_.term_) return;
+  if (n_.role_ != Role::kLeader || term != n_.term_) {
+    return;
+  }
   dec_inflight(from);
   if (success) {
     n_.election_.note_peer_progress(from);
@@ -297,7 +340,9 @@ void Replication::on_append_entries_reply_locked(const std::string& from, uint64
     }
   } else {
     n_.election_.note_peer_progress(from);
-    if (n_.progress_.next_index_[from] > 0) --n_.progress_.next_index_[from];
+    if (n_.progress_.next_index_[from] > 0) {
+      --n_.progress_.next_index_[from];
+    }
     broadcast_replicate();
     need_replicate_ = false;
   }
@@ -337,13 +382,17 @@ void Replication::on_install_snapshot(const std::string& from, uint64_t term, ui
   if (!snap_conf.empty()) {
     n_.opts_.peers = std::move(snap_conf);
     for (const auto& p : n_.opts_.peers) {
-      if (n_.opts_.on_peer_addr && !p.address.empty()) n_.opts_.on_peer_addr(p.id, p.address);
+      if (n_.opts_.on_peer_addr && !p.address.empty()) {
+        n_.opts_.on_peer_addr(p.id, p.address);
+      }
     }
     SKV_INFO << "shard=" << n_.opts_.shard_id
              << " snapshot restored conf peers=" << n_.opts_.peers.size();
   }
   n_.log_.compact_to(last_index, last_term);
-  if (n_.commit_index_ < last_index) n_.commit_index_ = last_index;
+  if (n_.commit_index_ < last_index) {
+    n_.commit_index_ = last_index;
+  }
   n_.last_applied_ = last_index;
   n_.apply_scheduled_ = last_index;
   n_.log_persist_.persist_locked();

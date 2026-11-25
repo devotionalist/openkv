@@ -24,13 +24,13 @@ namespace openkv::raft {
 
 inline constexpr size_t kWireMagicLen = 4;
 
-/// 日志文件容器头（4 字节，口语 RLG）。
+// 日志文件容器头（4 字节，口语 RLG）。
 inline constexpr std::string_view kMagicRlg{"RLG\0", kWireMagicLen};
-/// RaftLocalState 记录。
+// RaftLocalState 记录。
 inline constexpr std::string_view kMagicRls{"RLS1"};
-/// 单条 LogEntry 记录（含 CRC）。
+// 单条 LogEntry 记录（含 CRC）。
 inline constexpr std::string_view kMagicRle{"RLE2"};
-/// 本地 FSM 快照文件头（Apply 落盘 / 恢复）。
+// 本地 FSM 快照文件头（Apply 落盘 / 恢复）。
 inline constexpr std::string_view kMagicFsmSnap{"FSN1"};
 
 }  // namespace openkv::raft

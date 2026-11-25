@@ -54,7 +54,9 @@ TEST(MultiRaftTest, GetOrCreateAndLeaders) {
 
   for (int i = 0; i < 80; ++i) {
     mr.tick_all();
-    if (mr.leader_shards().size() == 2u) break;
+    if (mr.leader_shards().size() == 2u) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   auto leaders = mr.leader_shards();

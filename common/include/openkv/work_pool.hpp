@@ -30,10 +30,17 @@
 
 namespace openkv {
 
+/* 固定 worker 数的任务队列；post 入队，stop 排空后 join。 */
 class WorkPool {
  public:
+  /**
+   * 启动 n 个 worker（n==0 当作 1）。
+   * @param n worker 个数
+   */
   explicit WorkPool(size_t n) {
-    if (n == 0) n = 1;
+    if (n == 0) {
+      n = 1;
+    }
     workers_.reserve(n);
     for (size_t i = 0; i < n; ++i) {
       workers_.emplace_back([this] { loop(); });
@@ -45,50 +52,74 @@ class WorkPool {
   WorkPool(const WorkPool&) = delete;
   WorkPool& operator=(const WorkPool&) = delete;
 
+  /**
+   * 投递任务；已 stop 则丢弃。
+   * @param fn 在 worker 线程执行的回调
+   */
   void post(std::function<void()> fn) {
     {
       std::lock_guard<std::mutex> lock(mu_);
-      if (stop_) return;
+      if (stop_) {
+        return;
+      }
       q_.push_back(std::move(fn));
     }
     cv_.notify_one();
   }
 
+  /**
+   * 置 stop、唤醒并 join 全部 worker；幂等。
+   */
   void stop() {
     {
       std::lock_guard<std::mutex> lock(mu_);
-      if (stop_) return;
+      if (stop_) {
+        return;
+      }
       stop_ = true;
     }
     cv_.notify_all();
     for (auto& t : workers_) {
-      if (t.joinable()) t.join();
+      if (t.joinable()) {
+        t.join();
+      }
     }
     workers_.clear();
   }
 
+  /**
+   * 当前 worker 线程数（stop 后为 0）。
+   * @return worker 个数
+   */
   size_t workers() const { return workers_.size(); }
 
  private:
+  /**
+   * worker 主循环：等队列或 stop。
+   */
   void loop() {
     for (;;) {
       std::function<void()> fn;
       {
         std::unique_lock<std::mutex> lock(mu_);
         cv_.wait(lock, [&] { return stop_ || !q_.empty(); });
-        if (stop_ && q_.empty()) return;
+        if (stop_ && q_.empty()) {
+          return;
+        }
         fn = std::move(q_.front());
         q_.pop_front();
       }
-      if (fn) fn();
+      if (fn) {
+        fn();
+      }
     }
   }
 
-  std::mutex mu_;
-  std::condition_variable cv_;
-  std::deque<std::function<void()>> q_;
-  bool stop_{false};
-  std::vector<std::thread> workers_;
+  std::mutex mu_;                        // 保护 q_ / stop_
+  std::condition_variable cv_;           // 任务到达 / stop
+  std::deque<std::function<void()>> q_;  // 待执行任务
+  bool stop_{false};                     // 生命周期结束标志
+  std::vector<std::thread> workers_;     // worker 线程
 };
 
 }  // namespace openkv

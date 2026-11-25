@@ -35,16 +35,20 @@
 
 namespace openkv::raft {
 
-/// RaftLocalState：HardState + 日志窗口边界。
+/* RaftLocalState：HardState + 日志窗口边界。 */
 struct RaftLocalState {
-  uint64_t term{0};
-  std::string voted_for;
-  uint64_t commit_index{0};
-  uint64_t last_applied{0};
-  uint64_t first_index{1};
-  uint64_t snapshot_term{0};
-  uint64_t last_index{0};
+  uint64_t term{0};           // 当前任期
+  std::string voted_for;      // 本任期投票对象
+  uint64_t commit_index{0};   // 已提交水位
+  uint64_t last_applied{0};   // 已 apply 水位
+  uint64_t first_index{1};    // 日志窗首 index
+  uint64_t snapshot_term{0};  // 快照边界 term
+  uint64_t last_index{0};     // 日志窗末 index（可与引擎内一致）
 
+  /**
+   * 转成 PersistedHardState（不含 last_index）。
+   * @return 硬状态副本
+   */
   PersistedHardState to_persisted() const {
     PersistedHardState hs;
     hs.term = term;
@@ -56,6 +60,12 @@ struct RaftLocalState {
     return hs;
   }
 
+  /**
+   * 从 PersistedHardState 构造；可选带上 last_index。
+   * @param hs 硬状态
+   * @param last_index 日志末下标；默认 0
+   * @return RaftLocalState
+   */
   static RaftLocalState from_persisted(const PersistedHardState& hs, uint64_t last_index = 0) {
     RaftLocalState st;
     st.term = hs.term;
@@ -69,60 +79,155 @@ struct RaftLocalState {
   }
 };
 
-/// 一次原子写批次（RaftLogBatch）。
+/* 一次原子写批次：append / cut / put_raft_state，由 consume 一次性提交。 */
 class RaftLogBatch {
  public:
   virtual ~RaftLogBatch() = default;
 
-  /// 追加 entries；不更新 RaftLocalState（由 put_raft_state 负责）。
+  /**
+   * 追加 entries；不更新 RaftLocalState（由 put_raft_state 负责）。
+   * @param raft_group_id 组 id
+   * @param entries 待追加日志
+   */
   virtual void append(uint64_t raft_group_id, std::vector<LogEntry> entries) = 0;
-  /// 删除 [from, to) 内将被覆盖的旧日志。
+  /**
+   * 删除 [from, to) 内将被覆盖的旧日志。
+   * @param raft_group_id 组 id
+   * @param from 区间起（含）
+   * @param to 区间止（不含）
+   */
   virtual void cut_logs(uint64_t raft_group_id, uint64_t from, uint64_t to) = 0;
+  /**
+   * 写入/覆盖该 group 的 RaftLocalState。
+   * @param raft_group_id 组 id
+   * @param state 完整本地状态
+   */
   virtual void put_raft_state(uint64_t raft_group_id, const RaftLocalState& state) = 0;
+  /**
+   * 批次是否无任何变更。
+   * @return true 表示空
+   */
   virtual bool empty() const = 0;
 };
 
-/// Multi-Raft 共享引擎（RaftEngine）。
+/* Multi-Raft 共享持久化引擎：consume 原子落盘，读路径供恢复。 */
 class RaftEngine {
  public:
   virtual ~RaftEngine() = default;
 
-  // 创建日志批次
+  /**
+   * 创建空批次。
+   * @param capacity_hint 预留容量提示；默认 0
+   * @return 新批次
+   */
   virtual std::unique_ptr<RaftLogBatch> make_log_batch(size_t capacity_hint = 0) = 0;
-  // 消费批次；sync=true 时 fsync/WriteOptions.sync。返回写入字节近似值。
+  /**
+   * 原子提交批次；sync=true 时 fsync/WriteOptions.sync。
+   * @param batch 待提交批次
+   * @param sync 是否耐久刷盘
+   * @return 写入字节近似值；失败可为 0
+   */
   virtual size_t consume(RaftLogBatch& batch, bool sync) = 0;
 
-  // 获取raft状态
+  /**
+   * 读该 group 的 RaftLocalState。
+   * @param raft_group_id 组 id
+   * @return 状态或 nullopt
+   */
   virtual std::optional<RaftLocalState> get_raft_state(uint64_t raft_group_id) const = 0;
-  // 获取日志
+  /**
+   * 按 index 读单条日志。
+   * @param raft_group_id 组 id
+   * @param index 日志下标
+   * @return 条目或 nullopt
+   */
   virtual std::optional<LogEntry> get_entry(uint64_t raft_group_id, uint64_t index) const = 0;
-  // 拉取 [begin, end) 到 to；受 max_size 限制。返回条数。
+  /**
+   * 拉取 [begin, end) 到 to；受 max_size 限制。
+   * @param raft_group_id 组 id
+   * @param begin 起始 index（含）
+   * @param end 结束 index（不含）
+   * @param max_size 累计 data 字节上限
+   * @param to 输出缓冲
+   * @return 实际条数
+   */
   virtual size_t fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end,
                                   size_t max_size, std::vector<LogEntry>* to) const = 0;
 
-  // 删除 [from, to) 日志；返回删除条数。
+  /**
+   * 删除 [from, to) 日志。
+   * @param raft_group_id 组 id
+   * @param from 区间起（含）
+   * @param to 区间止（不含）
+   * @return 删除条数
+   */
   virtual size_t gc(uint64_t raft_group_id, uint64_t from, uint64_t to) = 0;
-  // 销毁该 group 的 state + 全部日志。
+  /**
+   * 销毁该 group 的 state + 全部日志。
+   * @param raft_group_id 组 id
+   */
   virtual void clean(uint64_t raft_group_id) = 0;
 
-  // 获取同步模式
+  /**
+   * 当前耐久级别。
+   * @return SyncMode
+   */
   virtual SyncMode sync_mode() const = 0;
-  // 设置同步模式
+  /**
+   * 运行时改耐久级别。
+   * @param m 新级别
+   */
   virtual void set_sync_mode(SyncMode m) = 0;
 };
 
-/// 从引擎装载 group → PersistedHardState + entries（RaftNode 恢复用）。
+/**
+ * 从引擎装载 group → PersistedHardState + entries（RaftNode 恢复用）。
+ * @param eng 引擎
+ * @param raft_group_id 组 id
+ * @param hs 输出硬状态
+ * @param entries 输出日志
+ * @return 是否装载成功
+ */
 bool load_group_from_engine(const RaftEngine& eng, uint64_t raft_group_id, PersistedHardState* hs,
                             std::vector<LogEntry>* entries);
 
-/// 把当前内存 log + hs 整窗写入引擎（冷启动兼容 / 全量 flush）。
+/**
+ * 把当前内存 log + hs 整窗写入引擎（冷启动兼容 / 全量 flush）。
+ * @param eng 引擎
+ * @param raft_group_id 组 id
+ * @param hs 硬状态
+ * @param log 内存日志
+ * @param sync 是否 fsync
+ * @return 写入字节近似值
+ */
 size_t save_group_to_engine(RaftEngine& eng, uint64_t raft_group_id, const PersistedHardState& hs,
                             const RaftLog& log, bool sync);
 
-// 二进制编解码（File / Rocks 共用）
+/**
+ * 编码 RaftLocalState 为二进制（File / Rocks 共用）。
+ * @param st 本地状态
+ * @return 字节串
+ */
 std::string encode_raft_local_state(const RaftLocalState& st);
+/**
+ * 解码 RaftLocalState。
+ * @param raw 字节
+ * @param st 输出
+ * @return 是否成功
+ */
 bool decode_raft_local_state(std::string_view raw, RaftLocalState* st);
+/**
+ * 编码单条 LogEntry（含 CRC）。
+ * @param e 日志条目
+ * @return 字节串
+ */
 std::string encode_log_entry(const LogEntry& e);
+/**
+ * 解码单条 LogEntry。
+ * @param raw 字节
+ * @param e 输出
+ * @return 是否成功
+ */
 bool decode_log_entry(std::string_view raw, LogEntry* e);
 
 }  // namespace openkv::raft

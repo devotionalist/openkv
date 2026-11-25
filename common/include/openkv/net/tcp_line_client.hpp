@@ -23,7 +23,13 @@
 
 namespace openkv::net {
 
-/// 解析 host:port；失败返回 false。
+/**
+ * 解析 host:port；失败返回 false。
+ * @param addr 形如 host:port 的地址
+ * @param host 写出主机名
+ * @param port 写出端口
+ * @return 是否解析成功
+ */
 bool parse_host_port(std::string_view addr, std::string* host, uint16_t* port);
 
 }  // namespace openkv::net

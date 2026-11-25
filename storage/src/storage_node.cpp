@@ -64,19 +64,25 @@ std::string wrap_snap_range(const openkv::KeyRange &range, std::string kv) {
 
 bool peel_snap_range(std::string_view data, openkv::KeyRange *range, std::string_view *kv) {
   if (!data.starts_with(kSnapRangeMagic)) {
-    if (kv) *kv = data;
+    if (kv) {
+      *kv = data;
+    }
     return false;
   }
   const auto rest = data.substr(kSnapRangeMagic.size());
   const auto nl = rest.find('\n');
   if (nl == std::string_view::npos) {
-    if (kv) *kv = data;
+    if (kv) {
+      *kv = data;
+    }
     return false;
   }
   const auto line = rest.substr(0, nl);
   const auto bar = line.find('|');
   if (bar == std::string_view::npos) {
-    if (kv) *kv = data;
+    if (kv) {
+      *kv = data;
+    }
     return false;
   }
   if (range) {
@@ -85,7 +91,9 @@ bool peel_snap_range(std::string_view data, openkv::KeyRange *range, std::string
     from_hex(line.substr(0, bar), &range->start_key);
     from_hex(line.substr(bar + 1), &range->end_key);
   }
-  if (kv) *kv = rest.substr(nl + 1);
+  if (kv) {
+    *kv = rest.substr(nl + 1);
+  }
   return true;
 }
 
@@ -143,7 +151,9 @@ openkv::raftstore::IndexWaiter::WaitOutcome StorageNode::wait_apply(
 
 void StorageNode::wait_apply_async(uint64_t index, std::chrono::milliseconds timeout,
                                    openkv::raftstore::IndexWaiter::CompleteCb cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   const auto t0 = std::chrono::steady_clock::now();
   index_waiter_.wait_async(
       index, timeout,
@@ -169,7 +179,9 @@ std::string StorageNode::apply_wait_prometheus() const {
 
 void StorageNode::on_apply_entries(uint32_t shard_id,
                                    const std::vector<openkv::raft::LogEntry> &entries) {
-  if (entries.empty()) return;
+  if (entries.empty()) {
+    return;
+  }
   if (entries.size() == 1) {
     on_apply(shard_id, entries[0].index, entries[0].data);
     return;
@@ -200,14 +212,18 @@ void StorageNode::on_apply_entries(uint32_t shard_id,
     if (!puts.empty() || !dels.empty()) {
       if (!eng.write_batch(puts, dels)) {
         for (auto &p : pending) {
-          if (p.err.empty()) p.err = "engine_write_failed";
+          if (p.err.empty()) {
+            p.err = "engine_write_failed";
+          }
         }
       }
       puts.clear();
       dels.clear();
     }
     for (auto &p : pending) {
-      if (p.has_watch && p.err.empty()) watch_hub_.push(p.watch);
+      if (p.has_watch && p.err.empty()) {
+        watch_hub_.push(p.watch);
+      }
       publish_apply_result(p.index, p.err);
     }
     pending.clear();
@@ -289,7 +305,9 @@ void StorageNode::on_apply_entries(uint32_t shard_id,
     fallback(e);
   }
   flush();
-  if (need_watch_trim) WatchLog::trim(eng);
+  if (need_watch_trim) {
+    WatchLog::trim(eng);
+  }
 }
 
 void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string &data) {
@@ -584,10 +602,14 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
         if (auto *lg = multi_raft_->get(shard_id)) {
           peers = lg->peers();
           for (auto &p : peers) {
-            if (p.address.empty()) p.address = peer_address(p.id);
+            if (p.address.empty()) {
+              p.address = peer_address(p.id);
+            }
           }
         }
-        if (peers.empty()) peers = bootstrap_peers_;
+        if (peers.empty()) {
+          peers = bootstrap_peers_;
+        }
         std::lock_guard<std::mutex> lock(create_mu_);
         pending_peers_[right] = std::move(peers);
       }
@@ -664,11 +686,15 @@ void StorageNode::on_apply(uint32_t shard_id, uint64_t index, const std::string 
 }
 
 bool StorageNode::add_learner(uint32_t shard_id, const raft::Peer &peer) {
-  if (!peer.address.empty()) transport().set_peer(peer.id, peer.address);
+  if (!peer.address.empty()) {
+    transport().set_peer(peer.id, peer.address);
+  }
   // 禁止 get_or_create：Joining 节点 raft_peers 常为单机，误建会成孤儿 Leader
   // 脑裂。
   auto *g = multi_raft_->get(shard_id);
-  if (!g || !g->is_leader()) return false;
+  if (!g || !g->is_leader()) {
+    return false;
+  }
   raft::ConfChange cc;
   cc.type = raft::ConfChange::kAddLearner;
   cc.peer = peer;
@@ -677,7 +703,9 @@ bool StorageNode::add_learner(uint32_t shard_id, const raft::Peer &peer) {
 
 bool StorageNode::promote_learner(uint32_t shard_id, const std::string &peer_id) {
   auto *g = multi_raft_->get(shard_id);
-  if (!g || !g->is_leader()) return false;
+  if (!g || !g->is_leader()) {
+    return false;
+  }
   raft::ConfChange cc;
   cc.type = raft::ConfChange::kPromoteLearner;
   cc.peer.id = peer_id;
@@ -686,7 +714,9 @@ bool StorageNode::promote_learner(uint32_t shard_id, const std::string &peer_id)
 
 bool StorageNode::remove_peer(uint32_t shard_id, const std::string &peer_id) {
   auto *g = multi_raft_->get(shard_id);
-  if (!g || !g->is_leader()) return false;
+  if (!g || !g->is_leader()) {
+    return false;
+  }
   raft::ConfChange cc;
   cc.type = raft::ConfChange::kRemoveNode;
   cc.peer.id = peer_id;
@@ -712,7 +742,9 @@ std::string StorageNode::admin_ensure_region(uint32_t region_id,
                                              const std::vector<raft::Peer> &peers) {
   try {
     for (const auto &p : peers) {
-      if (!p.address.empty()) transport().set_peer(p.id, p.address);
+      if (!p.address.empty()) {
+        transport().set_peer(p.id, p.address);
+      }
     }
     clear_region_destroyed(region_id);
     bool want_learner = false;
@@ -731,7 +763,9 @@ std::string StorageNode::admin_ensure_region(uint32_t region_id,
       const size_t np = existing->peers().size();
       const bool solo_orphan_leader =
           want_learner && existing->is_leader() && np <= 1 && !existing->self_is_learner();
-      if (!solo_orphan_leader) return "OK ENSURE exists";
+      if (!solo_orphan_leader) {
+        return "OK ENSURE exists";
+      }
       need_recreate = true;
       SKV_WARN << "ENSURE recreate region=" << region_id << " (solo orphan leader, want learner)";
       transport().unregister_node(region_id);
@@ -767,7 +801,9 @@ std::string StorageNode::admin_ensure_region(uint32_t region_id,
 std::string StorageNode::admin_add_learner(uint32_t region_id, const raft::Peer &peer) {
   if (!add_learner(region_id, peer)) {
     auto *g = multi_raft_->get(region_id);
-    if (!g) return "ERR no_region";
+    if (!g) {
+      return "ERR no_region";
+    }
     if (!g->is_leader()) {
       auto addr = peer_address(g->soft_state().leader_id);
       return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
@@ -780,12 +816,16 @@ std::string StorageNode::admin_add_learner(uint32_t region_id, const raft::Peer 
 std::string StorageNode::admin_promote(uint32_t region_id, const std::string &peer_id) {
   if (!promote_learner(region_id, peer_id)) {
     auto *g = multi_raft_->get(region_id);
-    if (!g) return "ERR no_region";
+    if (!g) {
+      return "ERR no_region";
+    }
     if (!g->is_leader()) {
       auto addr = peer_address(g->soft_state().leader_id);
       return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
     }
-    if (g->conf_change_busy()) return "ERR busy class=joint";
+    if (g->conf_change_busy()) {
+      return "ERR busy class=joint";
+    }
     bool found = false;
     bool learner = false;
     for (const auto &p : g->peers()) {
@@ -796,9 +836,13 @@ std::string StorageNode::admin_promote(uint32_t region_id, const std::string &pe
       }
     }
     // 换主后成员表丢 Learner（快照未带 ConfState）时常见
-    if (!found) return "ERR unknown_peer";
+    if (!found) {
+      return "ERR unknown_peer";
+    }
     // 已是 voter：幂等成功，避免 Meta 任务卡死
-    if (!learner) return "OK PROMOTE " + peer_id;
+    if (!learner) {
+      return "OK PROMOTE " + peer_id;
+    }
     return "ERR promote_failed";
   }
   return "OK PROMOTE " + peer_id;
@@ -807,13 +851,17 @@ std::string StorageNode::admin_promote(uint32_t region_id, const std::string &pe
 std::string StorageNode::admin_remove_peer(uint32_t region_id, const std::string &peer_id) {
   if (!remove_peer(region_id, peer_id)) {
     auto *g = multi_raft_->get(region_id);
-    if (!g) return "ERR no_region";
+    if (!g) {
+      return "ERR no_region";
+    }
     if (!g->is_leader()) {
       auto addr = peer_address(g->soft_state().leader_id);
       return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
     }
     // Joint / LeaveJoint 进行中时 ConfChange 会拒绝，客户端应短暂重试
-    if (g->conf_change_busy()) return "ERR busy class=joint";
+    if (g->conf_change_busy()) {
+      return "ERR busy class=joint";
+    }
     return "ERR remove_failed";
   }
   return "OK REMOVE " + peer_id;
@@ -825,7 +873,9 @@ std::string StorageNode::admin_destroy_region(uint32_t region_id) {
   transport().unregister_node(region_id);
   mark_region_destroyed(region_id);
   auto held = multi_raft_->take(region_id);
-  if (raft_engine_) raft_engine_->clean(region_id);
+  if (raft_engine_) {
+    raft_engine_->clean(region_id);
+  }
   if (!held) {
     return "OK DESTROY absent";
   }
@@ -840,14 +890,18 @@ std::string StorageNode::admin_destroy_region(uint32_t region_id) {
   {
     std::lock_guard<std::mutex> lock(range_mu_);
     for (const auto &[oid, orange] : region_ranges_) {
-      if (oid == region_id) continue;
+      if (oid == region_id) {
+        continue;
+      }
       has_sibling = true;
       const bool start_ok = orange.start_key.empty() ||
                             (!dying.start_key.empty() && orange.start_key <= dying.start_key);
       const bool end_ok = orange.end_key.empty()
                               ? true
                               : (!dying.end_key.empty() && orange.end_key >= dying.end_key);
-      if (dying.end_key.empty() && !orange.end_key.empty()) continue;
+      if (dying.end_key.empty() && !orange.end_key.empty()) {
+        continue;
+      }
       if (start_ok && end_ok) {
         covered_by_sibling = true;
         break;
@@ -881,7 +935,9 @@ std::string StorageNode::admin_destroy_region(uint32_t region_id) {
 
 std::string StorageNode::admin_peer_progress(uint32_t region_id, const std::string &peer_id) {
   auto *g = multi_raft_->get(region_id);
-  if (!g) return "ERR no_region";
+  if (!g) {
+    return "ERR no_region";
+  }
   if (!g->is_leader()) {
     auto addr = peer_address(g->soft_state().leader_id);
     return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
@@ -905,21 +961,29 @@ std::string StorageNode::admin_peer_progress(uint32_t region_id, const std::stri
 
 std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::string &target_id) {
   auto *g = multi_raft_->get(region_id);
-  if (!g) return "ERR no_region";
+  if (!g) {
+    return "ERR no_region";
+  }
   if (!g->is_leader()) {
     auto addr = peer_address(g->soft_state().leader_id);
     return "ERR not_leader" + (addr.empty() ? "" : (" redirect=" + addr));
   }
-  if (target_id == cfg_.node_id) return "OK TRANSFER " + target_id;
+  if (target_id == cfg_.node_id) {
+    return "OK TRANSFER " + target_id;
+  }
   std::string target_addr;
   for (const auto &p : g->peers()) {
     if (p.id == target_id) {
-      if (p.learner) return "ERR target_is_learner";
+      if (p.learner) {
+        return "ERR target_is_learner";
+      }
       target_addr = p.address.empty() ? peer_address(p.id) : p.address;
       break;
     }
   }
-  if (target_addr.empty()) return "ERR unknown_target";
+  if (target_addr.empty()) {
+    return "ERR unknown_target";
+  }
 
   // C7：让位前等目标追平已提交日志（match >= commit），避免转主后立刻空洞。
   bool caught = false;
@@ -941,7 +1005,9 @@ std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::st
     return "ERR target_not_caught_up";
   }
 
-  if (!g->abdicate()) return "ERR abdicate_failed";
+  if (!g->abdicate()) {
+    return "ERR abdicate_failed";
+  }
   bool camp_ok = false;
   try {
     auto resp = tcp_line(target_addr, "ADMIN_CAMPAIGN " + std::to_string(region_id), 2000);
@@ -977,8 +1043,12 @@ std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::st
 
 std::string StorageNode::admin_campaign(uint32_t region_id) {
   auto *g = multi_raft_->get(region_id);
-  if (!g) return "ERR no_region";
-  if (!g->force_election()) return "ERR campaign_failed";
+  if (!g) {
+    return "ERR no_region";
+  }
+  if (!g->force_election()) {
+    return "ERR campaign_failed";
+  }
   {
     std::lock_guard<std::mutex> lock(campaign_mu_);
     last_campaign_at_[region_id] = std::chrono::steady_clock::now();
@@ -988,18 +1058,26 @@ std::string StorageNode::admin_campaign(uint32_t region_id) {
 
 bool StorageNode::maybe_campaign(uint32_t region_id, const std::string &addr,
                                  std::chrono::milliseconds min_gap) {
-  if (addr.empty()) return false;
+  if (addr.empty()) {
+    return false;
+  }
   // 已有明确 Leader 则不必再选
   if (auto *g = multi_raft_->get(region_id)) {
-    if (!g->soft_state().leader_id.empty() && g->is_leader()) return false;
+    if (!g->soft_state().leader_id.empty() && g->is_leader()) {
+      return false;
+    }
     // 本机不是该 Region 成员时只做远程 campaign；若本机已有主则跳过
-    if (!g->soft_state().leader_id.empty()) return false;
+    if (!g->soft_state().leader_id.empty()) {
+      return false;
+    }
   }
   {
     std::lock_guard<std::mutex> lock(campaign_mu_);
     auto it = last_campaign_at_.find(region_id);
     const auto now = std::chrono::steady_clock::now();
-    if (it != last_campaign_at_.end() && now - it->second < min_gap) return false;
+    if (it != last_campaign_at_.end() && now - it->second < min_gap) {
+      return false;
+    }
     last_campaign_at_[region_id] = now;
   }
   try {
@@ -1014,23 +1092,33 @@ bool StorageNode::maybe_campaign(uint32_t region_id, const std::string &addr,
 
 std::string StorageNode::peer_address(const std::string &node_id) const {
   auto a = transport().address_of(node_id);
-  if (!a.empty()) return a;
+  if (!a.empty()) {
+    return a;
+  }
   for (const auto &p : bootstrap_peers_) {
-    if (p.id == node_id) return p.address;
+    if (p.id == node_id) {
+      return p.address;
+    }
   }
   return {};
 }
 
 std::string StorageNode::advertise_address() const {
-  if (!cfg_.advertise_addr.empty()) return cfg_.advertise_addr;
+  if (!cfg_.advertise_addr.empty()) {
+    return cfg_.advertise_addr;
+  }
   std::string adv = cfg_.listen_addr;
-  if (adv.rfind("0.0.0.0", 0) == 0) adv.replace(0, 7, "127.0.0.1");
+  if (adv.rfind("0.0.0.0", 0) == 0) {
+    adv.replace(0, 7, "127.0.0.1");
+  }
   return adv;
 }
 
 std::string StorageNode::handle_raft_vote(uint32_t shard, const std::string &from, uint64_t term,
                                           uint64_t last_idx, uint64_t last_term) {
-  if (region_destroyed(shard)) return "ERR destroyed";
+  if (region_destroyed(shard)) {
+    return "ERR destroyed";
+  }
   // S2：入站只进 Store/Router，禁止直调协议状态机。
   std::ostringstream payload;
   payload << term << '|' << last_idx << '|' << last_term;
@@ -1041,7 +1129,9 @@ std::string StorageNode::handle_raft_vote(uint32_t shard, const std::string &fro
 std::string StorageNode::handle_raft_pre_vote(uint32_t shard, const std::string &from,
                                               uint64_t term, uint64_t last_idx,
                                               uint64_t last_term) {
-  if (region_destroyed(shard)) return "ERR destroyed";
+  if (region_destroyed(shard)) {
+    return "ERR destroyed";
+  }
   std::ostringstream payload;
   payload << term << '|' << last_idx << '|' << last_term;
   return multi_raft_->store().apply_inbound_raft(
@@ -1052,7 +1142,9 @@ std::string StorageNode::handle_raft_append(uint32_t shard, const std::string &f
                                             uint64_t prev_idx, uint64_t prev_term,
                                             uint64_t leader_commit,
                                             const std::vector<openkv::raft::LogEntry> &entries) {
-  if (region_destroyed(shard)) return "ERR destroyed";
+  if (region_destroyed(shard)) {
+    return "ERR destroyed";
+  }
   std::ostringstream payload;
   payload << term << '|' << prev_idx << '|' << prev_term << '|' << leader_commit << '|'
           << entries.size();
@@ -1066,7 +1158,9 @@ std::string StorageNode::handle_raft_append(uint32_t shard, const std::string &f
 std::string StorageNode::handle_raft_snapshot(uint32_t shard, const std::string &from,
                                               uint64_t term, uint64_t last_idx, uint64_t last_term,
                                               std::string_view data) {
-  if (region_destroyed(shard)) return "ERR destroyed";
+  if (region_destroyed(shard)) {
+    return "ERR destroyed";
+  }
   std::ostringstream payload;
   payload << term << '|' << last_idx << '|' << last_term << '|' << to_hex(data);
   return multi_raft_->store().apply_inbound_raft(
@@ -1077,7 +1171,9 @@ std::string StorageNode::handle_raft_snap_chunk(uint32_t shard, const std::strin
                                                 uint64_t term, uint64_t last_idx,
                                                 uint64_t last_term, uint64_t offset, uint64_t total,
                                                 bool done, std::string_view chunk) {
-  if (region_destroyed(shard)) return "ERR destroyed";
+  if (region_destroyed(shard)) {
+    return "ERR destroyed";
+  }
   raft::SnapStreamBuffer::Key key{from, shard, last_idx};
   bool complete = false;
   std::string data;
@@ -1101,22 +1197,30 @@ void StorageNode::ensure_region(uint32_t region_id) {
   const bool created = multi_raft_->get(region_id) == nullptr;
   auto &g = multi_raft_->get_or_create(region_id);
   // 已存在且可能正处 apply 路径时，recover_apply 内部会自行跳过（in_on_apply）
-  if (created) g.recover_apply();
+  if (created) {
+    g.recover_apply();
+  }
   // S1：从引擎恢复 epoch
   {
     const uint64_t e = load_epoch_from_engine(region_id);
     if (e != 0) {
       std::lock_guard<std::mutex> lock(epoch_mu_);
-      if (!region_epochs_.count(region_id)) region_epochs_[region_id] = e;
+      if (!region_epochs_.count(region_id)) {
+        region_epochs_[region_id] = e;
+      }
     }
   }
 }
 
 uint64_t StorageNode::load_epoch_from_engine(uint32_t region_id) {
   auto *eng = engines_->get(region_id);
-  if (!eng) return 0;
+  if (!eng) {
+    return 0;
+  }
   auto rec = eng->get(region_epoch_storage_key(region_id));
-  if (!rec || rec->value.size() < sizeof(uint64_t)) return 0;
+  if (!rec || rec->value.size() < sizeof(uint64_t)) {
+    return 0;
+  }
   uint64_t e = 0;
   std::memcpy(&e, rec->value.data(), sizeof(e));
   return e == 0 ? 1 : e;
@@ -1132,7 +1236,9 @@ void StorageNode::persist_epoch(uint32_t region_id, uint64_t epoch) {
 openkv::KeyRange StorageNode::region_range(uint32_t region_id) const {
   std::lock_guard<std::mutex> lock(range_mu_);
   auto it = region_ranges_.find(region_id);
-  if (it != region_ranges_.end()) return it->second;
+  if (it != region_ranges_.end()) {
+    return it->second;
+  }
   return {};  // 默认全空间
 }
 
@@ -1153,7 +1259,9 @@ bool StorageNode::key_in_region(uint32_t region_id, std::string_view key) const 
 uint64_t StorageNode::region_epoch(uint32_t region_id) const {
   std::lock_guard<std::mutex> lock(epoch_mu_);
   auto it = region_epochs_.find(region_id);
-  if (it != region_epochs_.end()) return it->second;
+  if (it != region_epochs_.end()) {
+    return it->second;
+  }
   return 1;
 }
 
@@ -1174,7 +1282,9 @@ void StorageNode::bump_region_epoch(uint32_t region_id) {
   {
     std::lock_guard<std::mutex> lock(epoch_mu_);
     auto &cur = region_epochs_[region_id];
-    if (cur == 0) cur = 1;
+    if (cur == 0) {
+      cur = 1;
+    }
     ++cur;
     e = cur;
   }
@@ -1190,15 +1300,21 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
   // Leader。
   auto *g = multi_raft_->get(shard_id);
   if (!g) {
-    if (error) *error = "no_region";
+    if (error) {
+      *error = "no_region";
+    }
     return false;
   }
   if (!g->is_leader()) {
     if (redirect) {
       *redirect = g->leader_address();
-      if (redirect->empty()) *redirect = peer_address(g->soft_state().leader_id);
+      if (redirect->empty()) {
+        *redirect = peer_address(g->soft_state().leader_id);
+      }
     }
-    if (error) *error = "not_leader";
+    if (error) {
+      *error = "not_leader";
+    }
     return false;
   }
   multi_raft_->mark_hot(shard_id);
@@ -1221,7 +1337,9 @@ bool StorageNode::propose_encoded(uint32_t shard_id, std::string encoded, std::s
   const auto outcome = wait_apply(idx, std::chrono::milliseconds(10000));
   unlock_latch();
   if (outcome.timed_out || !outcome.error.empty()) {
-    if (error) *error = outcome.timed_out ? "apply_timeout" : outcome.error;
+    if (error) {
+      *error = outcome.timed_out ? "apply_timeout" : outcome.error;
+    }
     return false;
   }
   return true;
@@ -1244,7 +1362,9 @@ std::string StorageNode::admin_checkpoint(uint32_t region_id, std::string_view p
     engines_->get_or_create(region_id);
     eng = engines_->get(region_id);
   }
-  if (!eng) return "ERR no_engine";
+  if (!eng) {
+    return "ERR no_engine";
+  }
   std::string dest(path);
   if (dest.empty()) {
     const auto ts = std::chrono::duration_cast<std::chrono::seconds>(
@@ -1295,7 +1415,9 @@ std::vector<raft::Peer> StorageNode::resolve_region_peers(uint32_t region_id) {
     auto ps = g->peers();
     if (!ps.empty()) {
       for (auto &p : ps) {
-        if (p.address.empty()) p.address = peer_address(p.id);
+        if (p.address.empty()) {
+          p.address = peer_address(p.id);
+        }
       }
       return ps;
     }
@@ -1307,7 +1429,9 @@ std::vector<raft::Peer> StorageNode::resolve_region_peers(uint32_t region_id) {
     for (const auto &[id, addr] : cur) {
       out.push_back({id, addr, false});
     }
-    if (!out.empty()) return out;
+    if (!out.empty()) {
+      return out;
+    }
   }
   return bootstrap_peers_;
 }
@@ -1318,7 +1442,9 @@ std::string StorageNode::seed_right_region(uint32_t left_region, uint32_t right_
     peers.push_back({cfg_.node_id, cfg_.listen_addr, false});
   }
   for (const auto &p : peers) {
-    if (!p.address.empty()) transport().set_peer(p.id, p.address);
+    if (!p.address.empty()) {
+      transport().set_peer(p.id, p.address);
+    }
   }
 
   {
@@ -1334,16 +1460,24 @@ std::string StorageNode::seed_right_region(uint32_t left_region, uint32_t right_
 
   std::ostringstream csv;
   for (size_t i = 0; i < peers.size(); ++i) {
-    if (i) csv << ',';
+    if (i) {
+      csv << ',';
+    }
     csv << peers[i].id << '@' << peers[i].address;
-    if (peers[i].learner) csv << "*N";
+    if (peers[i].learner) {
+      csv << "*N";
+    }
   }
   const std::string ensure_req =
       "ADMIN_ENSURE_REGION " + std::to_string(right_region) + " " + csv.str();
 
   for (const auto &p : peers) {
-    if (p.id == cfg_.node_id) continue;
-    if (p.address.empty()) continue;
+    if (p.id == cfg_.node_id) {
+      continue;
+    }
+    if (p.address.empty()) {
+      continue;
+    }
     try {
       auto resp = tcp_line(p.address, ensure_req, 4000);
       SKV_INFO << "seed_right ENSURE peer=" << p.id << " -> " << resp;
@@ -1399,7 +1533,9 @@ std::string StorageNode::admin_merge(uint32_t left_region, uint32_t right_region
 }
 
 bool StorageNode::meta_split(uint32_t left, const std::string &split_key, uint32_t *right_out) {
-  if (cfg_.meta_addr.empty()) return false;
+  if (cfg_.meta_addr.empty()) {
+    return false;
+  }
   std::ostringstream req;
   req << "SPLIT_REGION " << left << ' ' << to_hex(split_key);
   try {
@@ -1408,14 +1544,18 @@ bool StorageNode::meta_split(uint32_t left, const std::string &split_key, uint32
       auto resp = meta_exec_line(addr, req.str());
       if (resp.find("not_leader") != std::string::npos) {
         auto p = resp.find("redirect=");
-        if (p == std::string::npos) return false;
+        if (p == std::string::npos) {
+          return false;
+        }
         addr = resp.substr(p + 9);
         continue;
       }
       std::istringstream iss(resp);
       std::string ok, sp;
       uint32_t l = 0, r = 0;
-      if (!(iss >> ok >> sp >> l >> r) || ok != "OK") return false;
+      if (!(iss >> ok >> sp >> l >> r) || ok != "OK") {
+        return false;
+      }
       *right_out = r;
       return true;
     }
@@ -1447,14 +1587,18 @@ void StorageNode::broadcast_admin_split(uint32_t left, uint32_t right,
 }
 
 uint64_t StorageNode::fetch_gc_safe_ts() {
-  if (cfg_.meta_addr.empty()) return 0;
+  if (cfg_.meta_addr.empty()) {
+    return 0;
+  }
   try {
     auto resp = meta_rpc("GET_SAFE_POINT");
     // OK SAFE <gc_safe_ts> <next_ts> <min_start>
     std::istringstream iss(resp);
     std::string ok, tag;
     uint64_t safe = 0;
-    if (!(iss >> ok >> tag >> safe) || ok != "OK" || tag != "SAFE") return 0;
+    if (!(iss >> ok >> tag >> safe) || ok != "OK" || tag != "SAFE") {
+      return 0;
+    }
     return safe;
   } catch (const std::exception &e) {
     SKV_DEBUG << "fetch_gc_safe_ts: " << e.what();
@@ -1464,16 +1608,24 @@ uint64_t StorageNode::fetch_gc_safe_ts() {
 
 void StorageNode::maybe_txn_gc(uint32_t region_id) {
   auto *g = multi_raft_->get(region_id);
-  if (!g || !g->is_leader()) return;
-  if (region_splitting(region_id)) return;
+  if (!g || !g->is_leader()) {
+    return;
+  }
+  if (region_splitting(region_id)) {
+    return;
+  }
   auto *eng = engines_->get(region_id);
-  if (!eng) return;
+  if (!eng) {
+    return;
+  }
   MvccStore mvcc(*eng);
   StoreFacade facade(*this);
   // 1) 过期锁 → Raft rollback（async，不阻塞 tick 线程等 apply）
   for (const auto &user : mvcc.list_expired_locks()) {
     auto lk = mvcc.get_lock(user);
-    if (!lk) continue;
+    if (!lk) {
+      continue;
+    }
     const std::string key = user;
     facade.rollback_async(region_id, key, lk->start_ts, 0, [key](ProposeResult r) {
       if (!r.ok) {
@@ -1483,7 +1635,9 @@ void StorageNode::maybe_txn_gc(uint32_t region_id) {
   }
   // 2) MVCC GC 经 Raft；水位来自 Meta TSO safe point（0 则跳过）
   const uint64_t safe = fetch_gc_safe_ts();
-  if (safe == 0) return;
+  if (safe == 0) {
+    return;
+  }
   Command gc;
   gc.op = CmdOp::kGcBelow;
   gc.value.assign(reinterpret_cast<const char *>(&safe), sizeof(safe));
@@ -1496,17 +1650,25 @@ void StorageNode::maybe_txn_gc(uint32_t region_id) {
 
 void StorageNode::maybe_auto_split(uint32_t region_id) {
   // tick 只做廉价阈值判定并入队；Meta SPLIT / PREPARE 在 split_worker_loop。
-  if (auto_split_keys_ == 0 && auto_split_bytes_ == 0) return;
+  if (auto_split_keys_ == 0 && auto_split_bytes_ == 0) {
+    return;
+  }
   auto *g = multi_raft_->get(region_id);
-  if (!g || !g->is_leader()) return;
+  if (!g || !g->is_leader()) {
+    return;
+  }
   auto *eng = engines_->get(region_id);
-  if (!eng) return;
+  if (!eng) {
+    return;
+  }
   const auto range = region_range(region_id);
   const size_t keys = eng->approx_key_count(range);
   const size_t bytes = eng->approx_bytes(range);
   const bool over_keys = auto_split_keys_ > 0 && keys >= auto_split_keys_;
   const bool over_bytes = auto_split_bytes_ > 0 && bytes >= auto_split_bytes_;
-  if (!over_keys && !over_bytes) return;
+  if (!over_keys && !over_bytes) {
+    return;
+  }
 
   {
     std::lock_guard<std::mutex> lock(split_mu_);
@@ -1515,7 +1677,9 @@ void StorageNode::maybe_auto_split(uint32_t region_id) {
     if (it != last_auto_split_at_.end() && now - it->second < std::chrono::seconds(10)) {
       return;
     }
-    if (split_queued_.count(region_id)) return;
+    if (split_queued_.count(region_id)) {
+      return;
+    }
     split_queued_.insert(region_id);
     split_queue_.push_back(region_id);
   }
@@ -1529,23 +1693,33 @@ void StorageNode::split_worker_loop() {
       std::unique_lock<std::mutex> lock(split_mu_);
       split_cv_.wait_for(lock, std::chrono::milliseconds(200),
                          [this] { return !running_ || !split_queue_.empty(); });
-      if (!running_) break;
-      if (split_queue_.empty()) continue;
+      if (!running_) {
+        break;
+      }
+      if (split_queue_.empty()) {
+        continue;
+      }
       region_id = split_queue_.front();
       split_queue_.pop_front();
       split_queued_.erase(region_id);
     }
 
     auto *g = multi_raft_->get(region_id);
-    if (!g || !g->is_leader()) continue;
+    if (!g || !g->is_leader()) {
+      continue;
+    }
     auto *eng = engines_->get(region_id);
-    if (!eng) continue;
+    if (!eng) {
+      continue;
+    }
     const auto range = region_range(region_id);
     const size_t keys = eng->approx_key_count(range);
     const size_t bytes = eng->approx_bytes(range);
     const bool still_over = (auto_split_keys_ > 0 && keys >= auto_split_keys_) ||
                             (auto_split_bytes_ > 0 && bytes >= auto_split_bytes_);
-    if (!still_over) continue;
+    if (!still_over) {
+      continue;
+    }
 
     {
       std::lock_guard<std::mutex> lock(split_mu_);
@@ -1557,7 +1731,9 @@ void StorageNode::split_worker_loop() {
     }
 
     std::string split_key = eng->pick_split_key(range);
-    if (split_key.empty() || !range.can_split_at(split_key)) continue;
+    if (split_key.empty() || !range.can_split_at(split_key)) {
+      continue;
+    }
 
     uint32_t right = 0;
     if (!meta_split(region_id, split_key, &right)) {
@@ -1601,7 +1777,9 @@ void StorageNode::maybe_place_after_split(uint32_t left, uint32_t right) {
     return;
   }
   std::vector<std::string> desired = suggest;
-  if (desired.size() > 3) desired.resize(3);
+  if (desired.size() > 3) {
+    desired.resize(3);
+  }
   SKV_INFO << "post_split_place right=" << right << " desired=" << desired.size();
   if (!place_region(right, desired)) {
     SKV_WARN << "post_split_place failed right=" << right;
@@ -1610,13 +1788,17 @@ void StorageNode::maybe_place_after_split(uint32_t left, uint32_t right) {
 
 bool StorageNode::meta_suggest_place(std::vector<std::string> *out,
                                      const std::vector<std::string> &avoid) {
-  if (cfg_.meta_addr.empty() || !out) return false;
+  if (cfg_.meta_addr.empty() || !out) {
+    return false;
+  }
   std::ostringstream req;
   req << "SUGGEST_PLACE";
   if (!avoid.empty()) {
     req << " avoid=";
     for (size_t i = 0; i < avoid.size(); ++i) {
-      if (i) req << ',';
+      if (i) {
+        req << ',';
+      }
       req << avoid[i];
     }
   }
@@ -1626,18 +1808,24 @@ bool StorageNode::meta_suggest_place(std::vector<std::string> *out,
       auto resp = meta_exec_line(addr, req.str());
       if (resp.find("not_leader") != std::string::npos) {
         auto p = resp.find("redirect=");
-        if (p == std::string::npos) return false;
+        if (p == std::string::npos) {
+          return false;
+        }
         addr = resp.substr(p + 9);
         continue;
       }
       std::istringstream iss(resp);
       std::string ok, tag;
       size_t n = 0;
-      if (!(iss >> ok >> tag >> n) || ok != "OK") return false;
+      if (!(iss >> ok >> tag >> n) || ok != "OK") {
+        return false;
+      }
       out->clear();
       for (size_t k = 0; k < n; ++k) {
         std::string id;
-        if (!(iss >> id)) return false;
+        if (!(iss >> id)) {
+          return false;
+        }
         out->push_back(id);
       }
       return !out->empty();
@@ -1649,21 +1837,27 @@ bool StorageNode::meta_suggest_place(std::vector<std::string> *out,
 }
 
 bool StorageNode::meta_find_merge_right(uint32_t left, uint32_t *right_out) {
-  if (cfg_.meta_addr.empty() || !right_out) return false;
+  if (cfg_.meta_addr.empty() || !right_out) {
+    return false;
+  }
   try {
     std::string addr = cfg_.meta_addr;
     for (int i = 0; i < 4; ++i) {
       auto resp = meta_exec_line(addr, "FIND_MERGE_RIGHT " + std::to_string(left));
       if (resp.find("not_leader") != std::string::npos) {
         auto p = resp.find("redirect=");
-        if (p == std::string::npos) return false;
+        if (p == std::string::npos) {
+          return false;
+        }
         addr = resp.substr(p + 9);
         continue;
       }
       std::istringstream iss(resp);
       std::string ok, tag;
       uint32_t l = 0, r = 0;
-      if (!(iss >> ok >> tag >> l >> r) || ok != "OK") return false;
+      if (!(iss >> ok >> tag >> l >> r) || ok != "OK") {
+        return false;
+      }
       *right_out = r;
       return true;
     }
@@ -1673,7 +1867,9 @@ bool StorageNode::meta_find_merge_right(uint32_t left, uint32_t *right_out) {
 }
 
 bool StorageNode::meta_merge(uint32_t left, uint32_t right) {
-  if (cfg_.meta_addr.empty()) return false;
+  if (cfg_.meta_addr.empty()) {
+    return false;
+  }
   try {
     std::string addr = cfg_.meta_addr;
     for (int i = 0; i < 4; ++i) {
@@ -1681,7 +1877,9 @@ bool StorageNode::meta_merge(uint32_t left, uint32_t right) {
           addr, "MERGE_REGIONS " + std::to_string(left) + " " + std::to_string(right));
       if (resp.find("not_leader") != std::string::npos) {
         auto p = resp.find("redirect=");
-        if (p == std::string::npos) return false;
+        if (p == std::string::npos) {
+          return false;
+        }
         addr = resp.substr(p + 9);
         continue;
       }
@@ -1693,9 +1891,13 @@ bool StorageNode::meta_merge(uint32_t left, uint32_t right) {
 }
 
 void StorageNode::maybe_auto_merge(uint32_t region_id) {
-  if (auto_merge_keys_ == 0) return;
+  if (auto_merge_keys_ == 0) {
+    return;
+  }
   auto *g = multi_raft_->get(region_id);
-  if (!g || !g->is_leader()) return;
+  if (!g || !g->is_leader()) {
+    return;
+  }
   auto *eng = engines_->get(region_id);
   const auto lrange = region_range(region_id);
   const size_t lkeys = eng ? eng->approx_key_count(lrange) : 0;
@@ -1703,17 +1905,25 @@ void StorageNode::maybe_auto_merge(uint32_t region_id) {
     return;
   }
   uint32_t right = 0;
-  if (!meta_find_merge_right(region_id, &right)) return;
+  if (!meta_find_merge_right(region_id, &right)) {
+    return;
+  }
   auto *reng = engines_->get(right);
-  if (reng && reng->approx_key_count(region_range(right)) >= auto_merge_keys_) return;
+  if (reng && reng->approx_key_count(region_range(right)) >= auto_merge_keys_) {
+    return;
+  }
 
   std::lock_guard<std::mutex> lock(split_mu_);
   eng = engines_->get(region_id);
-  if (!eng || eng->approx_key_count(lrange) >= auto_merge_keys_) return;
+  if (!eng || eng->approx_key_count(lrange) >= auto_merge_keys_) {
+    return;
+  }
   // 先搬数据再改 Meta
   admin_merge(region_id, right);
   for (const auto &p : bootstrap_peers_) {
-    if (p.id == cfg_.node_id) continue;
+    if (p.id == cfg_.node_id) {
+      continue;
+    }
     try {
       tcp_line(p.address, "ADMIN_MERGE " + std::to_string(region_id) + " " + std::to_string(right));
     } catch (...) {
@@ -1743,32 +1953,48 @@ StorageNode::StatsSnapshot StorageNode::stats_snapshot() const {
 }
 
 std::string StorageNode::meta_rpc(const std::string &req) {
-  if (cfg_.meta_addr.empty()) throw std::runtime_error("no meta_addr");
+  if (cfg_.meta_addr.empty()) {
+    throw std::runtime_error("no meta_addr");
+  }
   meta_out_.fetch_add(1, std::memory_order_relaxed);
   std::string addr = cfg_.meta_addr;
-  if (addr.find("0.0.0.0") == 0) addr.replace(0, 7, "127.0.0.1");
+  if (addr.find("0.0.0.0") == 0) {
+    addr.replace(0, 7, "127.0.0.1");
+  }
   meta_out_peers_.add(addr);
   return openkv::meta_typed_rpc(addr, req, admin_token_from_env(), 8000);
 }
 
 bool StorageNode::meta_list_storage(std::unordered_map<std::string, std::string> *id_to_addr) {
-  if (!id_to_addr) return false;
+  if (!id_to_addr) {
+    return false;
+  }
   try {
     auto resp = meta_rpc("LIST_NODES storage");
     std::istringstream iss(resp);
     std::string ok, tag;
     size_t n = 0;
-    if (!(iss >> ok >> tag >> n) || ok != "OK") return false;
+    if (!(iss >> ok >> tag >> n) || ok != "OK") {
+      return false;
+    }
     id_to_addr->clear();
     for (size_t i = 0; i < n; ++i) {
       std::string tok;
-      if (!(iss >> tok)) return false;
+      if (!(iss >> tok)) {
+        return false;
+      }
       auto at = tok.find('@');
-      if (at == std::string::npos) continue;
+      if (at == std::string::npos) {
+        continue;
+      }
       auto r1 = tok.rfind(':');
-      if (r1 == std::string::npos || r1 == 0) continue;
+      if (r1 == std::string::npos || r1 == 0) {
+        continue;
+      }
       auto r2 = tok.rfind(':', r1 - 1);
-      if (r2 == std::string::npos || r2 <= at) continue;
+      if (r2 == std::string::npos || r2 <= at) {
+        continue;
+      }
       (*id_to_addr)[tok.substr(0, at)] = tok.substr(at + 1, r2 - at - 1);
     }
     return !id_to_addr->empty();
@@ -1782,7 +2008,9 @@ bool StorageNode::meta_place(uint32_t region_id, const std::vector<std::string> 
   std::ostringstream req;
   req << "PLACE_REGION " << region_id << ' ';
   for (size_t i = 0; i < peers.size(); ++i) {
-    if (i) req << ',';
+    if (i) {
+      req << ',';
+    }
     req << peers[i];
   }
   try {
@@ -1797,40 +2025,60 @@ bool StorageNode::meta_place(uint32_t region_id, const std::vector<std::string> 
 bool StorageNode::meta_region_peers(uint32_t region_id,
                                     std::vector<std::pair<std::string, std::string>> *out,
                                     std::string *leader_id) {
-  if (!out) return false;
+  if (!out) {
+    return false;
+  }
   try {
     auto resp = meta_rpc("GET_ROUTE");
     std::istringstream iss(resp);
     std::string ok, tag;
     uint64_t ver = 0;
     size_t n1 = 0, n2 = 0;
-    if (!(iss >> ok >> tag >> ver >> n1 >> n2) || ok != "OK") return false;
+    if (!(iss >> ok >> tag >> ver >> n1 >> n2) || ok != "OK") {
+      return false;
+    }
     std::string tok;
     while (iss >> tok) {
       auto c1 = tok.find(':');
-      if (c1 == std::string::npos) continue;
-      if (static_cast<uint32_t>(std::stoul(tok.substr(0, c1))) != region_id) continue;
+      if (c1 == std::string::npos) {
+        continue;
+      }
+      if (static_cast<uint32_t>(std::stoul(tok.substr(0, c1))) != region_id) {
+        continue;
+      }
       auto c2 = tok.find(':', c1 + 1);
       auto c3 = tok.find(':', c2 == std::string::npos ? tok.size() : c2 + 1);
-      if (c2 == std::string::npos || c3 == std::string::npos) continue;
+      if (c2 == std::string::npos || c3 == std::string::npos) {
+        continue;
+      }
       std::string rest = tok.substr(c3 + 1);
       auto comma = rest.find(',');
-      if (comma == std::string::npos) return false;
+      if (comma == std::string::npos) {
+        return false;
+      }
       out->clear();
-      if (leader_id) leader_id->clear();
+      if (leader_id) {
+        leader_id->clear();
+      }
       std::stringstream ss(rest.substr(comma + 1));
       std::string item;
       while (std::getline(ss, item, ',')) {
-        if (item.empty()) continue;
+        if (item.empty()) {
+          continue;
+        }
         const bool is_leader = item.find("*L") != std::string::npos;
         while (!item.empty() && (item.back() == 'L' || item.back() == 'N') && item.size() >= 2 &&
                item[item.size() - 2] == '*') {
           item = item.substr(0, item.size() - 2);
         }
         auto at = item.find('@');
-        if (at == std::string::npos) continue;
+        if (at == std::string::npos) {
+          continue;
+        }
         out->emplace_back(item.substr(0, at), item.substr(at + 1));
-        if (is_leader && leader_id) *leader_id = out->back().first;
+        if (is_leader && leader_id) {
+          *leader_id = out->back().first;
+        }
       }
       return !out->empty();
     }
@@ -1844,17 +2092,23 @@ std::string StorageNode::admin_rpc(const std::string &req,
                                    const std::vector<std::string> &seed_addrs) {
   std::vector<std::string> addrs = seed_addrs;
   for (const auto &p : bootstrap_peers_) {
-    if (!p.address.empty()) addrs.push_back(p.address);
+    if (!p.address.empty()) {
+      addrs.push_back(p.address);
+    }
   }
   // dedupe
   std::sort(addrs.begin(), addrs.end());
   addrs.erase(std::unique(addrs.begin(), addrs.end()), addrs.end());
-  if (addrs.empty()) throw std::runtime_error("no seed addrs");
+  if (addrs.empty()) {
+    throw std::runtime_error("no seed addrs");
+  }
 
   std::string hint;
   std::string last_err;
   for (int attempt = 0; attempt < 32; ++attempt) {
-    if (!running_) throw std::runtime_error("stopped");
+    if (!running_) {
+      throw std::runtime_error("stopped");
+    }
     std::string addr = hint.empty() ? addrs[static_cast<size_t>(attempt) % addrs.size()] : hint;
     try {
       auto resp = tcp_line(addr, req, 8000);
@@ -1888,7 +2142,9 @@ std::string StorageNode::admin_rpc(const std::string &req,
 bool StorageNode::wait_peer_caught_up(uint32_t region_id, const std::string &peer_id,
                                       const std::vector<std::string> &seed_addrs) {
   for (int i = 0; i < 400; ++i) {
-    if (!running_) return false;
+    if (!running_) {
+      return false;
+    }
     try {
       auto r =
           admin_rpc("ADMIN_PEER_PROGRESS " + std::to_string(region_id) + " " + peer_id, seed_addrs);
@@ -1904,8 +2160,12 @@ bool StorageNode::wait_peer_caught_up(uint32_t region_id, const std::string &pee
       SKV_WARN << "place progress: " << e.what();
       if (std::string(e.what()).find("not_leader") != std::string::npos) {
         for (const auto &a : seed_addrs) {
-          if (a.empty()) continue;
-          if (maybe_campaign(region_id, a)) break;
+          if (a.empty()) {
+            continue;
+          }
+          if (maybe_campaign(region_id, a)) {
+            break;
+          }
         }
       }
     }
@@ -1915,7 +2175,9 @@ bool StorageNode::wait_peer_caught_up(uint32_t region_id, const std::string &pee
 }
 
 bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string> &desired_peers) {
-  if (desired_peers.empty()) return false;
+  if (desired_peers.empty()) {
+    return false;
+  }
 
   std::unordered_map<std::string, std::string> nodes;
   if (!meta_list_storage(&nodes)) {
@@ -1939,31 +2201,48 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
   auto rebuild_seeds = [&](const std::string &exclude_addr = {}) {
     std::vector<std::string> seeds;
     auto push = [&](const std::string &a) {
-      if (a.empty() || a == exclude_addr) return;
-      for (const auto &x : seeds)
-        if (x == a) return;
+      if (a.empty() || a == exclude_addr) {
+        return;
+      }
+      for (const auto &x : seeds) {
+        if (x == a) {
+          return;
+        }
+      }
       seeds.push_back(a);
     };
     // 优先目标集（仍存活的 Active），避免 redirect 到正在踢出的 Store
-    for (const auto &id : desired_peers) push(nodes[id]);
-    for (const auto &[_, a] : current) push(a);
+    for (const auto &id : desired_peers) {
+      push(nodes[id]);
+    }
+    for (const auto &[_, a] : current) {
+      push(a);
+    }
     return seeds;
   };
 
   const std::vector<std::string> original_ids = [&] {
     std::vector<std::string> ids;
-    for (const auto &[nid, _] : current) ids.push_back(nid);
+    for (const auto &[nid, _] : current) {
+      ids.push_back(nid);
+    }
     return ids;
   }();
   auto was_original = [&](const std::string &id) {
-    for (const auto &o : original_ids)
-      if (o == id) return true;
+    for (const auto &o : original_ids) {
+      if (o == id) {
+        return true;
+      }
+    }
     return false;
   };
 
   auto has = [&](const std::string &id) {
-    for (const auto &[nid, _] : current)
-      if (nid == id) return true;
+    for (const auto &[nid, _] : current) {
+      if (nid == id) {
+        return true;
+      }
+    }
     return false;
   };
 
@@ -1973,9 +2252,13 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
     for (const auto &a : rebuild_seeds(exclude_addr)) {
       try {
         auto st = tcp_line(a, "ADMIN_REGION_STATS " + std::to_string(region_id), 1500);
-        if (st.rfind("OK", 0) != 0) continue;
+        if (st.rfind("OK", 0) != 0) {
+          continue;
+        }
         saw_ok = true;
-        if (st.find("joint=1") != std::string::npos) return 1;
+        if (st.find("joint=1") != std::string::npos) {
+          return 1;
+        }
       } catch (...) {
       }
     }
@@ -2008,7 +2291,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
   auto admin_retry = [&](const std::string &req, const std::string &tag,
                          const std::string &exclude_addr = {}) -> bool {
     for (int attempt = 0; attempt < 40; ++attempt) {
-      if (!running_) return false;
+      if (!running_) {
+        return false;
+      }
       std::string r;
       try {
         r = admin_rpc(req, rebuild_seeds(exclude_addr));
@@ -2016,7 +2301,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
         r = std::string("ERR ") + e.what();
       }
       SKV_INFO << "place " << tag << " -> " << r;
-      if (r.rfind("OK", 0) == 0) return true;
+      if (r.rfind("OK", 0) == 0) {
+        return true;
+      }
       if (r.find("busy") != std::string::npos || r.find("not_leader") != std::string::npos ||
           r.find("joint") != std::string::npos || r.find("no_region") != std::string::npos ||
           r.find("remove_failed") != std::string::npos ||
@@ -2027,7 +2314,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
             (r.find("redirect=") == std::string::npos || attempt >= 5)) {
           maybe_campaign(region_id, nodes[desired_peers[0]]);
           for (const auto &id : desired_peers) {
-            if (id == desired_peers[0]) continue;
+            if (id == desired_peers[0]) {
+              continue;
+            }
             maybe_campaign(region_id, nodes[id], std::chrono::milliseconds(400));
             break;
           }
@@ -2042,8 +2331,12 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
 
   // 1) 加缺失副本
   for (const auto &id : desired_peers) {
-    if (!running_) return false;
-    if (has(id)) continue;
+    if (!running_) {
+      return false;
+    }
+    if (has(id)) {
+      continue;
+    }
     const std::string &addr = nodes[id];
     try {
       auto r =
@@ -2062,7 +2355,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
     }
     std::ostringstream peers_csv;
     for (size_t i = 0; i < current.size(); ++i) {
-      if (i) peers_csv << ',';
+      if (i) {
+        peers_csv << ',';
+      }
       peers_csv << current[i].first << '@' << current[i].second;
     }
     peers_csv << ',' << id << '@' << addr << "*N";
@@ -2103,7 +2398,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
         break;
       }
     }
-    if (!keep) victims.emplace_back(nid, naddr);
+    if (!keep) {
+      victims.emplace_back(nid, naddr);
+    }
   }
   if (!victims.empty() && !desired_peers.empty()) {
     std::string target;
@@ -2113,7 +2410,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
         break;
       }
     }
-    if (target.empty()) target = desired_peers[0];
+    if (target.empty()) {
+      target = desired_peers[0];
+    }
     std::string lid = leader_id;
     std::string fresh_leader;
     std::vector<std::pair<std::string, std::string>> rp;
@@ -2122,12 +2421,16 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
     }
     bool kept = false;
     for (const auto &d : desired_peers) {
-      if (d == lid) kept = true;
+      if (d == lid) {
+        kept = true;
+      }
     }
     if (!kept) {
       std::string excl;
       for (const auto &[_, a] : victims) {
-        if (!excl.empty()) break;
+        if (!excl.empty()) {
+          break;
+        }
         excl = a;
       }
       admin_retry("ADMIN_TRANSFER_LEADER " + std::to_string(region_id) + " " + target,
@@ -2139,7 +2442,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
 
   // 3) 踢多余 + DESTROY（DESTROY 前须等 LeaveJoint，否则旧多数派缺票永久无主）
   for (const auto &[nid, naddr] : victims) {
-    if (!running_) return false;
+    if (!running_) {
+      return false;
+    }
     if (!admin_retry("ADMIN_REMOVE_PEER " + std::to_string(region_id) + " " + nid, "remove " + nid,
                      naddr)) {
       return false;
@@ -2153,7 +2458,9 @@ bool StorageNode::place_region(uint32_t region_id, const std::vector<std::string
       if (w > 0 && w % 15 == 0) {
         for (const auto &d : desired_peers) {
           auto it = nodes.find(d);
-          if (it == nodes.end()) continue;
+          if (it == nodes.end()) {
+            continue;
+          }
           maybe_campaign(region_id, it->second, std::chrono::milliseconds(400));
         }
       }
@@ -2195,7 +2502,9 @@ std::string StorageNode::admin_place_region(uint32_t region_id,
 }
 
 void StorageNode::start() {
-  if (running_.exchange(true)) return;
+  if (running_.exchange(true)) {
+    return;
+  }
 
   if (!cfg_.raft_peers.empty()) {
     for (const auto &p : cfg_.raft_peers) {
@@ -2211,7 +2520,9 @@ void StorageNode::start() {
     if (const char *e = std::getenv(env_key)) {
       try {
         const int v = std::stoi(e);
-        if (v >= 1 && v <= 64) return static_cast<size_t>(v);
+        if (v >= 1 && v <= 64) {
+          return static_cast<size_t>(v);
+        }
       } catch (...) {
       }
     }
@@ -2223,7 +2534,9 @@ void StorageNode::start() {
     if (const char *e = std::getenv(env_key)) {
       try {
         const long v = std::stol(e);
-        if (v >= 0 && v <= 1024) return static_cast<uint32_t>(v);
+        if (v >= 0 && v <= 1024) {
+          return static_cast<uint32_t>(v);
+        }
       } catch (...) {
       }
     }
@@ -2237,7 +2550,9 @@ void StorageNode::start() {
     if (const char *e = std::getenv(proto::env::kPersistWorkers)) {
       try {
         const int v = std::stoi(e);
-        if (v >= 0 && v <= 64) pw = static_cast<size_t>(v);
+        if (v >= 0 && v <= 64) {
+          pw = static_cast<size_t>(v);
+        }
       } catch (...) {
       }
     }
@@ -2317,7 +2632,9 @@ void StorageNode::start() {
         // 回包线程改 Ready 时立刻 mark_hot，别干等 tick。
         const uint32_t rid = shard_id;
         node->set_ready_notify([this, rid] {
-          if (multi_raft_) multi_raft_->store().mark_hot(rid);
+          if (multi_raft_) {
+            multi_raft_->store().mark_hot(rid);
+          }
         });
         transport().register_node(shard_id, cfg_.node_id, node);
         return node;
@@ -2325,7 +2642,9 @@ void StorageNode::start() {
       mr_opts);
 
   for (const auto &p : bootstrap_peers_) {
-    if (!p.address.empty()) transport().set_peer(p.id, p.address);
+    if (!p.address.empty()) {
+      transport().set_peer(p.id, p.address);
+    }
   }
 
   // bootstrap_regions：首批 Region（通常仅 0）；空则等 PLACE/ENSURE
@@ -2378,12 +2697,22 @@ void StorageNode::start() {
 }
 
 void StorageNode::stop() {
-  if (!running_.exchange(false)) return;
+  if (!running_.exchange(false)) {
+    return;
+  }
   split_cv_.notify_all();
-  if (tick_thread_.joinable()) tick_thread_.join();
-  if (split_thread_.joinable()) split_thread_.join();
-  if (hb_thread_.joinable()) hb_thread_.join();
-  if (multi_raft_) multi_raft_->stop();
+  if (tick_thread_.joinable()) {
+    tick_thread_.join();
+  }
+  if (split_thread_.joinable()) {
+    split_thread_.join();
+  }
+  if (hb_thread_.joinable()) {
+    hb_thread_.join();
+  }
+  if (multi_raft_) {
+    multi_raft_->stop();
+  }
 }
 
 void StorageNode::tick_loop() {
@@ -2422,7 +2751,9 @@ void StorageNode::tick_loop() {
       } else {
         const auto leaders = multi_raft_->leader_shards();
         if (!leaders.empty()) {
-          if (auto *eng = engines_->get(leaders.front())) eng->compact_for_ttl();
+          if (auto *eng = engines_->get(leaders.front())) {
+            eng->compact_for_ttl();
+          }
         }
       }
     }
@@ -2437,9 +2768,13 @@ void StorageNode::tick_loop() {
         uint64_t min_ts = std::numeric_limits<uint64_t>::max();
         for (uint32_t rid : multi_raft_->leader_shards()) {
           auto *eng = engines_->get(rid);
-          if (!eng) continue;
+          if (!eng) {
+            continue;
+          }
           const uint64_t m = MvccStore(*eng).min_lock_start_ts();
-          if (m < min_ts) min_ts = m;
+          if (m < min_ts) {
+            min_ts = m;
+          }
         }
         try {
           meta_rpc("REPORT_MIN_START_TS " + std::to_string(min_ts) + " " + cfg_.node_id);
@@ -2455,13 +2790,17 @@ void StorageNode::tick_loop() {
 CoprocessorResponse StorageNode::coprocessor_execute(uint32_t region_id,
                                                      const CoprocessorRequest &req) {
   auto *eng = engines_->get(region_id);
-  if (!eng) eng = &engines_->get_or_create(region_id);
+  if (!eng) {
+    eng = &engines_->get_or_create(region_id);
+  }
   Coprocessor cop(eng);
   return cop.execute(req, region_range(region_id));
 }
 
 void StorageNode::recover_local_regions_from_meta() {
-  if (cfg_.meta_addr.empty()) return;
+  if (cfg_.meta_addr.empty()) {
+    return;
+  }
   std::string resp;
   try {
     resp = meta_rpc("GET_ROUTE");
@@ -2494,11 +2833,17 @@ void StorageNode::recover_local_regions_from_meta() {
       }
       colon.emplace_back(tok.substr(start));
     }
-    if (colon.size() < 5) continue;
+    if (colon.size() < 5) {
+      continue;
+    }
     const uint32_t rid = static_cast<uint32_t>(std::stoul(colon[0]));
     openkv::KeyRange range;
-    if (!colon[1].empty() && !from_hex(colon[1], &range.start_key)) continue;
-    if (!colon[2].empty() && !from_hex(colon[2], &range.end_key)) continue;
+    if (!colon[1].empty() && !from_hex(colon[1], &range.start_key)) {
+      continue;
+    }
+    if (!colon[2].empty() && !from_hex(colon[2], &range.end_key)) {
+      continue;
+    }
     const uint64_t epoch = std::stoull(colon[3]);
     std::string rest = colon[4];
     // 兼容两种线格式：
@@ -2510,7 +2855,9 @@ void StorageNode::recover_local_regions_from_meta() {
     std::string item;
     bool first = true;
     while (std::getline(ss, item, ',')) {
-      if (item.empty()) continue;
+      if (item.empty()) {
+        continue;
+      }
       if (first) {
         first = false;
         // nrep 纯数字段跳过；否则整段即首个 peer
@@ -2521,7 +2868,9 @@ void StorageNode::recover_local_regions_from_meta() {
             break;
           }
         }
-        if (digits) continue;
+        if (digits) {
+          continue;
+        }
       }
       bool learner = item.find("*N") != std::string::npos;
       while (!item.empty() && (item.back() == 'L' || item.back() == 'N') && item.size() >= 2 &&
@@ -2529,22 +2878,30 @@ void StorageNode::recover_local_regions_from_meta() {
         item = item.substr(0, item.size() - 2);
       }
       auto at = item.find('@');
-      if (at == std::string::npos) continue;
+      if (at == std::string::npos) {
+        continue;
+      }
       raft::Peer p;
       p.id = item.substr(0, at);
       p.address = item.substr(at + 1);
       p.learner = learner;
-      if (p.id == cfg_.node_id) mine = true;
+      if (p.id == cfg_.node_id) {
+        mine = true;
+      }
       peers.push_back(std::move(p));
     }
-    if (!mine || peers.empty()) continue;
+    if (!mine || peers.empty()) {
+      continue;
+    }
     auto r = admin_ensure_region(rid, peers);
     if (r.rfind("OK", 0) != 0) {
       SKV_WARN << "recover ENSURE region=" << rid << " " << r;
       continue;
     }
     set_region_range(rid, range);
-    if (epoch != 0) set_region_epoch(rid, epoch);
+    if (epoch != 0) {
+      set_region_epoch(rid, epoch);
+    }
     multi_raft_->update_peer_meta(rid, region_range(rid), region_epoch(rid));
     ++ensured;
   }
@@ -2555,12 +2912,16 @@ void StorageNode::recover_local_regions_from_meta() {
 void StorageNode::register_and_heartbeat() {
   // H1：向 Meta 注册并周期上报本机 Leader Region（驱动路由 *L 与存活检测）
   // PD 语义：附带 region 数 / approx keys（供 RegionScheduler 主动均衡）。
-  if (cfg_.meta_addr.empty()) return;
+  if (cfg_.meta_addr.empty()) {
+    return;
+  }
   int hb_sec = 2;
   if (const char *e = std::getenv(proto::env::kStoreHbSec)) {
     try {
       int v = std::stoi(e);
-      if (v >= 1 && v <= 60) hb_sec = v;
+      if (v >= 1 && v <= 60) {
+        hb_sec = v;
+      }
     } catch (...) {
     }
   }
@@ -2580,23 +2941,29 @@ void StorageNode::register_and_heartbeat() {
       if (registered) {
         auto leaders = multi_raft_->leader_shards();
         size_t approx_keys = 0;
-        if (auto *eng = engines_->get(0))
+        if (auto *eng = engines_->get(0)) {
           approx_keys = eng->approx_key_count();
-        else if (!leaders.empty()) {
-          if (auto *eng = engines_->get(leaders.front())) approx_keys = eng->approx_key_count();
+        } else if (!leaders.empty()) {
+          if (auto *eng = engines_->get(leaders.front())) {
+            approx_keys = eng->approx_key_count();
+          }
         }
         std::ostringstream req;
         // PD 语义：leaders + region 数 + approx keys（RegionScheduler
         // 可作负载信号）
         req << "HEARTBEAT " << cfg_.node_id << ' ' << leaders.size();
-        for (uint32_t rid : leaders) req << ' ' << rid;
+        for (uint32_t rid : leaders) {
+          req << ' ' << rid;
+        }
         req << " regions=" << multi_raft_->all_shards().size() << " keys=" << approx_keys;
         auto resp = meta_rpc(req.str());
         if (resp.rfind("OK HEARTBEAT", 0) != 0) {
           SKV_WARN << "meta HEARTBEAT: " << resp;
           // 仅未知节点强制重注册；瞬时 not_leader/超时不降级，避免 REGISTER
           // 风暴。
-          if (resp.find("unknown_node") != std::string::npos) registered = false;
+          if (resp.find("unknown_node") != std::string::npos) {
+            registered = false;
+          }
         }
       }
     } catch (const std::exception &e) {

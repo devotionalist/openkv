@@ -30,46 +30,27 @@ namespace openkv::raft {
 std::vector<std::string> Membership::voter_ids() const {
   std::vector<std::string> out;
   for (const auto& p : n_.opts_.peers) {
-    if (!p.learner) out.push_back(p.id);
+    if (!p.learner) {
+      out.push_back(p.id);
+    }
   }
   return out;
 }
 
-/**
- * @brief 计算多数派
- *
- * @param voters 投票者列表
- * @return uint32_t 多数派
- * @retval 0 失败
- * @note 多数派是投票者列表的一半加一
- */
 uint32_t Membership::majority_of(const std::vector<std::string>& voters) const {
-  size_t n = voters.empty() ? 1 : voters.size();  // 如果投票者列表为空，则返回1
-  return static_cast<uint32_t>(n / 2 + 1);        // 返回多数派
+  size_t n = voters.empty() ? 1 : voters.size();
+  return static_cast<uint32_t>(n / 2 + 1);
 }
 
-/**
- * @brief 计算多数派
- *
- * @return 多数派
- */
-uint32_t Membership::majority() const {  // 计算多数派
-  if (in_joint_) {                       // 如果处于联合配置状态
-    return std::max(majority_of(joint_old_voters_),
-                    majority_of(joint_new_voters_));  // 返回旧的多数派和新的多数派中的较大值
+uint32_t Membership::majority() const {
+  if (in_joint_) {
+    return std::max(majority_of(joint_old_voters_), majority_of(joint_new_voters_));
   }
-  return majority_of(voter_ids());  // 返回投票者列表的多数派
+  return majority_of(voter_ids());
 }
 
-/**
- * @brief 检查多数派 是否满足
- *
- * @param voters 投票者列表
- * @param index 索引
- * @return 是否满足多数派
- */
 bool Membership::quorate_at(const std::vector<std::string>& voters, uint64_t index) const {
-  uint32_t ok = 0;  // 满足多数派的投票者数量
+  uint32_t ok = 0;
   for (const auto& id : voters) {
     uint64_t m = 0;
     if (id == n_.opts_.self_id) {
@@ -80,24 +61,19 @@ bool Membership::quorate_at(const std::vector<std::string>& voters, uint64_t ind
       auto it = n_.progress_.match_index_.find(id);
       m = it == n_.progress_.match_index_.end() ? 0 : it->second;
     }
-    if (m >= index) ++ok;
+    if (m >= index) {
+      ++ok;
+    }
   }
   return ok >= majority_of(voters);
 }
 
-/**
- * @brief 编码配置
- *
- * @param cc 配置
- * @param out 输出
- * @return 是否成功
- */
 bool Membership::encode_conf(const ConfChange& cc, std::string* out) const {
-  out->clear();                             // 清空输出
-  out->push_back(static_cast<char>(0xFF));  // 添加FF
+  out->clear();
+  out->push_back(static_cast<char>(0xFF));
   if (cc.type == ConfChange::kEnterJoint) {
-    out->push_back(static_cast<char>(ConfChange::kEnterJoint));  // 添加EnterJoint
-    out->push_back(static_cast<char>(cc.joint_change));          // 添加joint_change
+    out->push_back(static_cast<char>(ConfChange::kEnterJoint));
+    out->push_back(static_cast<char>(cc.joint_change));
   } else {
     out->push_back(static_cast<char>(cc.type));
   }
@@ -108,11 +84,15 @@ bool Membership::encode_conf(const ConfChange& cc, std::string* out) const {
 }
 
 bool Membership::decode_conf(std::string_view data, ConfChange* cc) {
-  if (data.size() < 3 || static_cast<unsigned char>(data[0]) != 0xFF) return false;
+  if (data.size() < 3 || static_cast<unsigned char>(data[0]) != 0xFF) {
+    return false;
+  }
   auto type = static_cast<ConfChange::Type>(data[1]);
   size_t id_off = 2;
   if (type == ConfChange::kEnterJoint) {
-    if (data.size() < 4) return false;
+    if (data.size() < 4) {
+      return false;
+    }
     cc->type = ConfChange::kEnterJoint;
     cc->joint_change = static_cast<ConfChange::Type>(data[2]);
     id_off = 3;
@@ -121,7 +101,9 @@ bool Membership::decode_conf(std::string_view data, ConfChange* cc) {
     cc->joint_change = type;
   }
   auto nul = data.find('\0', id_off);
-  if (nul == std::string_view::npos) return false;
+  if (nul == std::string_view::npos) {
+    return false;
+  }
   cc->peer.id = std::string(data.substr(id_off, nul - id_off));
   cc->peer.address = std::string(data.substr(nul + 1));
   cc->peer.learner =
@@ -131,10 +113,14 @@ bool Membership::decode_conf(std::string_view data, ConfChange* cc) {
 }
 
 void Membership::maybe_auto_leave_joint() {
-  if (!auto_leave_pending_ || !in_joint_ || n_.role_ != Role::kLeader) return;
+  if (!auto_leave_pending_ || !in_joint_ || n_.role_ != Role::kLeader) {
+    return;
+  }
   for (uint64_t i = n_.commit_index_ + 1; i <= n_.log_.last_index(); ++i) {
     auto e = n_.log_.entry(i);
-    if (!e || e->term != n_.term_) continue;
+    if (!e || e->term != n_.term_) {
+      continue;
+    }
     ConfChange cc;
     if (decode_conf(e->data, &cc) && cc.type == ConfChange::kLeaveJoint) {
       leave_joint_inflight_ = true;
@@ -152,7 +138,9 @@ void Membership::maybe_auto_leave_joint() {
   encode_conf(leave, &payload);
   auto idx = n_.log_.append(n_.term_, std::move(payload));
   if (n_.opts_.external_io) {
-    if (auto e = n_.log_.entry(idx)) n_.ready_io_.ready_unstable_.push_back(*e);
+    if (auto e = n_.log_.entry(idx)) {
+      n_.ready_io_.ready_unstable_.push_back(*e);
+    }
   }
   n_.progress_.match_index_[n_.opts_.self_id] = idx;
   n_.replication_.need_replicate_ = true;
@@ -162,13 +150,17 @@ void Membership::maybe_auto_leave_joint() {
 
 void Membership::apply_conf_entry(const LogEntry& e) {
   ConfChange cc;
-  if (!decode_conf(e.data, &cc)) return;
+  if (!decode_conf(e.data, &cc)) {
+    return;
+  }
   if (cc.type == ConfChange::kLeaveJoint) {
     if (in_joint_) {
       std::unordered_set<std::string> keep(joint_new_voters_.begin(), joint_new_voters_.end());
       n_.opts_.peers.erase(std::remove_if(n_.opts_.peers.begin(), n_.opts_.peers.end(),
                                           [&](const Peer& p) {
-                                            if (p.learner) return false;
+                                            if (p.learner) {
+                                              return false;
+                                            }
                                             return !keep.count(p.id);
                                           }),
                            n_.opts_.peers.end());
@@ -209,19 +201,29 @@ void Membership::apply_conf_entry(const LogEntry& e) {
     }
     joint_new_voters_.clear();
     for (const auto& p : n_.opts_.peers) {
-      if (p.learner) continue;
-      if (inner.type == ConfChange::kRemoveNode && p.id == inner.peer.id) continue;
+      if (p.learner) {
+        continue;
+      }
+      if (inner.type == ConfChange::kRemoveNode && p.id == inner.peer.id) {
+        continue;
+      }
       joint_new_voters_.push_back(p.id);
     }
     if (inner.type == ConfChange::kPromoteLearner) {
       bool found = false;
       for (const auto& id : joint_new_voters_) {
-        if (id == inner.peer.id) found = true;
+        if (id == inner.peer.id) {
+          found = true;
+        }
       }
-      if (!found) joint_new_voters_.push_back(inner.peer.id);
+      if (!found) {
+        joint_new_voters_.push_back(inner.peer.id);
+      }
     }
     in_joint_ = true;
-    if (n_.role_ == Role::kLeader) auto_leave_pending_ = true;
+    if (n_.role_ == Role::kLeader) {
+      auto_leave_pending_ = true;
+    }
     SKV_INFO << "shard=" << n_.opts_.shard_id << " enter joint old=" << joint_old_voters_.size()
              << " new=" << joint_new_voters_.size();
     return;
@@ -247,8 +249,12 @@ void Membership::apply_conf_entry(const LogEntry& e) {
 
 void Membership::add_peer(const Peer& p) {
   for (auto& existing : n_.opts_.peers) {
-    if (existing.id != p.id) continue;
-    if (!p.address.empty()) existing.address = p.address;
+    if (existing.id != p.id) {
+      continue;
+    }
+    if (!p.address.empty()) {
+      existing.address = p.address;
+    }
     if (n_.role_ == Role::kLeader) {
       auto mit = n_.progress_.match_index_.find(p.id);
       if (mit == n_.progress_.match_index_.end() || mit->second == 0) {
@@ -265,7 +271,9 @@ void Membership::add_peer(const Peer& p) {
   n_.opts_.peers.push_back(p);
   n_.progress_.next_index_[p.id] = 0;
   n_.progress_.match_index_[p.id] = 0;
-  if (n_.role_ == Role::kLeader) n_.replication_.need_replicate_ = true;
+  if (n_.role_ == Role::kLeader) {
+    n_.replication_.need_replicate_ = true;
+  }
   if (n_.opts_.on_peer_addr && !p.address.empty()) {
     n_.opts_.on_peer_addr(p.id, p.address);
   }

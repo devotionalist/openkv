@@ -42,21 +42,27 @@ void append_u32(std::string& out, uint32_t v) {
 }
 
 bool read_u32(std::string_view s, size_t& off, uint32_t& v) {
-  if (off + sizeof(uint32_t) > s.size()) return false;
+  if (off + sizeof(uint32_t) > s.size()) {
+    return false;
+  }
   std::memcpy(&v, s.data() + off, sizeof(v));
   off += sizeof(v);
   return true;
 }
 
 bool read_u64(std::string_view s, size_t& off, uint64_t& v) {
-  if (off + sizeof(uint64_t) > s.size()) return false;
+  if (off + sizeof(uint64_t) > s.size()) {
+    return false;
+  }
   std::memcpy(&v, s.data() + off, sizeof(v));
   off += sizeof(v);
   return true;
 }
 
 bool read_i64(std::string_view s, size_t& off, int64_t& v) {
-  if (off + sizeof(int64_t) > s.size()) return false;
+  if (off + sizeof(int64_t) > s.size()) {
+    return false;
+  }
   std::memcpy(&v, s.data() + off, sizeof(v));
   off += sizeof(v);
   return true;
@@ -125,13 +131,19 @@ std::string encode_lock(const LockInfo& li) {
 
 bool decode_lock(std::string_view payload, LockInfo* out) {
   size_t off = 0;
-  if (!read_u64(payload, off, out->start_ts) || off >= payload.size()) return false;
+  if (!read_u64(payload, off, out->start_ts) || off >= payload.size()) {
+    return false;
+  }
   out->op = static_cast<MvccOp>(static_cast<uint8_t>(payload[off++]));
   uint32_t plen = 0, vlen = 0;
-  if (!read_u32(payload, off, plen) || off + plen > payload.size()) return false;
+  if (!read_u32(payload, off, plen) || off + plen > payload.size()) {
+    return false;
+  }
   out->primary.assign(payload.data() + off, plen);
   off += plen;
-  if (!read_u32(payload, off, vlen) || off + vlen > payload.size()) return false;
+  if (!read_u32(payload, off, vlen) || off + vlen > payload.size()) {
+    return false;
+  }
   out->value.assign(payload.data() + off, vlen);
   off += vlen;
   out->for_update_ts = 0;
@@ -163,7 +175,9 @@ std::string encode_write(const WriteInfo& wi) {
 
 bool decode_write(std::string_view payload, WriteInfo* out) {
   size_t off = 0;
-  if (!read_u64(payload, off, out->start_ts) || off >= payload.size()) return false;
+  if (!read_u64(payload, off, out->start_ts) || off >= payload.size()) {
+    return false;
+  }
   out->op = static_cast<MvccOp>(static_cast<uint8_t>(payload[off++]));
   out->expire_at_ms = 0;
   if (off + sizeof(int64_t) <= payload.size()) {
@@ -174,15 +188,21 @@ bool decode_write(std::string_view payload, WriteInfo* out) {
 
 std::string user_key_of(std::string_view physical) {
   auto pos = physical.find('\0');
-  if (pos == std::string_view::npos) return std::string(physical);
+  if (pos == std::string_view::npos) {
+    return std::string(physical);
+  }
   return std::string(physical.substr(0, pos));
 }
 
 std::optional<LockInfo> MvccStore::get_lock(std::string_view user) const {
   auto rec = eng_.get(lock_key(user));
-  if (!rec) return std::nullopt;
+  if (!rec) {
+    return std::nullopt;
+  }
   LockInfo li;
-  if (!decode_lock(rec->value, &li)) return std::nullopt;
+  if (!decode_lock(rec->value, &li)) {
+    return std::nullopt;
+  }
   return li;
 }
 
@@ -190,7 +210,9 @@ bool MvccStore::has_write_conflict(std::string_view user, uint64_t start_ts) con
   const std::string pref = write_key_prefix(user);
   bool conflict = false;
   eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
-    if (key.size() < pref.size() + 8) return true;
+    if (key.size() < pref.size() + 8) {
+      return true;
+    }
     const uint64_t inv = read_u64_be(key.data() + pref.size());
     const uint64_t commit_ts = ~inv;
     if (commit_ts > start_ts) {
@@ -207,11 +229,15 @@ std::optional<uint64_t> MvccStore::find_commit_ts(std::string_view user, uint64_
   const std::string pref = write_key_prefix(user);
   std::optional<uint64_t> found;
   eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
-    if (key.size() < pref.size() + 8) return true;
+    if (key.size() < pref.size() + 8) {
+      return true;
+    }
     const uint64_t inv = read_u64_be(key.data() + pref.size());
     const uint64_t commit_ts = ~inv;
     WriteInfo wi;
-    if (!decode_write(rec.value, &wi)) return true;
+    if (!decode_write(rec.value, &wi)) {
+      return true;
+    }
     if (wi.start_ts == start_ts) {
       found = commit_ts;
       return false;
@@ -248,11 +274,15 @@ std::optional<uint64_t> MvccStore::latest_commit_ts(std::string_view user) const
   const std::string pref = write_key_prefix(user);
   std::optional<uint64_t> latest;
   eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
-    if (key.size() < pref.size() + 8) return true;
+    if (key.size() < pref.size() + 8) {
+      return true;
+    }
     const uint64_t inv = read_u64_be(key.data() + pref.size());
     const uint64_t commit_ts = ~inv;
     WriteInfo wi;
-    if (!decode_write(rec.value, &wi)) return true;
+    if (!decode_write(rec.value, &wi)) {
+      return true;
+    }
     latest = commit_ts;
     return false;  // write keys are sorted by ~commit_ts → first is newest
   });
@@ -262,13 +292,21 @@ std::optional<uint64_t> MvccStore::latest_commit_ts(std::string_view user) const
 std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t start_ts,
                                               bool* locked, LockInfo* blocking_lock,
                                               uint64_t* out_commit_ts) const {
-  if (locked) *locked = false;
-  if (out_commit_ts) *out_commit_ts = 0;
+  if (locked) {
+    *locked = false;
+  }
+  if (out_commit_ts) {
+    *out_commit_ts = 0;
+  }
   if (auto lk = get_lock(user)) {
     // 悲观锁不挡同事务读；其它事务看到锁则阻塞
     if (lk->start_ts != start_ts) {
-      if (locked) *locked = true;
-      if (blocking_lock) *blocking_lock = *lk;
+      if (locked) {
+        *locked = true;
+      }
+      if (blocking_lock) {
+        *blocking_lock = *lk;
+      }
       return std::nullopt;
     }
   }
@@ -276,28 +314,46 @@ std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t st
   std::optional<WriteInfo> chosen;
   uint64_t chosen_ts = 0;
   eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
-    if (key.size() < pref.size() + 8) return true;
+    if (key.size() < pref.size() + 8) {
+      return true;
+    }
     const uint64_t inv = read_u64_be(key.data() + pref.size());
     const uint64_t commit_ts = ~inv;
-    if (commit_ts > start_ts) return true;
+    if (commit_ts > start_ts) {
+      return true;
+    }
     WriteInfo wi;
-    if (!decode_write(rec.value, &wi)) return true;
+    if (!decode_write(rec.value, &wi)) {
+      return true;
+    }
     chosen = wi;
     chosen_ts = commit_ts;
     return false;
   });
-  if (!chosen) return std::nullopt;
-  if (chosen->op == MvccOp::kDelete) return std::nullopt;
-  // 过期对读不可见（不依赖 compaction 已跑完）
-  if (chosen->expire_at_ms > 0 && wall_ms_now() >= chosen->expire_at_ms) {
-    if (out_commit_ts) *out_commit_ts = 0;
+  if (!chosen) {
     return std::nullopt;
   }
-  if (out_commit_ts) *out_commit_ts = chosen_ts;
+  if (chosen->op == MvccOp::kDelete) {
+    return std::nullopt;
+  }
+  // 过期对读不可见（不依赖 compaction 已跑完）
+  if (chosen->expire_at_ms > 0 && wall_ms_now() >= chosen->expire_at_ms) {
+    if (out_commit_ts) {
+      *out_commit_ts = 0;
+    }
+    return std::nullopt;
+  }
+  if (out_commit_ts) {
+    *out_commit_ts = chosen_ts;
+  }
   auto data = eng_.get(data_key(user, chosen->start_ts), /*hide_expired=*/false);
-  if (!data) return std::nullopt;
+  if (!data) {
+    return std::nullopt;
+  }
   if (kv_record_expired(*data)) {
-    if (out_commit_ts) *out_commit_ts = 0;
+    if (out_commit_ts) {
+      *out_commit_ts = 0;
+    }
     return std::nullopt;
   }
   return data->value;
@@ -305,32 +361,52 @@ std::optional<std::string> MvccStore::txn_get(std::string_view user, uint64_t st
 
 std::optional<int64_t> MvccStore::txn_ttl(std::string_view user, uint64_t start_ts, bool* locked,
                                           LockInfo* blocking_lock) const {
-  if (locked) *locked = false;
+  if (locked) {
+    *locked = false;
+  }
   if (auto lk = get_lock(user)) {
     if (lk->start_ts != start_ts) {
-      if (locked) *locked = true;
-      if (blocking_lock) *blocking_lock = *lk;
+      if (locked) {
+        *locked = true;
+      }
+      if (blocking_lock) {
+        *blocking_lock = *lk;
+      }
       return std::nullopt;
     }
   }
   const std::string pref = write_key_prefix(user);
   std::optional<WriteInfo> chosen;
   eng_.scan_prefix(pref, [&](std::string_view key, const KvRecord& rec) {
-    if (key.size() < pref.size() + 8) return true;
+    if (key.size() < pref.size() + 8) {
+      return true;
+    }
     const uint64_t inv = read_u64_be(key.data() + pref.size());
     const uint64_t commit_ts = ~inv;
-    if (commit_ts > start_ts) return true;
+    if (commit_ts > start_ts) {
+      return true;
+    }
     WriteInfo wi;
-    if (!decode_write(rec.value, &wi)) return true;
+    if (!decode_write(rec.value, &wi)) {
+      return true;
+    }
     chosen = wi;
     return false;
   });
-  if (!chosen || chosen->op == MvccOp::kDelete) return int64_t{-2};
+  if (!chosen || chosen->op == MvccOp::kDelete) {
+    return int64_t{-2};
+  }
   const int64_t now = wall_ms_now();
-  if (chosen->expire_at_ms > 0 && now >= chosen->expire_at_ms) return int64_t{-2};
+  if (chosen->expire_at_ms > 0 && now >= chosen->expire_at_ms) {
+    return int64_t{-2};
+  }
   auto data = eng_.get(data_key(user, chosen->start_ts), /*hide_expired=*/false);
-  if (!data || kv_record_expired(*data, now)) return int64_t{-2};
-  if (chosen->expire_at_ms <= 0) return int64_t{-1};
+  if (!data || kv_record_expired(*data, now)) {
+    return int64_t{-2};
+  }
+  if (chosen->expire_at_ms <= 0) {
+    return int64_t{-1};
+  }
   return chosen->expire_at_ms - now;
 }
 
@@ -339,7 +415,9 @@ MvccStore::ScanResult MvccStore::txn_scan(std::string_view start_key, std::strin
                                           uint32_t limit, bool keys_only,
                                           const openkv::KeyRange& region_range) const {
   ScanResult out;
-  if (limit == 0) limit = 256;
+  if (limit == 0) {
+    limit = 256;
+  }
   const int64_t now = wall_ms_now();
 
   // 按物理序扫 Write 键；同一 user 的 W 键按 ~commit_ts 升序 → 先遇到的是最新提交。
@@ -347,19 +425,27 @@ MvccStore::ScanResult MvccStore::txn_scan(std::string_view start_key, std::strin
   bool decided = false;  // 已为 cur_user 选定可见 Write（或判定不可见）
 
   auto emit_or_skip = [&](std::string_view user, const WriteInfo& wi, uint64_t commit_ts) -> bool {
-    if (wi.op == MvccOp::kDelete) return true;
-    if (wi.expire_at_ms > 0 && now >= wi.expire_at_ms) return true;
+    if (wi.op == MvccOp::kDelete) {
+      return true;
+    }
+    if (wi.expire_at_ms > 0 && now >= wi.expire_at_ms) {
+      return true;
+    }
     ScanPair p;
     p.key = std::string(user);
     p.revision = commit_ts;
     if (!keys_only) {
       auto data = eng_.get(data_key(user, wi.start_ts), /*hide_expired=*/false);
-      if (!data || kv_record_expired(*data, now)) return true;
+      if (!data || kv_record_expired(*data, now)) {
+        return true;
+      }
       p.value = std::move(data->value);
     } else {
       // keys_only：仍校验 data 是否过期（与 Get 一致）
       auto data = eng_.get(data_key(user, wi.start_ts), /*hide_expired=*/false);
-      if (!data || kv_record_expired(*data, now)) return true;
+      if (!data || kv_record_expired(*data, now)) {
+        return true;
+      }
     }
     out.pairs.push_back(std::move(p));
     if (out.pairs.size() >= limit) {
@@ -371,28 +457,48 @@ MvccStore::ScanResult MvccStore::txn_scan(std::string_view start_key, std::strin
 
   eng_.for_each([&](std::string_view phys, const KvRecord& rec) {
     auto pos = phys.find('\0');
-    if (pos == std::string_view::npos || pos + 1 >= phys.size()) return true;
-    if (phys[pos + 1] != 'W') return true;
-    if (phys.size() < pos + 2 + 8) return true;
+    if (pos == std::string_view::npos || pos + 1 >= phys.size()) {
+      return true;
+    }
+    if (phys[pos + 1] != 'W') {
+      return true;
+    }
+    if (phys.size() < pos + 2 + 8) {
+      return true;
+    }
 
     std::string_view user = phys.substr(0, pos);
-    if (!region_range.contains(user)) return true;
-    if (!start_key.empty() && user < start_key) return true;
-    if (!end_key.empty() && user >= end_key) return false;  // 有序，可停
-    if (!start_after.empty() && user <= start_after) return true;
+    if (!region_range.contains(user)) {
+      return true;
+    }
+    if (!start_key.empty() && user < start_key) {
+      return true;
+    }
+    if (!end_key.empty() && user >= end_key) {
+      return false;
+    }
+    if (!start_after.empty() && user <= start_after) {
+      return true;
+    }
 
     if (user != cur_user) {
       cur_user = std::string(user);
       decided = false;
     }
-    if (decided) return true;
+    if (decided) {
+      return true;
+    }
 
     const uint64_t inv = read_u64_be(phys.data() + pos + 2);
     const uint64_t commit_ts = ~inv;
-    if (commit_ts > start_ts) return true;  // 更新版本对当前快照不可见，继续找更老
+    if (commit_ts > start_ts) {
+      return true;
+    }
 
     WriteInfo wi;
-    if (!decode_write(rec.value, &wi)) return true;
+    if (!decode_write(rec.value, &wi)) {
+      return true;
+    }
     decided = true;
     if (!emit_or_skip(user, wi, commit_ts)) {
       // 已满：next_key = 当前 user（续扫 start_after=当前）
@@ -447,11 +553,19 @@ std::vector<std::string> MvccStore::list_expired_locks() const {
   std::vector<std::string> out;
   const int64_t now = wall_ms_now();
   eng_.for_each([&](std::string_view phys, const KvRecord& rec) {
-    if (phys.size() < 2 || phys[phys.size() - 1] != 'L') return true;
-    if (phys[phys.size() - 2] != '\0') return true;
+    if (phys.size() < 2 || phys[phys.size() - 1] != 'L') {
+      return true;
+    }
+    if (phys[phys.size() - 2] != '\0') {
+      return true;
+    }
     LockInfo li;
-    if (!decode_lock(rec.value, &li)) return true;
-    if (li.lock_wall_ms <= 0 || li.ttl_ms == 0) return true;
+    if (!decode_lock(rec.value, &li)) {
+      return true;
+    }
+    if (li.lock_wall_ms <= 0 || li.ttl_ms == 0) {
+      return true;
+    }
     if (now - li.lock_wall_ms > static_cast<int64_t>(li.ttl_ms)) {
       out.push_back(user_key_of(phys));
     }
@@ -463,19 +577,29 @@ std::vector<std::string> MvccStore::list_expired_locks() const {
 uint64_t MvccStore::min_lock_start_ts() const {
   uint64_t min_ts = std::numeric_limits<uint64_t>::max();
   eng_.for_each([&](std::string_view phys, const KvRecord& rec) {
-    if (phys.size() < 2 || phys[phys.size() - 1] != 'L') return true;
-    if (phys[phys.size() - 2] != '\0') return true;
+    if (phys.size() < 2 || phys[phys.size() - 1] != 'L') {
+      return true;
+    }
+    if (phys[phys.size() - 2] != '\0') {
+      return true;
+    }
     LockInfo li;
-    if (!decode_lock(rec.value, &li)) return true;
-    if (li.start_ts < min_ts) min_ts = li.start_ts;
+    if (!decode_lock(rec.value, &li)) {
+      return true;
+    }
+    if (li.start_ts < min_ts) {
+      min_ts = li.start_ts;
+    }
     return true;
   });
   return min_ts;
 }
 
 size_t MvccStore::gc_below(uint64_t safe_ts) {
-  if (safe_ts == 0) return 0;
-  // user -> list of (commit_ts, start_ts, op)
+  if (safe_ts == 0) {
+    return 0;
+  }
+  /* user -> list of (commit_ts, start_ts, op) */
   struct Ver {
     uint64_t commit_ts;
     uint64_t start_ts;
@@ -484,13 +608,21 @@ size_t MvccStore::gc_below(uint64_t safe_ts) {
   std::unordered_map<std::string, std::vector<Ver>> by_user;
   eng_.for_each([&](std::string_view phys, const KvRecord& rec) {
     auto pos = phys.find('\0');
-    if (pos == std::string_view::npos || pos + 1 >= phys.size()) return true;
-    if (phys[pos + 1] != 'W') return true;
-    if (phys.size() < pos + 2 + 8) return true;
+    if (pos == std::string_view::npos || pos + 1 >= phys.size()) {
+      return true;
+    }
+    if (phys[pos + 1] != 'W') {
+      return true;
+    }
+    if (phys.size() < pos + 2 + 8) {
+      return true;
+    }
     const uint64_t inv = read_u64_be(phys.data() + pos + 2);
     const uint64_t commit_ts = ~inv;
     WriteInfo wi;
-    if (!decode_write(rec.value, &wi)) return true;
+    if (!decode_write(rec.value, &wi)) {
+      return true;
+    }
     by_user[std::string(phys.substr(0, pos))].push_back(Ver{commit_ts, wi.start_ts, wi.op});
     return true;
   });
@@ -502,7 +634,9 @@ size_t MvccStore::gc_below(uint64_t safe_ts) {
     // commit_ts >= safe_ts 全留；commit_ts < safe_ts 只留最新一版作 floor（供 start_ts>=safe 读）
     bool kept_floor = false;
     for (const auto& v : vers) {
-      if (v.commit_ts >= safe_ts) continue;
+      if (v.commit_ts >= safe_ts) {
+        continue;
+      }
       if (!kept_floor) {
         kept_floor = true;
         continue;

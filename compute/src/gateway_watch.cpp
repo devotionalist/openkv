@@ -39,7 +39,7 @@ bool has_prefix(std::string_view s, std::string_view p) {
   return s.size() >= p.size() && s.substr(0, p.size()) == p;
 }
 
-/// 写队列与取消标志；生命周期长于 gRPC reactor（回调只握 weak_ptr）。
+/* 写队列与取消标志；生命周期长于 gRPC reactor（回调只握 weak_ptr）。 */
 struct WatchBridge {
   std::mutex mu;
   std::condition_variable cv;
@@ -49,7 +49,7 @@ struct WatchBridge {
   bool done{false};
   bool cancelled{false};
   bool finished{false};
-  /// gRPC 侧已 OnDone；此后禁止再 StartWrite / Finish。
+  // gRPC 侧已 OnDone；此后禁止再 StartWrite / Finish。
   bool dead{false};
   class WatchReactor* reactor{nullptr};
 
@@ -83,7 +83,9 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
   void enqueue_or_finish(kv::v1::WatchEvent ev) {
     {
       std::lock_guard<std::mutex> lock(bridge_->mu);
-      if (bridge_->cancelled || bridge_->finished || bridge_->dead) return;
+      if (bridge_->cancelled || bridge_->finished || bridge_->dead) {
+        return;
+      }
       bridge_->q.push_back(std::move(ev));
     }
     try_write();
@@ -99,7 +101,9 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
   void mark_done() {
     {
       std::lock_guard<std::mutex> lock(bridge_->mu);
-      if (bridge_->dead) return;
+      if (bridge_->dead) {
+        return;
+      }
       bridge_->done = true;
     }
     try_write();
@@ -110,9 +114,13 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
     grpc::Status finish_st = grpc::Status::OK;
     {
       std::lock_guard<std::mutex> lock(bridge_->mu);
-      if (bridge_->dead) return;
+      if (bridge_->dead) {
+        return;
+      }
       bridge_->writing = false;
-      if (!ok) bridge_->cancelled = true;
+      if (!ok) {
+        bridge_->cancelled = true;
+      }
       if (!ok || bridge_->cancelled) {
         if (!bridge_->finished) {
           bridge_->finished = true;
@@ -134,7 +142,9 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
     bool need_finish = false;
     {
       std::lock_guard<std::mutex> lock(bridge_->mu);
-      if (bridge_->dead) return;
+      if (bridge_->dead) {
+        return;
+      }
       bridge_->cancelled = true;
       bridge_->done = true;
       if (!bridge_->writing && !bridge_->finished) {
@@ -162,13 +172,17 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
     grpc::Status finish_st = grpc::Status::OK;
     {
       std::lock_guard<std::mutex> lock(bridge_->mu);
-      if (bridge_->dead || bridge_->writing || bridge_->finished) return;
+      if (bridge_->dead || bridge_->writing || bridge_->finished) {
+        return;
+      }
       if (bridge_->cancelled) {
         bridge_->finished = true;
         need_finish = true;
         finish_st = grpc::Status(grpc::StatusCode::CANCELLED, "cancelled");
       } else if (bridge_->q.empty()) {
-        if (!bridge_->done) return;
+        if (!bridge_->done) {
+          return;
+        }
         bridge_->finished = true;
         need_finish = true;
         finish_st = grpc::Status::OK;
@@ -180,7 +194,9 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
         return;
       }
     }
-    if (need_finish) Finish(finish_st);
+    if (need_finish) {
+      Finish(finish_st);
+    }
   }
 
   std::shared_ptr<WatchBridge> bridge_;
@@ -190,18 +206,28 @@ class WatchReactor final : public grpc::ServerWriteReactor<kv::v1::WatchEvent> {
 }  // namespace
 
 bool GatewayServer::match_watch(const kv::v1::WatchRequest& req, std::string_view key) const {
-  if (!req.key().empty()) return key == req.key();
-  if (!req.key_prefix().empty()) return has_prefix(key, req.key_prefix());
+  if (!req.key().empty()) {
+    return key == req.key();
+  }
+  if (!req.key_prefix().empty()) {
+    return has_prefix(key, req.key_prefix());
+  }
   return true;
 }
 
 std::vector<uint32_t> GatewayServer::regions_for_watch(const kv::v1::WatchRequest& req) {
-  if (!req.key().empty()) return {region_of(req.key())};
+  if (!req.key().empty()) {
+    return {region_of(req.key())};
+  }
   auto t = routes_.snapshot();
-  if (t.regions.empty()) return {0};
+  if (t.regions.empty()) {
+    return {0};
+  }
   std::vector<uint32_t> ids;
   ids.reserve(t.regions.size());
-  for (const auto& [id, _] : t.regions) ids.push_back(id);
+  for (const auto& [id, _] : t.regions) {
+    ids.push_back(id);
+  }
   return ids;
 }
 
@@ -223,7 +249,9 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
     std::shared_ptr<std::function<void()>> poll_round;
 
     bool live() const {
-      if (stopped.load(std::memory_order_acquire)) return false;
+      if (stopped.load(std::memory_order_acquire)) {
+        return false;
+      }
       return !still_open || still_open();
     }
 
@@ -257,18 +285,22 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
       if (st->self->pool_) {
         st->self->pool_->post([st]() {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          if (st->live())
+          if (st->live()) {
             (*st->poll_round)();
-          else
+          } else {
             st->stop();
+          }
+          st->stop();
         });
       } else {
         std::thread([st]() {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          if (st->live())
+          if (st->live()) {
             (*st->poll_round)();
-          else
+          } else {
             st->stop();
+          }
+          st->stop();
         }).detach();
       }
       return;
@@ -306,8 +338,12 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
                 st->stop();
                 return;
               }
-              if (!st->self->match_watch(st->req, ev.key)) continue;
-              if (st->req.start_revision() > 0 && ev.revision <= st->req.start_revision()) continue;
+              if (!st->self->match_watch(st->req, ev.key)) {
+                continue;
+              }
+              if (st->req.start_revision() > 0 && ev.revision <= st->req.start_revision()) {
+                continue;
+              }
               kv::v1::WatchEvent o;
               o.set_type(ev.deleted ? kv::v1::WatchEvent::DELETE : kv::v1::WatchEvent::PUT);
               o.set_key(ev.key);
@@ -318,7 +354,9 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
                 return;
               }
             }
-            if (out.max_revision > st->since) st->since = out.max_revision;
+            if (out.max_revision > st->since) {
+              st->since = out.max_revision;
+            }
             (*st->poll_round)();
           };
           // write_ev 可能阻塞等 OnWriteDone；放到 WorkPool，勿堵 gRPC CQ。
@@ -347,7 +385,9 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
         }
         if (tg->found() && !tg->locked()) {
           uint64_t rev = st->since;
-          if (rev == 0) rev = 1;
+          if (rev == 0) {
+            rev = 1;
+          }
           kv::v1::WatchEvent ev;
           ev.set_type(kv::v1::WatchEvent::PUT);
           ev.set_key(st->req.key());
@@ -378,7 +418,7 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
     return;
   }
 
-  // Lift since to max watch_head across regions.
+  /* Lift since to max watch_head across regions. */
   struct HeadState {
     std::shared_ptr<State> st;
     size_t idx{0};
@@ -409,7 +449,9 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
         return;
       }
       if (sst.ok() && out.error.empty() && out.redirect_to.empty()) {
-        if (out.revision > hs->st->since) hs->st->since = out.revision;
+        if (out.revision > hs->st->since) {
+          hs->st->since = out.revision;
+        }
       } else if (!out.redirect_to.empty()) {
         hs->st->self->remember_leader(hs->st->regions[hs->idx - 1], out.redirect_to);
       }
@@ -431,16 +473,22 @@ grpc::ServerWriteReactor<kv::v1::WatchEvent>* GatewayServer::Watch(
       std::move(req_copy),
       [weak, bridge](const kv::v1::WatchEvent& ev) {
         auto r = weak.lock();
-        if (!r) return false;
+        if (!r) {
+          return false;
+        }
         {
           std::lock_guard<std::mutex> lock(bridge->mu);
-          if (bridge->cancelled || bridge->dead) return false;
+          if (bridge->cancelled || bridge->dead) {
+            return false;
+          }
         }
         r->enqueue_or_finish(ev);
         return r->wait_drain();
       },
       [weak]() {
-        if (auto r = weak.lock()) r->mark_done();
+        if (auto r = weak.lock()) {
+          r->mark_done();
+        }
       },
       [bridge]() {
         std::lock_guard<std::mutex> lock(bridge->mu);

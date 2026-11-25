@@ -23,14 +23,18 @@ namespace openkv::storage {
 
 bool Latches::can_hold_locked(const std::vector<std::string>& keys) const {
   for (const auto& k : keys) {
-    if (held_.find(k) != held_.end()) return false;
+    if (held_.find(k) != held_.end()) {
+      return false;
+    }
   }
   return true;
 }
 
 uint64_t Latches::grant_locked(const std::vector<std::string>& keys) {
   const uint64_t token = next_token_++;
-  for (const auto& k : keys) held_[k] = token;
+  for (const auto& k : keys) {
+    held_[k] = token;
+  }
   return token;
 }
 
@@ -48,7 +52,9 @@ void Latches::drain_async_locked(
 }
 
 void Latches::lock_async(std::vector<std::string> keys, std::function<void(uint64_t)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   uint64_t tok = 0;
   {
     std::lock_guard<std::mutex> lk(mu_);
@@ -67,15 +73,19 @@ void Latches::unlock(uint64_t token) {
   {
     std::lock_guard<std::mutex> lk(mu_);
     for (auto it = held_.begin(); it != held_.end();) {
-      if (it->second == token)
+      if (it->second == token) {
         it = held_.erase(it);
-      else
+      } else {
         ++it;
+      }
+      ++it;
     }
     drain_async_locked(&ready);
   }
   for (auto& [tok, fn] : ready) {
-    if (fn) fn(tok);
+    if (fn) {
+      fn(tok);
+    }
   }
 }
 

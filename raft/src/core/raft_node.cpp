@@ -40,9 +40,15 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
       apply_(*this),
       linear_read_(*this),
       ready_pump_(*this) {
-  if (opts_.max_inflight_msgs == 0) opts_.max_inflight_msgs = 1;
-  if (opts_.max_ae_entries == 0) opts_.max_ae_entries = 64;
-  if (opts_.max_ae_bytes == 0) opts_.max_ae_bytes = 256 * 1024;
+  if (opts_.max_inflight_msgs == 0) {
+    opts_.max_inflight_msgs = 1;
+  }
+  if (opts_.max_ae_entries == 0) {
+    opts_.max_ae_entries = 64;
+  }
+  if (opts_.max_ae_bytes == 0) {
+    opts_.max_ae_bytes = 256 * 1024;
+  }
   // external_io：协议不发网/不回调 apply；落盘经 Store persist_fn→persist_ready。
   std::mt19937 rng{std::random_device{}()};
   std::uniform_int_distribution<int> dist(opts_.election_timeout_ms / 100,
@@ -52,7 +58,9 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
     progress_.next_index_[p.id] = 1;
     progress_.match_index_[p.id] = 0;
   }
-  if (opts_.persist_batch_n == 0) opts_.persist_batch_n = 1;
+  if (opts_.persist_batch_n == 0) {
+    opts_.persist_batch_n = 1;
+  }
   group_id_ = opts_.raft_group_id != 0 ? opts_.raft_group_id : opts_.shard_id;
   if (opts_.raft_engine) {
     engine_ = opts_.raft_engine;
@@ -60,16 +68,22 @@ RaftNode::RaftNode(Options opts, ApplyCallback on_apply, TransportSend send,
     owned_file_engine_ = std::make_shared<FileRaftEngine>(opts_.persist_dir, opts_.persist_sync);
     engine_ = owned_file_engine_;
   }
-  if (engine_) load_from_disk();
+  if (engine_) {
+    load_from_disk();
+  }
   // compact 后日志窗口不含历史：必须先恢复本地 FSM 快照再 recover_apply。
   apply_.restore_local_fsm_snapshot();
 }
 
 void RaftNode::load_from_disk() {
-  if (!engine_) return;
+  if (!engine_) {
+    return;
+  }
   PersistedHardState hs;
   std::vector<LogEntry> entries;
-  if (!load_group_from_engine(*engine_, group_id_, &hs, &entries)) return;
+  if (!load_group_from_engine(*engine_, group_id_, &hs, &entries)) {
+    return;
+  }
   term_ = hs.term;
   voted_for_ = hs.voted_for;
   commit_index_ = hs.commit_index;
@@ -87,7 +101,9 @@ void RaftNode::load_from_disk() {
 
 void RaftNode::recover_apply() {
   // on_apply 里再进 recover_apply 会重入 mu_ / 自等 last_applied → 直接跳过。
-  if (in_on_apply_.load(std::memory_order_relaxed)) return;
+  if (in_on_apply_.load(std::memory_order_relaxed)) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(mu_);
   apply_.apply_committed();
   persist_locked();
@@ -100,7 +116,9 @@ SoftState RaftNode::soft_state() const {
     uint64_t min_match = log_.last_index();
     bool any = false;
     for (const auto& p : opts_.peers) {
-      if (p.id == opts_.self_id || p.learner) continue;
+      if (p.id == opts_.self_id || p.learner) {
+        continue;
+      }
       auto it = progress_.match_index_.find(p.id);
       uint64_t m = it == progress_.match_index_.end() ? 0 : it->second;
       // 从未建连成功的 peer（match=0 且 quiet 已爆）不拖 lag，避免僵尸副本误导运维
@@ -110,7 +128,9 @@ SoftState RaftNode::soft_state() const {
         continue;
       }
       any = true;
-      if (m < min_match) min_match = m;
+      if (m < min_match) {
+        min_match = m;
+      }
     }
     if (any) {
       st.replication_lag = log_.last_index() > min_match ? log_.last_index() - min_match : 0;
@@ -136,24 +156,34 @@ bool RaftNode::conf_change_busy() const {
 
 std::string RaftNode::leader_address() const {
   std::lock_guard<std::mutex> lock(mu_);
-  if (leader_id_.empty()) return {};
+  if (leader_id_.empty()) {
+    return {};
+  }
   for (const auto& p : opts_.peers) {
-    if (p.id == leader_id_) return p.address;
+    if (p.id == leader_id_) {
+      return p.address;
+    }
   }
   return {};
 }
 
 bool RaftNode::self_is_learner() const {
   for (const auto& p : opts_.peers) {
-    if (p.id == opts_.self_id) return p.learner;
+    if (p.id == opts_.self_id) {
+      return p.learner;
+    }
   }
   return false;
 }
 
 uint64_t RaftNode::match_index_of(const std::string& peer_id) const {
   std::lock_guard<std::mutex> lock(mu_);
-  if (role_ != Role::kLeader) return 0;
-  if (peer_id == opts_.self_id) return commit_index_;
+  if (role_ != Role::kLeader) {
+    return 0;
+  }
+  if (peer_id == opts_.self_id) {
+    return commit_index_;
+  }
   auto it = progress_.match_index_.find(peer_id);
   return it == progress_.match_index_.end() ? 0 : it->second;
 }
@@ -165,7 +195,9 @@ uint64_t RaftNode::last_index() const {
 
 bool RaftNode::abdicate() {
   std::lock_guard<std::mutex> lock(mu_);
-  if (role_ != Role::kLeader) return false;
+  if (role_ != Role::kLeader) {
+    return false;
+  }
   election_.become_follower(term_, {});
   persist_locked();
   return true;
@@ -174,8 +206,12 @@ bool RaftNode::abdicate() {
 bool RaftNode::force_election() {
   {
     std::lock_guard<std::mutex> lock(mu_);
-    if (self_is_learner()) return false;
-    if (role_ == Role::kLeader) return true;
+    if (self_is_learner()) {
+      return false;
+    }
+    if (role_ == Role::kLeader) {
+      return true;
+    }
     election_.election_elapsed_ = 0;
     election_.in_pre_vote_ = false;
     election_.pre_votes_.clear();
@@ -206,12 +242,6 @@ bool RaftNode::wait_applied(uint64_t index, uint32_t timeout_ms,
   return apply_.wait_applied(index, timeout_ms, tick);
 }
 
-/**
- * @brief 加载硬状态：加载硬状态是加载硬状态的外部io，用于加载硬状态的外部io。
- *
- * 如果使用外部io，则不加载硬状态。
- * 否则，加载硬状态。
- */
 void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<LogEntry>& entries) {
   std::lock_guard<std::mutex> lock(mu_);
   term_ = hs.term;
@@ -229,19 +259,24 @@ void RaftNode::load_hard_state(const PersistedHardState& hs, const std::vector<L
 }
 
 // 提业务日志：true 只表示已 append 拿到 index，不等于已落盘/提交/apply。详见头文件。
-bool RaftNode::propose(std::string data, uint64_t* assigned_index) {  // 提议新日志
+bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
   {
     std::lock_guard<std::mutex> lock(mu_);
-    if (role_ != Role::kLeader) return false;  // 如果不是领导者，返回false
+    if (role_ != Role::kLeader) {
+      return false;
+    }
 
-    const uint64_t idx = log_.append(term_, std::move(data));  // 追加日志
+    const uint64_t idx = log_.append(term_, std::move(data));
     if (opts_.external_io) {
-      if (auto e = log_.entry(idx))
+      if (auto e = log_.entry(idx)) {
         ready_io_.ready_unstable_.push_back(*e);  // 如果日志存在，追加到待发送队列
+      }
     }
 
     progress_.match_index_[opts_.self_id] = idx;  // 更新匹配索引
-    if (assigned_index) *assigned_index = idx;    // 更新分配索引
+    if (assigned_index) {
+      *assigned_index = idx;
+    }
 
     persist_locked();  // 持久化
     replication_.need_replicate_ = true;
@@ -263,7 +298,9 @@ bool RaftNode::propose_conf_change(const ConfChange& cc) {
   ConfChange out = cc;
   if (cc.type == ConfChange::kPromoteLearner || cc.type == ConfChange::kRemoveNode) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (membership_.in_joint_ || membership_.auto_leave_pending_) return false;
+    if (membership_.in_joint_ || membership_.auto_leave_pending_) {
+      return false;
+    }
     out.type = ConfChange::kEnterJoint;
     out.joint_change = cc.type;
   } else if (cc.type == ConfChange::kEnterJoint || cc.type == ConfChange::kLeaveJoint) {
@@ -274,7 +311,9 @@ bool RaftNode::propose_conf_change(const ConfChange& cc) {
     }
   }
   std::string payload;
-  if (!membership_.encode_conf(out, &payload)) return false;
+  if (!membership_.encode_conf(out, &payload)) {
+    return false;
+  }
   return propose(std::move(payload));
 }
 
@@ -289,13 +328,17 @@ void RaftNode::tick() {
       ++election_.heartbeat_elapsed_;
       const bool hb = election_.heartbeat_elapsed_ * 100 >= static_cast<int>(opts_.heartbeat_ms);
       if (hb || replication_.need_replicate_) {
-        if (hb) election_.heartbeat_elapsed_ = 0;
+        if (hb) {
+          election_.heartbeat_elapsed_ = 0;
+        }
         replication_.broadcast_replicate();
         replication_.need_replicate_ = false;
       }
       for (auto& [id, quiet] : election_.peer_quiet_ticks_) {
         // 快照在途 / 本轮发不出 AE：不涨 quiet（否则本机管道拥塞会被当成网络分区）
-        if (progress_.snap_inflight_.count(id) || progress_.peer_send_blocked_.count(id)) continue;
+        if (progress_.snap_inflight_.count(id) || progress_.peer_send_blocked_.count(id)) {
+          continue;
+        }
         ++quiet;
       }
       election_.maybe_check_quorum();

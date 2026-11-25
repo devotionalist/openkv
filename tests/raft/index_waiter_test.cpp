@@ -119,14 +119,20 @@ TEST(IndexWaiterTest, ConcurrentWaitInvokeNoTimeout) {
   for (int i = 0; i < kN; ++i) {
     waiters.emplace_back([&q, &timeouts, i] {
       auto out = q.wait(static_cast<uint64_t>(i + 1), std::chrono::milliseconds(2000));
-      if (out.timed_out) timeouts.fetch_add(1);
+      if (out.timed_out) {
+        timeouts.fetch_add(1);
+      }
     });
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
   for (int i = 0; i < kN; ++i) {
     invokers.emplace_back([&q, i] { q.invoke(static_cast<uint64_t>(i + 1), ""); });
   }
-  for (auto& t : waiters) t.join();
-  for (auto& t : invokers) t.join();
+  for (auto& t : waiters) {
+    t.join();
+  }
+  for (auto& t : invokers) {
+    t.join();
+  }
   EXPECT_EQ(timeouts.load(), 0);
 }

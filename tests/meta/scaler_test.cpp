@@ -124,9 +124,15 @@ TEST(ScalerTest, ConcurrentScaleOutQueues) {
     auto b = scaler.get_task(t2.task_id);
     ASSERT_TRUE(a);
     ASSERT_TRUE(b);
-    if (a->state == ScaleTaskState::kCompleted) d1 = true;
-    if (b->state == ScaleTaskState::kCompleted) d2 = true;
-    if (d1 && d2) break;
+    if (a->state == ScaleTaskState::kCompleted) {
+      d1 = true;
+    }
+    if (b->state == ScaleTaskState::kCompleted) {
+      d2 = true;
+    }
+    if (d1 && d2) {
+      break;
+    }
     ASSERT_NE(a->state, ScaleTaskState::kFailed) << a->error;
     ASSERT_NE(b->state, ScaleTaskState::kFailed) << b->error;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -195,7 +201,9 @@ TEST(ScalerTest, CatchUpGateWaits) {
   for (int i = 0; i < 80; ++i) {
     auto t = scaler.get_task(task.task_id);
     ASSERT_TRUE(t);
-    if (t->state == ScaleTaskState::kCatchingUp) saw_catching = true;
+    if (t->state == ScaleTaskState::kCatchingUp) {
+      saw_catching = true;
+    }
     if (t->state == ScaleTaskState::kCompleted) {
       done = true;
       break;

@@ -146,9 +146,13 @@ void GatewayServer::list_push_async(const std::string& key, std::vector<std::str
       return;
     }
     if (left) {
-      for (const auto& v : values) l.insert(l.begin(), v);
+      for (const auto& v : values) {
+        l.insert(l.begin(), v);
+      }
     } else {
-      for (const auto& v : values) l.push_back(v);
+      for (const auto& v : values) {
+        l.push_back(v);
+      }
     }
     const int64_t length = static_cast<int64_t>(l.size());
     ds_store_async(mk, ds::encode_list(l),
@@ -193,7 +197,9 @@ void GatewayServer::list_pop_async(const std::string& key, bool left,
       l.pop_back();
     }
     std::string store;
-    if (!l.empty()) store = ds::encode_list(l);
+    if (!l.empty()) {
+      store = ds::encode_list(l);
+    }
     ds_store_async(mk, store, [done = std::move(done), value = std::move(value)](grpc::Status sst) {
       done(sst, value, true);
     });
@@ -298,10 +304,14 @@ void GatewayServer::HDelAsync(const kv::v1::HDelRequest* req, kv::v1::HDelRespon
     }
     int64_t n = 0;
     for (const auto& f : req->fields()) {
-      if (h.erase(f)) ++n;
+      if (h.erase(f)) {
+        ++n;
+      }
     }
     std::string store;
-    if (!h.empty()) store = ds::encode_hash(h);
+    if (!h.empty()) {
+      store = ds::encode_hash(h);
+    }
     ds_store_async(mk, store, [resp, n, done = std::move(done)](grpc::Status sst) {
       if (!sst.ok()) {
         done(sst);
@@ -421,7 +431,9 @@ void GatewayServer::HMSetAsync(const kv::v1::HMSetRequest* req, kv::v1::HMSetRes
           done(ds_err(e));
           return;
         }
-        for (int i = 0; i < req->fields_size(); ++i) h[req->fields(i)] = req->values(i);
+        for (int i = 0; i < req->fields_size(); ++i) {
+          h[req->fields(i)] = req->values(i);
+        }
         ds_store_async(mk, ds::encode_hash(h), [resp, done = std::move(done)](grpc::Status sst) {
           if (!sst.ok()) {
             done(sst);
@@ -490,7 +502,9 @@ void GatewayServer::SAddAsync(const kv::v1::SAddRequest* req, kv::v1::SAddRespon
         }
         int64_t added = 0;
         for (const auto& m : req->members()) {
-          if (set.insert(m).second) ++added;
+          if (set.insert(m).second) {
+            ++added;
+          }
         }
         ds_store_async(mk, ds::encode_set(set),
                        [resp, added, done = std::move(done)](grpc::Status sst) {
@@ -530,10 +544,14 @@ void GatewayServer::SRemAsync(const kv::v1::SRemRequest* req, kv::v1::SRemRespon
     }
     int64_t n = 0;
     for (const auto& m : req->members()) {
-      if (set.erase(m)) ++n;
+      if (set.erase(m)) {
+        ++n;
+      }
     }
     std::string store;
-    if (!set.empty()) store = ds::encode_set(set);
+    if (!set.empty()) {
+      store = ds::encode_set(set);
+    }
     ds_store_async(mk, store, [resp, n, done = std::move(done)](grpc::Status sst) {
       if (!sst.ok()) {
         done(sst);
@@ -614,7 +632,9 @@ void GatewayServer::SMembersAsync(const kv::v1::SMembersRequest* req,
                     return;
                   }
                   try {
-                    for (const auto& m : ds::decode_set(blob)) resp->add_members(m);
+                    for (const auto& m : ds::decode_set(blob)) {
+                      resp->add_members(m);
+                    }
                     done(grpc::Status::OK);
                   } catch (const std::exception& e) {
                     done(ds_err(e));
@@ -727,7 +747,9 @@ void GatewayServer::LRangeAsync(const kv::v1::LRangeRequest* req, kv::v1::LRange
       auto l = ds::decode_list(blob);
       auto rng = ds::normalize_range(static_cast<int64_t>(l.size()), req->start(), req->stop());
       if (rng) {
-        for (size_t i = rng->first; i < rng->second; ++i) resp->add_values(l[i]);
+        for (size_t i = rng->first; i < rng->second; ++i) {
+          resp->add_values(l[i]);
+        }
       }
       done(grpc::Status::OK);
     } catch (const std::exception& e) {
@@ -756,7 +778,9 @@ void GatewayServer::LIndexAsync(const kv::v1::LIndexRequest* req, kv::v1::LIndex
                     auto l = ds::decode_list(blob);
                     int64_t idx = req->index();
                     const int64_t n = static_cast<int64_t>(l.size());
-                    if (idx < 0) idx = n + idx;
+                    if (idx < 0) {
+                      idx = n + idx;
+                    }
                     if (idx >= 0 && idx < n) {
                       resp->set_value(l[static_cast<size_t>(idx)]);
                       resp->set_found(true);
@@ -790,7 +814,9 @@ void GatewayServer::ZAddAsync(const kv::v1::ZAddRequest* req, kv::v1::ZAddRespon
     }
     int64_t added = 0;
     for (const auto& it : req->items()) {
-      if (!z.count(it.member())) ++added;
+      if (!z.count(it.member())) {
+        ++added;
+      }
       z[it.member()] = it.score();
     }
     ds_store_async(mk, ds::encode_zset(z), [resp, added, done = std::move(done)](grpc::Status sst) {
@@ -830,10 +856,14 @@ void GatewayServer::ZRemAsync(const kv::v1::ZRemRequest* req, kv::v1::ZRemRespon
     }
     int64_t n = 0;
     for (const auto& m : req->members()) {
-      if (z.erase(m)) ++n;
+      if (z.erase(m)) {
+        ++n;
+      }
     }
     std::string store;
-    if (!z.empty()) store = ds::encode_zset(z);
+    if (!z.empty()) {
+      store = ds::encode_zset(z);
+    }
     ds_store_async(mk, store, [resp, n, done = std::move(done)](grpc::Status sst) {
       if (!sst.ok()) {
         done(sst);
@@ -922,7 +952,9 @@ void GatewayServer::ZRangeAsync(const kv::v1::ZRangeRequest* req, kv::v1::ZRange
       if (rng) {
         for (size_t i = rng->first; i < rng->second; ++i) {
           resp->add_members(ents[i].member);
-          if (req->with_scores()) resp->add_scores(ents[i].score);
+          if (req->with_scores()) {
+            resp->add_scores(ents[i].score);
+          }
         }
       }
       done(grpc::Status::OK);

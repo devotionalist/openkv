@@ -54,16 +54,20 @@ RoutingTable from_pb_routing(const ::meta::v1::RoutingTable& pb) {
     rr.epoch = 1;
     t.regions.emplace(0, std::move(rr));
   }
-  if (t.shard_count == 0) t.shard_count = static_cast<uint32_t>(t.regions.size());
+  if (t.shard_count == 0) {
+    t.shard_count = static_cast<uint32_t>(t.regions.size());
+  }
   return t;
 }
 
-/// 单点 GetTs；失败清缓存并抛错。count=0/1 取一个。
+// 单点 GetTs；失败清缓存并抛错。count=0/1 取一个。
 std::pair<uint64_t, uint32_t> meta_get_ts_range_one(const std::string& addr, uint32_t count,
                                                     int timeout_ms) {
   auto stub = cached_meta_stub(addr);
   ::meta::v1::GetTsRequest req;
-  if (count == 0) count = 1;
+  if (count == 0) {
+    count = 1;
+  }
   req.set_count(count);
   ::meta::v1::GetTsResponse resp;
   grpc::ClientContext ctx;
@@ -73,7 +77,9 @@ std::pair<uint64_t, uint32_t> meta_get_ts_range_one(const std::string& addr, uin
     drop_cached_channel(addr);
     throw std::runtime_error(std::string("meta GetTs: ") + st.error_message());
   }
-  if (resp.ts() == 0) throw std::runtime_error("meta GetTs: empty ts");
+  if (resp.ts() == 0) {
+    throw std::runtime_error("meta GetTs: empty ts");
+  }
   uint32_t got = resp.count() == 0 ? 1 : resp.count();
   return {resp.ts(), got};
 }
@@ -82,7 +88,7 @@ uint64_t meta_get_ts_one(const std::string& addr, int timeout_ms) {
   return meta_get_ts_range_one(addr, 1, timeout_ms).first;
 }
 
-/// 多 seed × 多 hop：跟随 UNAVAILABLE / 换址重试 GetTs。
+// 多 seed × 多 hop：跟随 UNAVAILABLE / 换址重试 GetTs。
 uint64_t meta_get_ts_with_retry(const std::vector<std::string>& addrs, int timeout_ms) {
   std::string last_err = "no meta";
   int backoff_ms = 20;
@@ -95,7 +101,9 @@ uint64_t meta_get_ts_with_retry(const std::vector<std::string>& addrs, int timeo
       }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
-    if (backoff_ms < 500) backoff_ms *= 2;
+    if (backoff_ms < 500) {
+      backoff_ms *= 2;
+    }
   }
   throw std::runtime_error(last_err);
 }
@@ -144,7 +152,9 @@ RoutingTable meta_watch_routing_one(const std::string& addr, uint64_t since, int
 
 std::pair<uint64_t, uint32_t> alloc_ts_range(const std::vector<std::string>& meta_addrs,
                                              uint32_t count) {
-  if (count == 0) count = 1;
+  if (count == 0) {
+    count = 1;
+  }
   std::string last_err = "no meta";
   for (const auto& seed : meta_addrs) {
     try {
@@ -170,7 +180,9 @@ RoutingTable fetch_route(const std::vector<std::string>& meta_addrs, int timeout
 
 RoutingTable watch_route(const std::vector<std::string>& meta_addrs, uint64_t since,
                          int timeout_ms) {
-  if (timeout_ms <= 0) timeout_ms = 5000;
+  if (timeout_ms <= 0) {
+    timeout_ms = 5000;
+  }
   std::string last = "no meta";
   for (const auto& addr : meta_addrs) {
     try {
@@ -214,7 +226,9 @@ void report_min_start_ts(const std::vector<std::string>& meta_addrs, uint64_t mi
 
 void meta_get_ts_async(const std::string& addr, int timeout_ms,
                        std::function<void(grpc::Status, uint64_t)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   auto stub = cached_meta_stub(addr);
   auto ctx = std::make_shared<grpc::ClientContext>();
   attach_deadline_and_token(ctx.get(), timeout_ms);
@@ -223,7 +237,9 @@ void meta_get_ts_async(const std::string& addr, int timeout_ms,
   auto resp = std::make_shared<::meta::v1::GetTsResponse>();
   stub->async()->GetTs(ctx.get(), req.get(), resp.get(),
                        [addr, stub, ctx, req, resp, cb = std::move(cb)](grpc::Status st) {
-                         if (!st.ok()) drop_cached_channel(addr);
+                         if (!st.ok()) {
+                           drop_cached_channel(addr);
+                         }
                          cb(st, resp->ts());
                        });
 }
@@ -231,8 +247,12 @@ void meta_get_ts_async(const std::string& addr, int timeout_ms,
 void meta_alloc_ts_range_async(const std::vector<std::string>& meta_addrs, uint32_t count,
                                int timeout_ms,
                                std::function<void(grpc::Status, uint64_t start, uint32_t got)> cb) {
-  if (!cb) return;
-  if (count == 0) count = 1;
+  if (!cb) {
+    return;
+  }
+  if (count == 0) {
+    count = 1;
+  }
   if (meta_addrs.empty()) {
     cb(grpc::Status(grpc::StatusCode::UNAVAILABLE, "no meta"), 0, 0);
     return;
@@ -267,7 +287,9 @@ void meta_alloc_ts_range_async(const std::vector<std::string>& meta_addrs, uint3
     stub->async()->GetTs(ctx.get(), req.get(), resp.get(),
                          [st, addr, stub, ctx, req, resp, next](grpc::Status gst) {
                            if (!gst.ok() || resp->ts() == 0) {
-                             if (!gst.ok()) drop_cached_channel(addr);
+                             if (!gst.ok()) {
+                               drop_cached_channel(addr);
+                             }
                              ++st->seed_idx;
                              (*next)();
                              return;

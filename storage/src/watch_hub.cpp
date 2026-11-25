@@ -33,12 +33,20 @@ void WatchHub::push(WatchRecord rec) {
 std::vector<WatchRecord> WatchHub::poll(uint32_t region_id, uint64_t since, size_t limit) const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<WatchRecord> out;
-  if (limit == 0) limit = 64;
+  if (limit == 0) {
+    limit = 64;
+  }
   for (const auto& r : buf_) {
-    if (r.revision <= since) continue;
-    if (region_id != std::numeric_limits<uint32_t>::max() && r.region_id != region_id) continue;
+    if (r.revision <= since) {
+      continue;
+    }
+    if (region_id != std::numeric_limits<uint32_t>::max() && r.region_id != region_id) {
+      continue;
+    }
     out.push_back(r);
-    if (out.size() >= limit) break;
+    if (out.size() >= limit) {
+      break;
+    }
   }
   return out;
 }

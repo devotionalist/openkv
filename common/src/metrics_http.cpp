@@ -41,7 +41,9 @@ MetricsHttpServer::~MetricsHttpServer() { stop(); }
 
 void MetricsHttpServer::start(std::string listen_addr, MetricsTextFn text_fn) {
   stop();
-  if (listen_addr.empty() || !text_fn) return;
+  if (listen_addr.empty() || !text_fn) {
+    return;
+  }
 
   std::string host;
   uint16_t port = 0;
@@ -49,7 +51,9 @@ void MetricsHttpServer::start(std::string listen_addr, MetricsTextFn text_fn) {
     SKV_WARN << "metrics http bad addr=" << listen_addr;
     return;
   }
-  if (host.empty()) host = "0.0.0.0";
+  if (host.empty()) {
+    host = "0.0.0.0";
+  }
 
   impl_->srv = std::make_unique<httplib::Server>();
   impl_->srv->Get("/metrics",
@@ -78,11 +82,15 @@ void MetricsHttpServer::start(std::string listen_addr, MetricsTextFn text_fn) {
 }
 
 void MetricsHttpServer::stop() {
-  if (!impl_) return;
+  if (!impl_) {
+    return;
+  }
   if (impl_->srv) {
     impl_->srv->stop();
   }
-  if (impl_->thr.joinable()) impl_->thr.join();
+  if (impl_->thr.joinable()) {
+    impl_->thr.join();
+  }
   impl_->srv.reset();
   impl_->running = false;
 }
@@ -90,7 +98,9 @@ void MetricsHttpServer::stop() {
 bool MetricsHttpServer::running() const { return impl_ && impl_->running.load(); }
 
 std::string metrics_addr_from_env() {
-  if (const char* e = std::getenv("SKV_METRICS_ADDR")) return std::string(e);
+  if (const char* e = std::getenv("SKV_METRICS_ADDR")) {
+    return std::string(e);
+  }
   return {};
 }
 

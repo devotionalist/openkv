@@ -17,9 +17,13 @@
 namespace openkv::net {
 
 bool parse_host_port(std::string_view addr, std::string* host, uint16_t* port) {
-  if (!host || !port) return false;
+  if (!host || !port) {
+    return false;
+  }
   auto pos = addr.rfind(':');
-  if (pos == std::string_view::npos) return false;
+  if (pos == std::string_view::npos) {
+    return false;
+  }
   *host = std::string(addr.substr(0, pos));
   try {
     *port = static_cast<uint16_t>(std::stoi(std::string(addr.substr(pos + 1))));

@@ -29,35 +29,42 @@
 
 namespace openkv::compute::ds {
 
-inline constexpr char kTypeHash = 'h';
-inline constexpr char kTypeSet = 's';
-inline constexpr char kTypeList = 'l';
-inline constexpr char kTypeZSet = 'z';
+inline constexpr char kTypeHash = 'h';  // Hash blob 类型标记
+inline constexpr char kTypeSet = 's';   // Set
+inline constexpr char kTypeList = 'l';  // List
+inline constexpr char kTypeZSet = 'z';  // ZSet
 
-/// blob 类型与期望不符（WRONGTYPE）。
+/* blob 类型与期望不符（WRONGTYPE）。 */
 class WrongTypeError : public std::runtime_error {
  public:
   WrongTypeError(char have, char want)
       : std::runtime_error(std::string("wrong_type: have=") + have + " want=" + want),
         have_(have),
         want_(want) {}
-  /// 实际类型标记。
+  /**
+   * 实际类型标记。
+   */
   char have() const { return have_; }
-  /// 期望类型标记。
+  /**
+   * 期望类型标记。
+   */
   char want() const { return want_; }
 
  private:
-  char have_;
-  char want_;
+  char have_;  // 实际类型标记
+  char want_;  // 期望类型标记
 };
 
-/// blob 损坏 / 无法解码。
+/* blob 损坏 / 无法解码。 */
 class CorruptError : public std::runtime_error {
  public:
   CorruptError() : std::runtime_error("corrupt_ds_blob") {}
 };
 
-/// 用户 key → 物理 MetaKey（ukey + marker；类型只在 blob 内）。
+/**
+ * 用户 key → 物理 MetaKey（ukey + marker；类型只在 blob 内）。
+ * @param ukey 用户逻辑 key
+ */
 std::string meta_key(std::string_view ukey);
 
 using Hash = std::map<std::string, std::string>;  // sorted encode
@@ -65,35 +72,67 @@ using Set = std::set<std::string>;
 using List = std::vector<std::string>;
 using ZSet = std::map<std::string, double>;
 
-/// ZSet 排序后的 (member, score) 项。
+/* ZSet 排序后的 (member, score) 项。 */
 struct ZEntry {
-  std::string member;
-  double score{0};
+  std::string member;  // 成员
+  double score{0};     // 分值
 };
 
-/// Hash → 带类型头的二进制 blob。
+/**
+ * Hash → 带类型头的二进制 blob。
+ * @param h Hash 映射
+ */
 std::string encode_hash(const Hash& h);
-/// blob → Hash；类型不符抛 WrongTypeError，损坏抛 CorruptError。
+/**
+ * blob → Hash；类型不符抛 WrongTypeError，损坏抛 CorruptError。
+ * @param blob 带类型头的二进制 blob
+ */
 Hash decode_hash(std::string_view blob);
 
-/// Set → blob。
+/**
+ * Set → blob。
+ * @param s Set 集合
+ */
 std::string encode_set(const Set& s);
-/// blob → Set。
+/**
+ * blob → Set。
+ * @param blob 带类型头的二进制 blob
+ */
 Set decode_set(std::string_view blob);
 
-/// List → blob。
+/**
+ * List → blob。
+ * @param l List 序列
+ */
 std::string encode_list(const List& l);
-/// blob → List。
+/**
+ * blob → List。
+ * @param blob 带类型头的二进制 blob
+ */
 List decode_list(std::string_view blob);
 
-/// Redis 风格 [start,stop]（可负下标）→ [lo, hi) 切片；非法返回 nullopt。
+/**
+ * Redis 风格 [start,stop]（可负下标）→ [lo, hi) 切片；非法返回 nullopt。
+ * @param n 数量
+ * @param start 起始下标或区间起点
+ * @param stop 结束下标（含，可负）
+ */
 std::optional<std::pair<size_t, size_t>> normalize_range(int64_t n, int64_t start, int64_t stop);
 
-/// ZSet → blob。
+/**
+ * ZSet → blob。
+ * @param z ZSet（member→score）
+ */
 std::string encode_zset(const ZSet& z);
-/// blob → ZSet。
+/**
+ * blob → ZSet。
+ * @param blob 带类型头的二进制 blob
+ */
 ZSet decode_zset(std::string_view blob);
-/// 按 score 升序、同分按 member 得到有序列表（ZRange 用）。
+/**
+ * 按 score 升序、同分按 member 得到有序列表（ZRange 用）。
+ * @param z ZSet（member→score）
+ */
 std::vector<ZEntry> z_sorted(const ZSet& z);
 
 }  // namespace openkv::compute::ds

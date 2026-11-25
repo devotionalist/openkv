@@ -25,7 +25,9 @@ namespace openkv::storage {
 void LatencyHistogram::observe(uint64_t us) {
   size_t i = 0;
   for (; i < kBucketCount; ++i) {
-    if (us <= kBounds[i]) break;
+    if (us <= kBounds[i]) {
+      break;
+    }
   }
   std::lock_guard<std::mutex> lock(mu_);
   buckets_[i] += 1;
@@ -50,7 +52,9 @@ uint64_t LatencyHistogram::avg_us() const {
 
 uint64_t LatencyHistogram::quantile_us(double q) const {
   std::lock_guard<std::mutex> lock(mu_);
-  if (count_ == 0 || q <= 0) return 0;
+  if (count_ == 0 || q <= 0) {
+    return 0;
+  }
   if (q >= 1.0) {
     return buckets_[kBucketCount] > 0 ? 5'000'000ULL : kBounds[kBucketCount - 1];
   }
@@ -58,7 +62,9 @@ uint64_t LatencyHistogram::quantile_us(double q) const {
   uint64_t acc = 0;
   for (size_t i = 0; i < kBucketCount; ++i) {
     acc += buckets_[i];
-    if (static_cast<double>(acc) >= target) return kBounds[i];
+    if (static_cast<double>(acc) >= target) {
+      return kBounds[i];
+    }
   }
   return kBounds[kBucketCount - 1];
 }
@@ -92,7 +98,9 @@ RegionMetrics::RegionMetrics() {
 }
 
 void RegionMetrics::ensure_map_usable() const {
-  if (by_region_.bucket_count() != 0) return;
+  if (by_region_.bucket_count() != 0) {
+    return;
+  }
   // 生产里 bucket_count==0 多半是堆损坏的表象，不是合法 moved-from。
   // 旧实现 swap 后析构损坏 map → 二次 SIGSEGV（storage exit 139）。
   // 这里把坏 map 挪到堆上故意泄漏，再原地换干净表，避免 dtor 踩垃圾。

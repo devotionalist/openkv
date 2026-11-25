@@ -27,52 +27,106 @@
 
 namespace openkv::raft {
 
-// 连续 index 区间的日志存储；first_index_ 可因 compact 前移。
+/* 连续 index 区间的日志存储；first_index_ 可因 compact 前移。 */
 class RaftLog {
  public:
-  // @param first_index 首条有效日志 index（默认 1；快照后可能 >1）
+  /**
+   * 构造空日志窗。
+   * @param first_index 首条有效 index；默认 1
+   */
   explicit RaftLog(uint64_t first_index = 1);
 
-  // 获取最后一条日志索引
+  /**
+   * 末条日志 index；空窗时为 first_index-1。
+   * @return last_index
+   */
   uint64_t last_index() const;
-  // 获取最后一条日志任期
+  /**
+   * 末条日志 term；空窗时用 snapshot_term_。
+   * @return last_term
+   */
   uint64_t last_term() const;
-  // 获取第一条日志索引
+  /**
+   * 首条有效日志 index。
+   * @return first_index_
+   */
   uint64_t first_index() const { return first_index_; }
 
-  // 按索引查询；越界返回 nullopt。
-  std::optional<LogEntry> entry(uint64_t index) const;  // 按索引查询日志
-  // 从索引起最多 limit 条（且累计 data 字节不超过 max_bytes），用于 AppendEntries。
+  /**
+   * 按索引查询；越界返回 nullopt。
+   * @param index 日志下标
+   * @return 条目或 nullopt
+   */
+  std::optional<LogEntry> entry(uint64_t index) const;
+  /**
+   * 从索引起最多 limit 条（且累计 data 字节不超过 max_bytes），用于 AppendEntries。
+   * @param index 起始下标
+   * @param limit 最多条数；默认 64
+   * @param max_bytes 累计 data 字节上限；默认无上限
+   * @return 条目切片
+   */
   std::vector<LogEntry> entries_from(uint64_t index, size_t limit = 64,
                                      size_t max_bytes = SIZE_MAX) const;
 
-  // 追加本地提案（Leader）
-  // Leader 本地追加；返回新条目的 index。
+  /**
+   * Leader 本地追加一条提案。
+   * @param term 当前任期
+   * @param data 状态机载荷
+   * @return 新条目的 index
+   */
   uint64_t append(uint64_t term, std::string data);
 
-  // Follower 追加：冲突则截断
-  // 校验 prev 匹配后合并 entries；term 冲突处 truncate 再追加。
+  /**
+   * Follower 合并：校验 prev 后追加；冲突处 truncate 再写。
+   * @param prev_index 前一条下标
+   * @param prev_term 前一条 term
+   * @param entries 本批条目
+   * @return prev 是否匹配且合并成功
+   */
   bool append_entries(uint64_t prev_index, uint64_t prev_term,
                       const std::vector<LogEntry>& entries);
 
-  // index 处 term 是否与给定一致（含快照边界 index==first-1）。
+  /**
+   * index 处 term 是否与给定一致（含快照边界 index==first-1）。
+   * @param index 日志下标
+   * @param term 期望 term
+   * @return 是否匹配
+   */
   bool match(uint64_t index, uint64_t term) const;
-  // 丢弃 index 及之后所有条目。
+  /**
+   * 丢弃 index 及之后所有条目。
+   * @param index 截断起点（含）
+   */
   void truncate_from(uint64_t index);
 
-  // 快照压缩：丢弃 last_included_index 及之前的日志
-  // 安装快照后推进 first_index_ 并记录 snapshot_term_。
+  /**
+   * 安装快照后推进 first_index_ 并记录 snapshot_term_。
+   * @param last_included_index 快照包含的末 index
+   * @param last_included_term 对应 term
+   */
   void compact_to(uint64_t last_included_index, uint64_t last_included_term);
 
-  // 获取快照任期
+  /**
+   * 快照边界 term（空窗时 last_term 用它）。
+   * @return snapshot_term_
+   */
   uint64_t snapshot_term() const { return snapshot_term_; }
-  // 从持久化装载：替换内存日志。
+  /**
+   * 从持久化装载：替换内存日志。
+   * @param first_index 首 index
+   * @param snapshot_term 快照边界 term
+   * @param entries 连续条目
+   */
   void load(uint64_t first_index, uint64_t snapshot_term, std::vector<LogEntry> entries);
-  size_t size() const { return entries_.size(); }  // 日志条数
+  /**
+   * 内存中条目条数（不含已 compact 掉的）。
+   * @return entries_.size()
+   */
+  size_t size() const { return entries_.size(); }
 
  private:
   uint64_t first_index_;           // 首条有效日志索引
-  uint64_t snapshot_term_{0};      // 快照任期
+  uint64_t snapshot_term_{0};      // 快照边界 term
   std::vector<LogEntry> entries_;  // 连续区间 [first_index_, last_index]
 };
 

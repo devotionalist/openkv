@@ -36,8 +36,12 @@ uint64_t read_be64_at(std::string_view raw, size_t off) {
 }  // namespace
 
 size_t entry_record_size(std::string_view raw, size_t offset) {
-  if (offset + kWireMagicLen + 24 + 4 > raw.size()) return 0;
-  if (raw.substr(offset, kWireMagicLen) != kMagicRle) return 0;
+  if (offset + kWireMagicLen + 24 + 4 > raw.size()) {
+    return 0;
+  }
+  if (raw.substr(offset, kWireMagicLen) != kMagicRle) {
+    return 0;
+  }
   const uint64_t dlen = read_be64_at(raw, offset + kWireMagicLen + 16);
   return kWireMagicLen + 24 + static_cast<size_t>(dlen) + 4;
 }
@@ -53,17 +57,27 @@ std::string encode_container(const std::vector<LogEntry>& entries) {
 }
 
 bool decode_container(std::string_view raw, std::vector<LogEntry>* out) {
-  if (!out) return false;
+  if (!out) {
+    return false;
+  }
   out->clear();
-  if (raw.empty()) return true;
-  if (raw.size() < kWireMagicLen || raw.substr(0, kWireMagicLen) != kMagicRlg) return false;
+  if (raw.empty()) {
+    return true;
+  }
+  if (raw.size() < kWireMagicLen || raw.substr(0, kWireMagicLen) != kMagicRlg) {
+    return false;
+  }
 
   size_t off = kWireMagicLen;
   while (off < raw.size()) {
     const size_t need = entry_record_size(raw, off);
-    if (need == 0 || off + need > raw.size()) return false;
+    if (need == 0 || off + need > raw.size()) {
+      return false;
+    }
     LogEntry e;
-    if (!decode_log_entry(raw.substr(off, need), &e)) return false;
+    if (!decode_log_entry(raw.substr(off, need), &e)) {
+      return false;
+    }
     out->push_back(std::move(e));
     off += need;
   }
@@ -72,10 +86,14 @@ bool decode_container(std::string_view raw, std::vector<LogEntry>* out) {
 
 bool can_pure_append(const std::vector<LogEntry>& existing, const std::vector<LogEntry>& appends,
                      const std::vector<std::pair<uint64_t, uint64_t>>& cuts) {
-  if (!cuts.empty() || appends.empty()) return false;
+  if (!cuts.empty() || appends.empty()) {
+    return false;
+  }
   uint64_t expect = existing.empty() ? appends.front().index : existing.back().index + 1;
   for (const auto& e : appends) {
-    if (e.index != expect) return false;
+    if (e.index != expect) {
+      return false;
+    }
     ++expect;
   }
   return true;
@@ -84,7 +102,9 @@ bool can_pure_append(const std::vector<LogEntry>& existing, const std::vector<Lo
 void apply_mutations(std::vector<LogEntry>* entries,
                      const std::vector<std::pair<uint64_t, uint64_t>>& cuts,
                      std::vector<LogEntry> appends) {
-  if (!entries) return;
+  if (!entries) {
+    return;
+  }
   for (const auto& [from, to] : cuts) {
     entries->erase(
         std::remove_if(entries->begin(), entries->end(),

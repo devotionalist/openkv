@@ -9,7 +9,8 @@ This repository is public. External contributors submit changes **only via pull 
 - **Language**: C++20 (`CMAKE_CXX_STANDARD` / `make show-std`)
 - **Style**: [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html); formatting via root `.clang-format`
 - **Commands**: `make format` (rewrite) / `make format-check` (dry-run)
-- Comments may be plain Chinese; identifiers stay English. Do not mass-reformat the tree without need.
+- **Braces**: always brace `if`/`for`/`while`; body on its own indented line—no `if (x) return;` (see `.cursor/rules/cpp-control-braces.mdc`)
+- Comment markers by kind: `/* */` for class/struct, `/** */` with `@param`/`@return` for methods, trailing `//` for members (see `.cursor/rules/cpp-class-method-comments.mdc`). Plain Chinese; identifiers English. Do not mass-reformat the tree without need.
 
 ## Who can do what
 

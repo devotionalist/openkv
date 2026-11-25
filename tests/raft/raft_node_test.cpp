@@ -71,7 +71,9 @@ void elect_with_vote(RaftNode& node, const std::string& peer_id) {
 void drain_ready(RaftNode& node, bool persist = false) {
   while (node.has_ready()) {
     auto rd = node.take_ready();
-    if (persist) node.persist_ready(rd);
+    if (persist) {
+      node.persist_ready(rd);
+    }
     node.advance(rd);
   }
 }
@@ -162,7 +164,9 @@ TEST(RaftNodeTest, CheckQuorumStepsDownIsolatedLeader) {
   // 无任何 AE 成功回包 → quiet 涨满 → CheckQuorum 让位
   for (int i = 0; i < 80; ++i) {
     n.tick();
-    if (!n.is_leader()) break;
+    if (!n.is_leader()) {
+      break;
+    }
   }
   EXPECT_FALSE(n.is_leader());
 }

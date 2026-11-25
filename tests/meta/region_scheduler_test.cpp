@@ -52,7 +52,9 @@ TEST(RegionSchedulerTest, SubmitAndCompleteRouteOnly) {
         std::vector<openkv::meta::Replica> reps;
         for (const auto& id : desired) {
           auto n = st.get_node(id);
-          if (!n) return false;
+          if (!n) {
+            return false;
+          }
           reps.push_back({n->node_id, n->address, false, false});
         }
         return st.place_replicas(rid, reps);
@@ -65,7 +67,9 @@ TEST(RegionSchedulerTest, SubmitAndCompleteRouteOnly) {
   for (int i = 0; i < 50; ++i) {
     auto cur = sched.get_task(t.task_id);
     ASSERT_TRUE(cur.has_value());
-    if (cur->state == MigrateState::kCompleted || cur->state == MigrateState::kFailed) break;
+    if (cur->state == MigrateState::kCompleted || cur->state == MigrateState::kFailed) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   auto done = sched.get_task(t.task_id);
@@ -101,7 +105,9 @@ TEST(RegionSchedulerTest, RestorePersistedTasks) {
   EXPECT_EQ(t->state, MigrateState::kPending);  // 恢复后重试
   for (int i = 0; i < 40; ++i) {
     auto cur = sched.get_task("mig-9");
-    if (cur && cur->state == MigrateState::kCompleted) break;
+    if (cur && cur->state == MigrateState::kCompleted) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   auto done = sched.get_task("mig-9");

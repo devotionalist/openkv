@@ -24,9 +24,10 @@
 
 namespace openkv {
 
-/// 返回完整 Prometheus 文本（可含多行；无需 END 尾标）。
+// 返回完整 Prometheus 文本（可含多行；无需 END 尾标）。
 using MetricsTextFn = std::function<std::string()>;
 
+/* 可选 HTTP /metrics 小服务；start 后后台线程监听。 */
 class MetricsHttpServer {
  public:
   MetricsHttpServer();
@@ -35,18 +36,31 @@ class MetricsHttpServer {
   MetricsHttpServer(const MetricsHttpServer&) = delete;
   MetricsHttpServer& operator=(const MetricsHttpServer&) = delete;
 
-  /// @param listen_addr host:port；空字符串则 no-op
-  /// @param text_fn 每次 GET /metrics 调用
+  /**
+   * 在 listen_addr 起 HTTP，GET /metrics 调 text_fn。
+   * @param listen_addr 监听地址 host:port
+   * @param text_fn 返回 Prometheus 文本的回调
+   */
   void start(std::string listen_addr, MetricsTextFn text_fn);
+  /**
+   * 停止监听并 join 后台线程；幂等。
+   */
   void stop();
+  /**
+   * 是否正在监听。
+   * @return true 表示已 start 且未 stop
+   */
   bool running() const;
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
+  struct Impl;                  // 实现细节（httplib 等）
+  std::unique_ptr<Impl> impl_;  // Pimpl
 };
 
-/// 从 SKV_METRICS_ADDR 读取；未设置返回空。
+/**
+ * 从 SKV_METRICS_ADDR 读取；未设置返回空。
+ * @return 监听地址或空串
+ */
 std::string metrics_addr_from_env();
 
 }  // namespace openkv

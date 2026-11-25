@@ -101,7 +101,9 @@ TEST(WatchLogTest, OnePcWatchPersistsAcrossRestart) {
     StoreFacade facade(node);
     node.start();
     for (int i = 0; i < 80; ++i) {
-      if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
+      if (auto* g = node.multi_raft().get(0); g && g->is_leader()) {
+        break;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     // Watch 属事务平面：ONEPC 写 WatchLog；Raw Propose 不写。

@@ -147,7 +147,9 @@ TEST(ClusterStateTest, HeartbeatUpdatesLeader) {
   for (const auto& r : rt.regions[0].replicas) {
     if (r.is_leader) {
       ++leaders;
-      if (r.node_id == "s1") s1 = true;
+      if (r.node_id == "s1") {
+        s1 = true;
+      }
     }
   }
   EXPECT_TRUE(s1);
@@ -181,7 +183,9 @@ TEST(ClusterStateTest, DrainExcludesPlacement) {
   EXPECT_EQ(st.get_node("s1")->state, NodeState::kDraining);
   auto place = st.suggest_placement({});
   ASSERT_EQ(place.size(), 2u);
-  for (const auto& id : place) EXPECT_NE(id, "s1");
+  for (const auto& id : place) {
+    EXPECT_NE(id, "s1");
+  }
   ASSERT_TRUE(st.set_node_state("s1", NodeState::kActive));
   EXPECT_EQ(st.suggest_placement({}).size(), 3u);
 }

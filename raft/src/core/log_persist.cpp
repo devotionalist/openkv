@@ -39,10 +39,18 @@ void LogPersist::persist_locked() {
 }
 
 void LogPersist::persist_maybe_flush(bool force) {
-  if (n_.opts_.external_io) return;
-  if (!n_.engine_) return;
-  if (!persist_dirty_) return;
-  if (!force && persist_pending_ < n_.opts_.persist_batch_n) return;
+  if (n_.opts_.external_io) {
+    return;
+  }
+  if (!n_.engine_) {
+    return;
+  }
+  if (!persist_dirty_) {
+    return;
+  }
+  if (!force && persist_pending_ < n_.opts_.persist_batch_n) {
+    return;
+  }
   const bool sync = raft_log_sync(n_.opts_.persist_sync);
   engine_flush_locked(sync);
   persist_dirty_ = false;
@@ -51,7 +59,9 @@ void LogPersist::persist_maybe_flush(bool force) {
 
 std::unique_ptr<RaftLogBatch> LogPersist::build_engine_batch_locked(uint64_t& out_first,
                                                                     uint64_t& out_last) {
-  if (!n_.engine_) return nullptr;
+  if (!n_.engine_) {
+    return nullptr;
+  }
   out_first = n_.log_.first_index();
   out_last = n_.log_.last_index();
   const uint64_t first = out_first;
@@ -79,9 +89,13 @@ std::unique_ptr<RaftLogBatch> LogPersist::build_engine_batch_locked(uint64_t& ou
     std::vector<LogEntry> delta;
     delta.reserve(static_cast<size_t>(last - from + 1));
     for (uint64_t i = from; i <= last; ++i) {
-      if (auto e = n_.log_.entry(i)) delta.push_back(*e);
+      if (auto e = n_.log_.entry(i)) {
+        delta.push_back(*e);
+      }
     }
-    if (!delta.empty()) batch->append(n_.group_id_, std::move(delta));
+    if (!delta.empty()) {
+      batch->append(n_.group_id_, std::move(delta));
+    }
   }
 
   PersistedHardState hs;
@@ -105,21 +119,19 @@ void LogPersist::commit_stable_locked(uint64_t first, uint64_t last) {
 }
 
 void LogPersist::engine_flush_locked(bool sync) {
-  if (!n_.engine_) return;
+  if (!n_.engine_) {
+    return;
+  }
   uint64_t first = 0;
   uint64_t last = 0;
   auto batch = build_engine_batch_locked(first, last);
-  if (!batch || batch->empty()) return;
+  if (!batch || batch->empty()) {
+    return;
+  }
   n_.engine_->consume(*batch, sync);
   commit_stable_locked(first, last);
 }
 
-/**
- * @brief 持久化准备：持久化准备是持久化准备的外部io，用于持久化准备的外部io。
- *
- * 如果使用外部io，则持久化准备。
- * 否则，持久化准备。
- */
 void LogPersist::persist_ready(const Ready& rd) {
   // Store persist_fn：持协议锁只组 batch；consume/fsync 在 persist_io_mu_ 下。
   std::unique_ptr<RaftLogBatch> batch;
@@ -128,15 +140,19 @@ void LogPersist::persist_ready(const Ready& rd) {
   uint64_t last = 0;
   {
     std::lock_guard<std::mutex> lock(n_.mu_);
-    if (!n_.opts_.external_io || !n_.engine_) return;
+    if (!n_.opts_.external_io || !n_.engine_) {
+      return;
+    }
     const bool want_sync = rd.must_sync || n_.ready_io_.ready_hs_dirty_ || !rd.entries.empty();
     sync = want_sync && raft_log_sync(n_.opts_.persist_sync);
-    batch = build_engine_batch_locked(first, last);  // 构建引擎批次
+    batch = build_engine_batch_locked(first, last);
     n_.ready_io_.ready_hs_dirty_ = false;
     persist_dirty_ = false;
     persist_pending_ = 0;
   }
-  if (!batch || batch->empty()) return;
+  if (!batch || batch->empty()) {
+    return;
+  }
   {
     std::lock_guard<std::mutex> io(persist_io_mu_);
     n_.engine_->consume(*batch, sync);

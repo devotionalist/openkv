@@ -45,7 +45,9 @@ ProposeTxnArgs make_txn_args(uint32_t region, ProposeOp op, std::string key, uin
 
 void GatewayServer::resolve_blocking_lock_async(const std::string& key, const LockedError& le,
                                                 std::function<void(grpc::Status)> cont) {
-  if (!cont) return;
+  if (!cont) {
+    return;
+  }
   if (le.primary().empty() || le.lock_ts() == 0) {
     cont(grpc::Status(grpc::StatusCode::ABORTED, "locked"));
     return;
@@ -147,7 +149,9 @@ void GatewayServer::resolve_blocking_lock_async(const std::string& key, const Lo
 
 void GatewayServer::async_resolve_secondaries(uint64_t start_ts, uint64_t commit_ts,
                                               std::vector<std::string> keys) {
-  if (keys.empty()) return;
+  if (keys.empty()) {
+    return;
+  }
   for (const auto& key : keys) {
     const uint32_t region = region_of(key);
     const uint64_t epoch = epoch_of(region);
@@ -180,7 +184,9 @@ void GatewayServer::txn_begin_async(const kv::v1::TxnBeginRequest* req,
                                     kv::v1::TxnBeginResponse* resp,
                                     std::function<void(grpc::Status)> done) {
   uint32_t n = req->count();
-  if (n == 0) n = 1;
+  if (n == 0) {
+    n = 1;
+  }
   note_to_meta(meta_addrs_.empty() ? std::string{} : meta_addrs_.front());
   ts_.alloc_async(n, [this, resp, done = std::move(done)](grpc::Status st, uint64_t start) {
     if (!st.ok()) {
@@ -263,7 +269,9 @@ void GatewayServer::txn_prewrite_async(const kv::v1::TxnPrewriteRequest* req,
     return;
   }
   std::string primary = req->primary_key();
-  if (primary.empty()) primary = req->mutations(0).key();
+  if (primary.empty()) {
+    primary = req->mutations(0).key();
+  }
   struct State {
     GatewayServer* self;
     const kv::v1::TxnPrewriteRequest* req;
@@ -292,7 +300,9 @@ void GatewayServer::txn_prewrite_async(const kv::v1::TxnPrewriteRequest* req,
     ProposeTxnArgs args = make_txn_args(region, ProposeOp::kPrewrite, m.key(), st->req->start_ts(),
                                         epoch, st->primary);
     args.mvcc_op = m.is_delete() ? 1u : 0u;
-    if (!m.is_delete()) args.value = m.value();
+    if (!m.is_delete()) {
+      args.value = m.value();
+    }
     args.cas = st->req->cas();
     args.expected_revision = st->req->expected_revision();
     args.expire_at_ms = st->req->expire_at_ms();
@@ -357,7 +367,9 @@ void GatewayServer::txn_commit_async(const kv::v1::TxnCommitRequest* req,
     }
     resp->set_commit_ts(commit_ts);
     std::string pri = req->primary_key();
-    if (pri.empty()) pri = req->keys(0);
+    if (pri.empty()) {
+      pri = req->keys(0);
+    }
     if (commit_ts <= req->start_ts()) {
       resp->set_ok(false);
       resp->set_error("commit_ts<=start_ts");
@@ -398,7 +410,9 @@ void GatewayServer::txn_commit_async(const kv::v1::TxnCommitRequest* req,
           std::vector<std::string> secondaries;
           secondaries.reserve(static_cast<size_t>(req->keys_size()));
           for (const auto& k : req->keys()) {
-            if (k != pri) secondaries.push_back(k);
+            if (k != pri) {
+              secondaries.push_back(k);
+            }
           }
           async_resolve_secondaries(req->start_ts(), commit_ts, secondaries);
           // best-effort async commit secondaries
@@ -492,11 +506,15 @@ void GatewayServer::txn_pessimistic_lock_async(const kv::v1::TxnPessimisticLockR
     return;
   }
   std::string primary = req->primary_key();
-  if (primary.empty()) primary = req->keys(0);
+  if (primary.empty()) {
+    primary = req->keys(0);
+  }
   auto continue_with = [this, req, resp, primary,
                         done = std::move(done)](uint64_t for_update) mutable {
     uint64_t ttl = req->ttl_ms();
-    if (ttl == 0) ttl = 5000;
+    if (ttl == 0) {
+      ttl = 5000;
+    }
     struct State {
       GatewayServer* self;
       const kv::v1::TxnPessimisticLockRequest* req;

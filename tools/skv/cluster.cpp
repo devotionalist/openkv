@@ -42,10 +42,14 @@ fs::path run_dir(const std::string& root) { return fs::path(root) / ".run"; }
 std::optional<pid_t> read_pid(const std::string& root, const std::string& name) {
   auto f = run_dir(root) / (name + ".pid");
   std::ifstream in(f);
-  if (!in) return std::nullopt;
+  if (!in) {
+    return std::nullopt;
+  }
   pid_t pid = 0;
   in >> pid;
-  if (!in || pid <= 0) return std::nullopt;
+  if (!in || pid <= 0) {
+    return std::nullopt;
+  }
   return pid;
 }
 
@@ -71,10 +75,14 @@ void stop_pid(const std::string& root, const std::string& name, bool force) {
   std::cout << name << ": stop pid=" << *pid << (force ? " (KILL)" : "") << "\n";
   ::kill(*pid, force ? SIGKILL : SIGTERM);
   for (int i = 0; i < 30; ++i) {
-    if (!alive(*pid)) break;
+    if (!alive(*pid)) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  if (alive(*pid)) ::kill(*pid, SIGKILL);
+  if (alive(*pid)) {
+    ::kill(*pid, SIGKILL);
+  }
   fs::remove(run_dir(root) / (name + ".pid"));
 }
 
@@ -83,7 +91,9 @@ pid_t spawn_logged(const std::string& root, const std::string& name,
   fs::create_directories(run_dir(root));
   auto log_path = run_dir(root) / (name + ".log");
   int logfd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-  if (logfd < 0) throw std::runtime_error("open log " + log_path.string());
+  if (logfd < 0) {
+    throw std::runtime_error("open log " + log_path.string());
+  }
 
   pid_t pid = ::fork();
   if (pid < 0) {
@@ -99,7 +109,9 @@ pid_t spawn_logged(const std::string& root, const std::string& name,
     std::vector<std::string> copy = argv;
     std::vector<char*> av;
     av.reserve(copy.size() + 1);
-    for (auto& s : copy) av.push_back(s.data());
+    for (auto& s : copy) {
+      av.push_back(s.data());
+    }
     av.push_back(nullptr);
     ::execv(av[0], av.data());
     std::perror("execv");
@@ -113,7 +125,9 @@ pid_t spawn_logged(const std::string& root, const std::string& name,
 bool wait_port(std::string_view addr, int sec) {
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(sec);
   while (std::chrono::steady_clock::now() < deadline) {
-    if (tcp_reachable(addr, 200)) return true;
+    if (tcp_reachable(addr, 200)) {
+      return true;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
   return false;
@@ -121,7 +135,9 @@ bool wait_port(std::string_view addr, int sec) {
 
 const Component* find_comp(const std::string& name) {
   for (const auto& c : default_components()) {
-    if (c.name == name) return &c;
+    if (c.name == name) {
+      return &c;
+    }
   }
   return nullptr;
 }
@@ -130,12 +146,18 @@ const Component* find_comp(const std::string& name) {
 
 std::string find_root() {
   if (const char* e = std::getenv("SKV_ROOT")) {
-    if (fs::exists(fs::path(e) / "conf" / "bootstrap.conf")) return e;
+    if (fs::exists(fs::path(e) / "conf" / "bootstrap.conf")) {
+      return e;
+    }
   }
   fs::path cur = fs::current_path();
   for (int i = 0; i < 8; ++i) {
-    if (fs::exists(cur / "conf" / "bootstrap.conf")) return cur.string();
-    if (!cur.has_parent_path() || cur == cur.parent_path()) break;
+    if (fs::exists(cur / "conf" / "bootstrap.conf")) {
+      return cur.string();
+    }
+    if (!cur.has_parent_path() || cur == cur.parent_path()) {
+      break;
+    }
     cur = cur.parent_path();
   }
   // binary next to build/tools/skv → ../../
@@ -173,12 +195,16 @@ int cmd_status(const std::string& root) {
     bool proc = pid && alive(*pid);
     bool port = tcp_reachable(c.addr, 250);
     const char* st = (proc && port) ? "UP" : (port ? "PORT_ONLY" : (proc ? "NO_PORT" : "DOWN"));
-    if (std::string(st) == "UP")
+    if (std::string(st) == "UP") {
       ++up;
-    else
+    } else {
       ++down;
+    }
+    ++down;
     std::cout << "  " << c.name << "\t" << st << "\t" << c.addr;
-    if (pid) std::cout << "\tpid=" << *pid;
+    if (pid) {
+      std::cout << "\tpid=" << *pid;
+    }
     std::cout << "\n";
   }
   std::cout << "summary: up=" << up << " down=" << down << "\n";
@@ -194,8 +220,12 @@ int cmd_start(const std::string& root, bool fresh) {
   auto meta = bin / "meta" / "meta_server";
   auto stor = bin / "storage" / "storage_node";
   auto gw = run_dir(root) / "gateway_node";
-  if (!fs::exists(gw)) gw = bin / "compute" / "gateway_node";
-  if (!fs::exists(gw)) gw = run_dir(root) / "compute-gateway";
+  if (!fs::exists(gw)) {
+    gw = bin / "compute" / "gateway_node";
+  }
+  if (!fs::exists(gw)) {
+    gw = run_dir(root) / "compute-gateway";
+  }
   if (!fs::exists(meta) || !fs::exists(stor)) {
     std::cerr << "missing binaries; build first:\n"
               << "  cmake --build build -j --target meta_server storage_node gateway_node\n";
@@ -209,7 +239,9 @@ int cmd_start(const std::string& root, bool fresh) {
   }
 
   // stop leftovers
-  for (const auto& c : default_components()) stop_pid(root, c.name, true);
+  for (const auto& c : default_components()) {
+    stop_pid(root, c.name, true);
+  }
 
   spawn_logged(root, "meta-0", {meta.string(), (fs::path(root) / "conf/bootstrap.conf").string()});
   spawn_logged(root, "meta-1", {meta.string(), (fs::path(root) / "conf/meta-1.conf").string()});
@@ -261,7 +293,9 @@ int cmd_stop(const std::string& root) {
   const char* order[] = {"gateway-1", "gateway",   "storage-0", "storage-1",
                          "storage-2", "storage-3", "storage-4", "storage-5",
                          "meta-0",    "meta-1",    "meta-2",    "supervisor"};
-  for (auto* n : order) stop_pid(root, n, false);
+  for (auto* n : order) {
+    stop_pid(root, n, false);
+  }
   std::cout << "cluster stopped\n";
   return 0;
 }
@@ -291,8 +325,12 @@ int cmd_restart(const std::string& root, const std::string& name) {
     spawn_logged(root, name, {stor.string(), (fs::path(root) / c->conf).string()});
   } else if (name == "gateway" || name == "gateway-1") {
     auto gw = run_dir(root) / "gateway_node";
-    if (!fs::exists(gw)) gw = bin / "compute" / "gateway_node";
-    if (!fs::exists(gw)) gw = run_dir(root) / "compute-gateway";
+    if (!fs::exists(gw)) {
+      gw = bin / "compute" / "gateway_node";
+    }
+    if (!fs::exists(gw)) {
+      gw = run_dir(root) / "compute-gateway";
+    }
     if (name == "gateway-1") {
       spawn_logged(
           root, name,

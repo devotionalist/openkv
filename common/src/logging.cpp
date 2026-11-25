@@ -72,14 +72,20 @@ LogMessage::LogMessage(LogLevel level, const char* file, int line)
 }
 
 LogMessage::~LogMessage() {
-  if (level_ < g_level.load()) return;
+  if (level_ < g_level.load()) {
+    return;
+  }
   // 附带源位置，便于对照旧格式
   const std::string msg = ss_.str();
   const char* base = file_;
-  if (const char* slash = std::strrchr(file_, '/')) base = slash + 1;
+  if (const char* slash = std::strrchr(file_, '/')) {
+    base = slash + 1;
+  }
 #ifdef _WIN32
   if (const char* bslash = std::strrchr(file_, '\\')) {
-    if (bslash + 1 > base) base = bslash + 1;
+    if (bslash + 1 > base) {
+      base = bslash + 1;
+    }
   }
 #endif
   switch (level_) {

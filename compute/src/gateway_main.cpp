@@ -39,42 +39,56 @@ namespace {
 
 std::atomic<bool> g_stop{false};
 
-/// SIGINT/SIGTERM → 置 g_stop，主循环退出。
+// SIGINT/SIGTERM → 置 g_stop，主循环退出。
 void on_signal(int) { g_stop = true; }
 
-/// 逗号分隔地址表，trim 空白。
+// 逗号分隔地址表，trim 空白。
 std::vector<std::string> split_csv(const std::string& s) {
   std::vector<std::string> out;
   std::string cur;
   for (char c : s) {
     if (c == ',') {
       // trim
-      while (!cur.empty() && (cur.front() == ' ' || cur.front() == '\t')) cur.erase(cur.begin());
-      while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\t')) cur.pop_back();
-      if (!cur.empty()) out.push_back(cur);
+      while (!cur.empty() && (cur.front() == ' ' || cur.front() == '\t')) {
+        cur.erase(cur.begin());
+      }
+      while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\t')) {
+        cur.pop_back();
+      }
+      if (!cur.empty()) {
+        out.push_back(cur);
+      }
       cur.clear();
     } else {
       cur.push_back(c);
     }
   }
-  while (!cur.empty() && (cur.front() == ' ' || cur.front() == '\t')) cur.erase(cur.begin());
-  while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\t')) cur.pop_back();
-  if (!cur.empty()) out.push_back(cur);
+  while (!cur.empty() && (cur.front() == ' ' || cur.front() == '\t')) {
+    cur.erase(cur.begin());
+  }
+  while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\t')) {
+    cur.pop_back();
+  }
+  if (!cur.empty()) {
+    out.push_back(cur);
+  }
   return out;
 }
 
-/// 由 gRPC listen 推默认 stats：同主机、端口+1；解析失败回 127.0.0.1:19001。
+// 由 gRPC listen 推默认 stats：同主机、端口+1；解析失败回 127.0.0.1:19001。
 std::string default_stats_listen(const std::string& grpc_listen) {
   std::string host;
   uint16_t port = 0;
   if (!openkv::net::parse_host_port(grpc_listen, &host, &port) || port == 0) {
     return "127.0.0.1:19001";
   }
-  if (host.empty() || host == "0.0.0.0" || host == "::") host = "127.0.0.1";
+  if (host.empty() || host == "0.0.0.0" || host == "::") {
+    host = "127.0.0.1";
+  }
   return host + ":" + std::to_string(static_cast<int>(port) + 1);
 }
 
-/// 对每个 storage 循环 Ping，直到就绪或超时。
+// 对每个 storage 循环 Ping，直到就绪或超时。
 void wait_storage(const std::vector<std::string>& addrs, std::chrono::seconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   for (const auto& a : addrs) {
@@ -97,7 +111,7 @@ void wait_storage(const std::vector<std::string>& addrs, std::chrono::seconds ti
   }
 }
 
-/// 将 Go flag 风格 `-listen` 规范为 `--listen`，便于 CLI11。
+// 将 Go flag 风格 `-listen` 规范为 `--listen`，便于 CLI11。
 void normalize_go_flags(int argc, char** argv) {
   static std::deque<std::string> rewritten;
   rewritten.clear();
@@ -123,7 +137,7 @@ void normalize_go_flags(int argc, char** argv) {
 
 }  // namespace
 
-/// 解析 CLI → wait_storage → 启 gateway/gRPC/HTTP stats → 等信号收尾。
+// 解析 CLI → wait_storage → 启 gateway/gRPC/HTTP stats → 等信号收尾。
 int main(int argc, char** argv) {
   using namespace openkv;
   init_logging();
@@ -141,7 +155,9 @@ int main(int argc, char** argv) {
   app.add_option("--metas", metas, "comma-separated meta addresses");
   CLI11_PARSE(app, argc, argv);
 
-  if (stats_listen.empty()) stats_listen = default_stats_listen(listen);
+  if (stats_listen.empty()) {
+    stats_listen = default_stats_listen(listen);
+  }
 
   auto storage_addrs = split_csv(storages);
   auto meta_addrs = split_csv(metas);
@@ -175,7 +191,9 @@ int main(int argc, char** argv) {
   httplib::Server http;
   std::thread http_thr;
   if (net::parse_host_port(stats_listen, &stats_host, &stats_port) && stats_port > 0) {
-    if (stats_host.empty()) stats_host = "0.0.0.0";
+    if (stats_host.empty()) {
+      stats_host = "0.0.0.0";
+    }
     http.Get("/stats", [&gateway](const httplib::Request&, httplib::Response& res) {
       res.set_content(gateway.stats_json(), "application/json");
     });
@@ -195,7 +213,9 @@ int main(int argc, char** argv) {
 
   // 优雅关机：HTTP 先停；gRPC 拒新请求并排空在途；再停路由后台。
   http.stop();
-  if (http_thr.joinable()) http_thr.join();
+  if (http_thr.joinable()) {
+    http_thr.join();
+  }
   openkv::graceful_grpc_shutdown(server.get());
   server.reset();
   gateway.stop_background();

@@ -36,12 +36,16 @@ std::unique_ptr<RaftNode> make_leader(std::vector<std::string>* applied) {
   opts.coalesce_replication = false;
   opts.check_quorum = false;
   auto on_apply = [applied](uint64_t, const std::string& data) {
-    if (applied) applied->push_back(data);
+    if (applied) {
+      applied->push_back(data);
+    }
   };
   auto node = std::make_unique<RaftNode>(std::move(opts), std::move(on_apply), [](auto&&...) {});
   for (int i = 0; i < 40; ++i) {
     node->tick();
-    if (node->is_leader()) break;
+    if (node->is_leader()) {
+      break;
+    }
   }
   return node;
 }
@@ -56,11 +60,15 @@ TEST(RaftJointTest, PromoteUsesEnterThenLeaveJoint) {
   add.type = ConfChange::kAddLearner;
   add.peer = {"n1", "127.0.0.1:2", true};
   ASSERT_TRUE(node->propose_conf_change(add));
-  for (int i = 0; i < 20; ++i) node->tick();
+  for (int i = 0; i < 20; ++i) {
+    node->tick();
+  }
 
   bool has_learner = false;
   for (const auto& p : node->peers()) {
-    if (p.id == "n1" && p.learner) has_learner = true;
+    if (p.id == "n1" && p.learner) {
+      has_learner = true;
+    }
   }
   EXPECT_TRUE(has_learner);
 
@@ -68,17 +76,23 @@ TEST(RaftJointTest, PromoteUsesEnterThenLeaveJoint) {
   prom.type = ConfChange::kPromoteLearner;
   prom.peer = {"n1", "127.0.0.1:2", false};
   ASSERT_TRUE(node->propose_conf_change(prom));
-  for (int i = 0; i < 5; ++i) node->tick();
+  for (int i = 0; i < 5; ++i) {
+    node->tick();
+  }
   ASSERT_TRUE(node->in_joint());
   // C_new={n0,n1} 需要 n1 追平才能提交 LeaveJoint（无网络时模拟 reply）
   const auto st = node->soft_state();
   node->on_append_entries_reply("n1", st.term, true, node->last_index());
-  for (int i = 0; i < 40; ++i) node->tick();
+  for (int i = 0; i < 40; ++i) {
+    node->tick();
+  }
 
   EXPECT_FALSE(node->in_joint());
   bool n1_voter = false;
   for (const auto& p : node->peers()) {
-    if (p.id == "n1" && !p.learner) n1_voter = true;
+    if (p.id == "n1" && !p.learner) {
+      n1_voter = true;
+    }
   }
   EXPECT_TRUE(n1_voter);
 }
@@ -89,18 +103,24 @@ TEST(RaftJointTest, RejectConfWhileJointPending) {
   add.type = ConfChange::kAddLearner;
   add.peer = {"n1", "a", true};
   ASSERT_TRUE(node->propose_conf_change(add));
-  for (int i = 0; i < 10; ++i) node->tick();
+  for (int i = 0; i < 10; ++i) {
+    node->tick();
+  }
 
   ConfChange prom;
   prom.type = ConfChange::kPromoteLearner;
   prom.peer = {"n1", "a", false};
   ASSERT_TRUE(node->propose_conf_change(prom));
-  for (int i = 0; i < 2; ++i) node->tick();
+  for (int i = 0; i < 2; ++i) {
+    node->tick();
+  }
   ASSERT_TRUE(node->in_joint());
   EXPECT_FALSE(node->propose_conf_change(prom));
   const auto st = node->soft_state();
   node->on_append_entries_reply("n1", st.term, true, node->last_index());
-  for (int i = 0; i < 40; ++i) node->tick();
+  for (int i = 0; i < 40; ++i) {
+    node->tick();
+  }
   EXPECT_FALSE(node->in_joint());
 }
 

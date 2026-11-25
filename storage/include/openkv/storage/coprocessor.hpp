@@ -26,37 +26,51 @@
 
 namespace openkv::storage {
 
+/* 一次 Coprocessor 扫描的过滤与分页参数。 */
 struct CoprocessorRequest {
-  std::string start_key;
-  std::string end_key;       // exclusive；空=不限
-  std::string key_prefix;    // 空=不过滤
-  std::string value_prefix;  // 空=不过滤
-  uint32_t limit{256};
-  bool keys_only{false};   // 不返回 value
-  bool count_only{false};  // 只计匹配数（pairs 空）
+  std::string start_key;     // 扫描起点（含）
+  std::string end_key;       // 扫描终点（不含）；空=不限
+  std::string key_prefix;    // key 前缀过滤；空=不过滤
+  std::string value_prefix;  // value 前缀过滤；空=不过滤
+  uint32_t limit{256};       // 最多返回条数
+  bool keys_only{false};     // 不返回 value
+  bool count_only{false};    // 只计匹配数（pairs 空）
 };
 
+/* 扫描命中的一条用户 KV。 */
 struct CoprocessorPair {
-  std::string key;
-  std::string value;
-  uint64_t revision{0};
+  std::string key;       // 用户键
+  std::string value;     // 值；keys_only 时为空
+  uint64_t revision{0};  // 引擎 revision（通常为 apply index）
 };
 
+/* 扫描结果：pairs 或仅 matched 计数。 */
 struct CoprocessorResponse {
-  std::vector<CoprocessorPair> pairs;
-  uint64_t matched{0};  // 扫描命中数（含 count_only；截断前计数）
-  bool truncated{false};
+  std::vector<CoprocessorPair> pairs;  // 命中条目；count_only 时为空
+  uint64_t matched{0};                 // 扫描命中数（含 count_only；截断前计数）
+  bool truncated{false};               // 是否因 limit 截断
 };
 
+/* 对本机引擎做带过滤的 range scan（不经 Raft）。 */
 class Coprocessor {
  public:
+  /**
+   * 绑定一个引擎；eng 可为 nullptr（execute 返回空）。
+   * @param eng 分片引擎指针；生命周期由调用方保证
+   */
   explicit Coprocessor(KvEngine* eng) : eng_(eng) {}
 
+  /**
+   * 在 region_range 内按 req 过滤扫描。
+   * @param req 前缀 / limit / keys_only / count_only
+   * @param region_range 本 Region 半开区间；用于同机共享引擎隔离
+   * @return 命中 pairs 或 matched 计数
+   */
   CoprocessorResponse execute(const CoprocessorRequest& req,
                               const openkv::KeyRange& region_range) const;
 
  private:
-  KvEngine* eng_{nullptr};
+  KvEngine* eng_{nullptr};  // 扫描目标引擎；可空
 };
 
 }  // namespace openkv::storage

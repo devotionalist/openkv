@@ -41,14 +41,20 @@ std::vector<std::string> storage_addrs() {
     std::string cur;
     for (char c : std::string(e)) {
       if (c == ',') {
-        if (!cur.empty()) out.push_back(cur);
+        if (!cur.empty()) {
+          out.push_back(cur);
+        }
         cur.clear();
       } else {
         cur.push_back(c);
       }
     }
-    if (!cur.empty()) out.push_back(cur);
-    if (!out.empty()) return out;
+    if (!cur.empty()) {
+      out.push_back(cur);
+    }
+    if (!out.empty()) {
+      return out;
+    }
   }
   return {"127.0.0.1:9100", "127.0.0.1:9101", "127.0.0.1:9102",
           "127.0.0.1:9103", "127.0.0.1:9104", "127.0.0.1:9105"};
@@ -60,14 +66,20 @@ std::vector<std::string> meta_addrs() {
     std::string cur;
     for (char c : std::string(e)) {
       if (c == ',') {
-        if (!cur.empty()) out.push_back(cur);
+        if (!cur.empty()) {
+          out.push_back(cur);
+        }
         cur.clear();
       } else {
         cur.push_back(c);
       }
     }
-    if (!cur.empty()) out.push_back(cur);
-    if (!out.empty()) return out;
+    if (!cur.empty()) {
+      out.push_back(cur);
+    }
+    if (!out.empty()) {
+      return out;
+    }
   }
   return {"127.0.0.1:8500", "127.0.0.1:8501", "127.0.0.1:8502"};
 }
@@ -77,10 +89,14 @@ std::vector<std::string> meta_addrs() {
 std::string storage_call(const std::string& req, const std::vector<std::string>& preferred = {},
                          int timeout_ms = 8000, int max_attempts = 20) {
   auto addrs = preferred.empty() ? storage_addrs() : preferred;
-  if (addrs.empty()) addrs = storage_addrs();
+  if (addrs.empty()) {
+    addrs = storage_addrs();
+  }
   std::string hint;
   std::string last_err;
-  if (max_attempts < 1) max_attempts = 1;
+  if (max_attempts < 1) {
+    max_attempts = 1;
+  }
   for (int attempt = 0; attempt < max_attempts; ++attempt) {
     std::string addr = hint.empty() ? addrs[static_cast<size_t>(attempt) % addrs.size()] : hint;
     try {
@@ -132,14 +148,22 @@ std::vector<std::string> region_addrs(uint32_t rid) {
     for (size_t i = 4; i < parts.size(); ++i) {
       const auto& tok = parts[i];
       auto c1 = tok.find(':');
-      if (c1 == std::string::npos) continue;
-      if (static_cast<uint32_t>(std::stoul(tok.substr(0, c1))) != rid) continue;
+      if (c1 == std::string::npos) {
+        continue;
+      }
+      if (static_cast<uint32_t>(std::stoul(tok.substr(0, c1))) != rid) {
+        continue;
+      }
       auto c2 = tok.find(':', c1 + 1);
       auto c3 = tok.find(':', c2 + 1);
-      if (c2 == std::string::npos || c3 == std::string::npos) continue;
+      if (c2 == std::string::npos || c3 == std::string::npos) {
+        continue;
+      }
       std::string rest = tok.substr(c3 + 1);
       auto comma = rest.find(',');
-      if (comma == std::string::npos) break;
+      if (comma == std::string::npos) {
+        break;
+      }
       std::stringstream ss(rest.substr(comma + 1));
       std::string item;
       while (std::getline(ss, item, ',')) {
@@ -148,7 +172,9 @@ std::vector<std::string> region_addrs(uint32_t rid) {
           item = item.substr(0, item.size() - 2);
         }
         auto at = item.find('@');
-        if (at != std::string::npos) out.push_back(item.substr(at + 1));
+        if (at != std::string::npos) {
+          out.push_back(item.substr(at + 1));
+        }
       }
       break;
     }
@@ -163,7 +189,9 @@ std::vector<std::string> region_addrs(uint32_t rid) {
         break;
       }
     }
-    if (need_rewrite) return storage_addrs();
+    if (need_rewrite) {
+      return storage_addrs();
+    }
   }
   return out;
 }
@@ -211,7 +239,9 @@ uint32_t locate_region(const std::string& key) {
 
 std::string gateway_addr() {
   if (const char* e = std::getenv("SKV_GATEWAY")) {
-    if (*e) return e;
+    if (*e) {
+      return e;
+    }
   }
   return "127.0.0.1:19000";
 }
@@ -302,14 +332,22 @@ std::unordered_map<std::string, std::string> load_storage_nodes() {
   std::unordered_map<std::string, std::string> out;
   auto resp = meta_call("LIST_NODES storage");
   auto parts = skv::split_ws(resp);
-  if (parts.size() < 3 || parts[0] != "OK") return out;
+  if (parts.size() < 3 || parts[0] != "OK") {
+    return out;
+  }
   for (size_t i = 3; i < parts.size(); ++i) {
     auto at = parts[i].find('@');
-    if (at == std::string::npos) continue;
+    if (at == std::string::npos) {
+      continue;
+    }
     auto r1 = parts[i].rfind(':');
-    if (r1 == std::string::npos || r1 == 0) continue;
+    if (r1 == std::string::npos || r1 == 0) {
+      continue;
+    }
     auto r2 = parts[i].rfind(':', r1 - 1);
-    if (r2 == std::string::npos || r2 <= at) continue;
+    if (r2 == std::string::npos || r2 <= at) {
+      continue;
+    }
     out[parts[i].substr(0, at)] = parts[i].substr(at + 1, r2 - at - 1);
   }
   return out;
@@ -327,28 +365,42 @@ RegionPeers parse_region_peers(uint32_t rid) {
   for (size_t i = 4; i < parts.size(); ++i) {
     const auto& tok = parts[i];
     auto c1 = tok.find(':');
-    if (c1 == std::string::npos) continue;
+    if (c1 == std::string::npos) {
+      continue;
+    }
     uint32_t id = static_cast<uint32_t>(std::stoul(tok.substr(0, c1)));
-    if (id != rid) continue;
+    if (id != rid) {
+      continue;
+    }
     auto c2 = tok.find(':', c1 + 1);
     auto c3 = tok.find(':', c2 == std::string::npos ? tok.size() : c2 + 1);
-    if (c2 == std::string::npos || c3 == std::string::npos) continue;
+    if (c2 == std::string::npos || c3 == std::string::npos) {
+      continue;
+    }
     std::string rest = tok.substr(c3 + 1);
     auto comma = rest.find(',');
-    if (comma == std::string::npos) return rp;
+    if (comma == std::string::npos) {
+      return rp;
+    }
     std::stringstream ss(rest.substr(comma + 1));
     std::string item;
     while (std::getline(ss, item, ',')) {
-      if (item.empty()) continue;
+      if (item.empty()) {
+        continue;
+      }
       const bool is_leader = item.find("*L") != std::string::npos;
       while (!item.empty() && (item.back() == 'L' || item.back() == 'N') && item.size() >= 2 &&
              item[item.size() - 2] == '*') {
         item = item.substr(0, item.size() - 2);
       }
       auto at = item.find('@');
-      if (at == std::string::npos) continue;
+      if (at == std::string::npos) {
+        continue;
+      }
       rp.replicas.emplace_back(item.substr(0, at), item.substr(at + 1));
-      if (is_leader) rp.leader_id = rp.replicas.back().first;
+      if (is_leader) {
+        rp.leader_id = rp.replicas.back().first;
+      }
     }
     break;
   }
@@ -363,15 +415,21 @@ int cmd_split(const std::vector<std::string>& args) {
   }
   auto resp = meta_call("SPLIT_REGION " + args[0] + " " + skv::to_hex(args[1]));
   std::cout << resp << "\n";
-  if (resp.rfind("OK SPLIT", 0) != 0) return 1;
+  if (resp.rfind("OK SPLIT", 0) != 0) {
+    return 1;
+  }
   auto parts = skv::split_ws(resp);
   // OK SPLIT left right
-  if (parts.size() < 4) return 1;
+  if (parts.size() < 4) {
+    return 1;
+  }
   const uint32_t left_rid = static_cast<uint32_t>(std::stoul(parts[2]));
   std::vector<std::string> left_addrs;
   for (int i = 0; i < 10 && left_addrs.empty(); ++i) {
     left_addrs = region_addrs(left_rid);
-    if (left_addrs.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    if (left_addrs.empty()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
   }
   if (left_addrs.empty()) {
     std::cerr << "split: no left-region peers in Meta route (refuse all-storage broadcast)\n";
@@ -382,7 +440,9 @@ int cmd_split(const std::vector<std::string>& args) {
     auto prep =
         storage_call("ADMIN_PREPARE_SPLIT " + parts[2] + " " + skv::to_hex(args[1]), left_addrs);
     std::cout << "prepare -> " << prep << "\n";
-    if (prep.rfind("OK", 0) != 0) return 1;
+    if (prep.rfind("OK", 0) != 0) {
+      return 1;
+    }
   } catch (const std::exception& e) {
     std::cerr << "prepare FAIL " << e.what() << "\n";
     return 1;
@@ -391,7 +451,9 @@ int cmd_split(const std::vector<std::string>& args) {
     auto spl = storage_call("ADMIN_SPLIT " + parts[2] + " " + parts[3] + " " + skv::to_hex(args[1]),
                             left_addrs);
     std::cout << "split -> " << spl << "\n";
-    if (spl.rfind("OK", 0) != 0) return 1;
+    if (spl.rfind("OK", 0) != 0) {
+      return 1;
+    }
   } catch (const std::exception& e) {
     std::cerr << "split FAIL " << e.what() << "\n";
     return 1;
@@ -421,7 +483,9 @@ int cmd_merge(const std::vector<std::string>& args) {
 
 int cmd_nodes(const std::vector<std::string>& args) {
   std::string req = "LIST_NODES";
-  if (!args.empty()) req += " " + args[0];
+  if (!args.empty()) {
+    req += " " + args[0];
+  }
   auto resp = meta_call(req);
   std::cout << resp << "\n";
   // 附带可读状态：0=joining 1=active 2=draining 3=offline 4=tombstone
@@ -429,7 +493,9 @@ int cmd_nodes(const std::vector<std::string>& args) {
   auto parts = skv::split_ws(resp);
   for (size_t i = 3; i < parts.size(); ++i) {
     auto colon = parts[i].rfind(':');
-    if (colon == std::string::npos) continue;
+    if (colon == std::string::npos) {
+      continue;
+    }
     try {
       int st = std::stoi(parts[i].substr(colon + 1));
       if (st >= 0 && st <= 4) {
@@ -467,7 +533,9 @@ int cmd_scale_in(const std::vector<std::string>& args) {
   }
   auto resp = meta_call("STORE_DELETE " + args[0]);
   std::cout << resp << "\n";
-  if (resp.rfind("OK", 0) != 0) return 1;
+  if (resp.rfind("OK", 0) != 0) {
+    return 1;
+  }
   std::cout << "draining " << args[0]
             << "; RegionScheduler will migrate replicas then mark Tombstone\n";
   return 0;
@@ -495,7 +563,9 @@ int cmd_remove_tombstone(const std::vector<std::string>& args) {
 
 int cmd_balance(const std::vector<std::string>& args) {
   std::string req = "BALANCE";
-  if (!args.empty()) req += " " + args[0];
+  if (!args.empty()) {
+    req += " " + args[0];
+  }
   auto resp = meta_call(req);
   std::cout << resp << "\n";
   return resp.rfind("OK", 0) == 0 ? 0 : 1;
@@ -512,7 +582,9 @@ int cmd_place(const std::vector<std::string>& args) {
     std::stringstream ss(args[1]);
     std::string item;
     while (std::getline(ss, item, ',')) {
-      if (!item.empty()) desired.push_back(item);
+      if (!item.empty()) {
+        desired.push_back(item);
+      }
     }
   }
   if (desired.empty()) {
@@ -537,18 +609,26 @@ int cmd_place(const std::vector<std::string>& args) {
   // place 开始时的原成员（promote 后会改 cur，transfer 勿把新 peer 当成 preexisting）
   const std::vector<std::string> original_ids = [&] {
     std::vector<std::string> ids;
-    for (const auto& [nid, _] : cur.replicas) ids.push_back(nid);
+    for (const auto& [nid, _] : cur.replicas) {
+      ids.push_back(nid);
+    }
     return ids;
   }();
   auto was_original = [&](const std::string& id) {
-    for (const auto& o : original_ids)
-      if (o == id) return true;
+    for (const auto& o : original_ids) {
+      if (o == id) {
+        return true;
+      }
+    }
     return false;
   };
 
   auto has = [&](const std::string& id) {
-    for (const auto& [nid, _] : cur.replicas)
-      if (nid == id) return true;
+    for (const auto& [nid, _] : cur.replicas) {
+      if (nid == id) {
+        return true;
+      }
+    }
     return false;
   };
 
@@ -557,15 +637,24 @@ int cmd_place(const std::vector<std::string>& args) {
   auto live_addrs = [&]() {
     std::vector<std::string> out;
     auto push = [&](const std::string& addr) {
-      if (addr.empty()) return;
-      for (const auto& a : out)
-        if (a == addr) return;
+      if (addr.empty()) {
+        return;
+      }
+      for (const auto& a : out) {
+        if (a == addr) {
+          return;
+        }
+      }
       out.push_back(addr);
     };
-    for (const auto& [_, addr] : cur.replicas) push(addr);
+    for (const auto& [_, addr] : cur.replicas) {
+      push(addr);
+    }
     for (const auto& id : desired) {
       auto it = nodes.find(id);
-      if (it != nodes.end()) push(it->second);
+      if (it != nodes.end()) {
+        push(it->second);
+      }
     }
     return out;
   };
@@ -575,12 +664,18 @@ int cmd_place(const std::vector<std::string>& args) {
   auto joint_status = [&](const std::string& exclude_addr = {}) -> int {
     bool saw_ok = false;
     for (const auto& a : live_addrs()) {
-      if (!exclude_addr.empty() && a == exclude_addr) continue;
+      if (!exclude_addr.empty() && a == exclude_addr) {
+        continue;
+      }
       try {
         auto st = skv::tcp_line(a, "ADMIN_REGION_STATS " + std::to_string(rid), 1500);
-        if (st.rfind("OK", 0) != 0) continue;
+        if (st.rfind("OK", 0) != 0) {
+          continue;
+        }
         saw_ok = true;
-        if (st.find("joint=1") != std::string::npos) return 1;
+        if (st.find("joint=1") != std::string::npos) {
+          return 1;
+        }
       } catch (...) {
       }
     }
@@ -600,11 +695,15 @@ int cmd_place(const std::vector<std::string>& args) {
       std::cout << "progress " << peer_id << " -> " << r << "\n";
       auto parts = skv::split_ws(r);
       // OK PROGRESS match commit last caught [learner]
-      if (parts.size() >= 6 && parts[0] == "OK" && parts[5] == "1") return true;
+      if (parts.size() >= 6 && parts[0] == "OK" && parts[5] == "1") {
+        return true;
+      }
       if (i > 0 && i % 50 == 0) {
         for (const auto& oid : original_ids) {
           auto it = nodes.find(oid);
-          if (it == nodes.end()) continue;
+          if (it == nodes.end()) {
+            continue;
+          }
           try {
             skv::tcp_line(it->second, "ADMIN_CAMPAIGN " + std::to_string(rid), 1000);
           } catch (...) {
@@ -625,15 +724,21 @@ int cmd_place(const std::vector<std::string>& args) {
                               live_addrs());
         auto parts = skv::split_ws(r);
         int learner = 2;
-        if (parts.size() >= 7 && parts[0] == "OK") learner = std::stoi(parts[6]);
+        if (parts.size() >= 7 && parts[0] == "OK") {
+          learner = std::stoi(parts[6]);
+        }
         std::cout << "promote-wait " << peer_id << " joint_status=" << js << " learner=" << learner
                   << "\n";
         // learner=0 且已确认非 joint；learner=2 时催选主并继续等
-        if (js == 0 && learner == 0) return true;
+        if (js == 0 && learner == 0) {
+          return true;
+        }
         if (learner == 2 && i > 0 && i % 20 == 0) {
           for (const auto& oid : original_ids) {
             auto it = nodes.find(oid);
-            if (it == nodes.end()) continue;
+            if (it == nodes.end()) {
+              continue;
+            }
             try {
               skv::tcp_line(it->second, "ADMIN_CAMPAIGN " + std::to_string(rid), 1000);
             } catch (...) {
@@ -650,7 +755,9 @@ int cmd_place(const std::vector<std::string>& args) {
 
   // 1) 加入缺失副本：ENSURE → ADD_LEARNER → 等追赶 → PROMOTE
   for (const auto& id : desired) {
-    if (has(id)) continue;
+    if (has(id)) {
+      continue;
+    }
     const std::string& addr = nodes[id];
     // 数据面可能已完成上一轮 place（Meta 路由未更新）：已是 voter 且追平则跳过 ConfChange
     {
@@ -668,7 +775,9 @@ int cmd_place(const std::vector<std::string>& args) {
     }
     std::ostringstream peers;
     for (size_t i = 0; i < cur.replicas.size(); ++i) {
-      if (i) peers << ',';
+      if (i) {
+        peers << ',';
+      }
       peers << cur.replicas[i].first << '@' << cur.replicas[i].second;
     }
     peers << ',' << id << '@' << addr << "*N";
@@ -713,7 +822,9 @@ int cmd_place(const std::vector<std::string>& args) {
         }
         break;
       }
-      if (!ok) return 1;
+      if (!ok) {
+        return 1;
+      }
     }
     if (!wait_caught_up(id)) {
       std::cerr << "timeout waiting catch-up for " << id << "\n";
@@ -741,7 +852,9 @@ int cmd_place(const std::vector<std::string>& args) {
         }
         break;
       }
-      if (!ok) return 1;
+      if (!ok) {
+        return 1;
+      }
     }
     if (!wait_promoted(id)) {
       std::cerr << "timeout waiting promote settle for " << id << "\n";
@@ -755,12 +868,16 @@ int cmd_place(const std::vector<std::string>& args) {
     auto rp = parse_region_peers(rid);
     bool leader_kept = rp.leader_id.empty();
     for (const auto& d : desired) {
-      if (d == rp.leader_id) leader_kept = true;
+      if (d == rp.leader_id) {
+        leader_kept = true;
+      }
     }
     if (!rp.leader_id.empty() && !leader_kept && !desired.empty()) {
       std::string target;
       for (const auto& d : desired) {
-        if (d == rp.leader_id) continue;
+        if (d == rp.leader_id) {
+          continue;
+        }
         if (was_original(d)) {
           target = d;
           break;
@@ -774,7 +891,9 @@ int cmd_place(const std::vector<std::string>& args) {
           }
         }
       }
-      if (target.empty()) target = desired[0];
+      if (target.empty()) {
+        target = desired[0];
+      }
       auto tr =
           storage_call("ADMIN_TRANSFER_LEADER " + std::to_string(rid) + " " + target, live_addrs());
       std::cout << "transfer " << rp.leader_id << " -> " << target << " : " << tr << "\n";
@@ -796,12 +915,15 @@ int cmd_place(const std::vector<std::string>& args) {
   std::vector<std::pair<std::string, std::string>> victims;
   for (const auto& [nid, naddr] : cur.replicas) {
     bool keep = false;
-    for (const auto& d : desired)
+    for (const auto& d : desired) {
       if (d == nid) {
-        keep = true;
-        break;
       }
-    if (!keep) victims.emplace_back(nid, naddr);
+      keep = true;
+      break;
+    }
+    if (!keep) {
+      victims.emplace_back(nid, naddr);
+    }
   }
   for (const auto& [nid, naddr] : victims) {
     std::string r;
@@ -824,7 +946,9 @@ int cmd_place(const std::vector<std::string>& args) {
       }
       break;
     }
-    if (!ok) return 1;
+    if (!ok) {
+      return 1;
+    }
     // REMOVE 进入 Joint 后须等 LeaveJoint；若此时 DESTROY 被踢节点，旧多数派缺票会永久卡死选举
     // 询 joint 时排除 victim：它可能永远停在 joint=1（未复制到 LeaveJoint）
     bool left_joint = false;
@@ -836,7 +960,9 @@ int cmd_place(const std::vector<std::string>& args) {
       if (w > 0 && w % 15 == 0) {
         for (const auto& d : desired) {
           auto it = nodes.find(d);
-          if (it == nodes.end()) continue;
+          if (it == nodes.end()) {
+            continue;
+          }
           try {
             skv::tcp_line(it->second, "ADMIN_CAMPAIGN " + std::to_string(rid), 1000);
           } catch (...) {
@@ -866,11 +992,15 @@ int cmd_place(const std::vector<std::string>& args) {
   // 4) 催目标集竞选（踢出节点上的陈旧 leader_id 会让 redirect 指到 DESTROY 地址）
   for (const auto& id : desired) {
     auto it = nodes.find(id);
-    if (it == nodes.end()) continue;
+    if (it == nodes.end()) {
+      continue;
+    }
     try {
       auto cr = skv::tcp_line(it->second, "ADMIN_CAMPAIGN " + std::to_string(rid), 1500);
       std::cout << "post-place campaign " << id << " -> " << cr << "\n";
-      if (cr.rfind("OK", 0) == 0) break;
+      if (cr.rfind("OK", 0) == 0) {
+        break;
+      }
     } catch (...) {
     }
   }
@@ -879,7 +1009,9 @@ int cmd_place(const std::vector<std::string>& args) {
   // 5) 发布 Meta 路由（数据面已成功时必须尽力写上，否则 STORE_STATUS/路由长期不一致）
   std::ostringstream peers;
   for (size_t i = 0; i < desired.size(); ++i) {
-    if (i) peers << ',';
+    if (i) {
+      peers << ',';
+    }
     peers << desired[i];
   }
   const std::string place_req = "PLACE_REGION " + args[0] + " " + peers.str();
@@ -887,7 +1019,9 @@ int cmd_place(const std::vector<std::string>& args) {
     try {
       auto resp = meta_call(place_req);
       std::cout << resp << "\n";
-      if (resp.rfind("OK PLACE", 0) == 0) return 0;
+      if (resp.rfind("OK PLACE", 0) == 0) {
+        return 0;
+      }
       std::cerr << "PLACE_REGION attempt " << (attempt + 1) << " -> " << resp << "\n";
     } catch (const std::exception& e) {
       std::cerr << "PLACE_REGION attempt " << (attempt + 1) << " FAIL " << e.what() << "\n";
@@ -921,7 +1055,9 @@ int cmd_ping() {
   std::string gaddr = gw ? gw : "127.0.0.1:19000";
   std::cout << "gw    " << gaddr << "  " << (skv::tcp_reachable(gaddr, 400) ? "UP" : "DOWN")
             << "\n";
-  if (!skv::tcp_reachable(gaddr, 400)) ++fail;
+  if (!skv::tcp_reachable(gaddr, 400)) {
+    ++fail;
+  }
   return fail == 0 ? 0 : 1;
 }
 
@@ -940,8 +1076,12 @@ int cmd_who_leader() {
 int cmd_smoke() {
   const std::string key = "skv-smoke";
   const std::string val = "ok";
-  if (cmd_put({key, val}) != 0) return 1;
-  if (cmd_get({key}) != 0) return 1;
+  if (cmd_put({key, val}) != 0) {
+    return 1;
+  }
+  if (cmd_get({key}) != 0) {
+    return 1;
+  }
   std::cout << "SMOKE OK\n";
   return 0;
 }

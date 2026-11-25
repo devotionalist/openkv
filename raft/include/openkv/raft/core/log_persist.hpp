@@ -28,31 +28,57 @@ namespace openkv::raft {
 
 class RaftNode;
 
-// 管「协议状态怎么写进 RaftEngine」。
+/* 管「协议状态怎么写进 RaftEngine」。 */
 class LogPersist {
  public:
-  explicit LogPersist(RaftNode& node) : n_(node) {}  // 构造函数
+  /**
+   * 绑定所属 RaftNode。
+   * @param node 宿主节点
+   */
+  explicit LogPersist(RaftNode& node) : n_(node) {}
 
-  // external_io 只脏标记 Ready HardState；嵌入：攒批刷引擎。
-  void persist_locked();                 // 持久化
-  void persist_maybe_flush(bool force);  // 刷新
-  void engine_flush_locked(bool sync);   // 刷新引擎
-  std::unique_ptr<RaftLogBatch> build_engine_batch_locked(uint64_t& out_first,
-                                                          uint64_t& out_last);  // 构建引擎批次
-  void commit_stable_locked(uint64_t first, uint64_t last);                     // 提交稳定落盘
-  // Store persist_fn：组 batch 后在 persist_io_mu_ 下 consume（可不持协议锁）。
-  void persist_ready(const Ready& rd);  // 持久化准备
+  /**
+   * external_io 只脏标记 Ready HardState；嵌入：攒批刷引擎。须已持协议锁。
+   */
+  void persist_locked();
+  /**
+   * 按 persist_batch_n / force 决定是否真刷引擎。
+   * @param force true 则无视攒批计数立刻刷
+   */
+  void persist_maybe_flush(bool force);
+  /**
+   * 持协议锁把当前脏日志/HardState consume 进引擎。
+   * @param sync 是否要求引擎 sync
+   */
+  void engine_flush_locked(bool sync);
+  /**
+   * 组一版 RaftLogBatch；写出本批 first/last index。
+   * @param out_first 输出本批首 index
+   * @param out_last 输出本批末 index
+   * @return 批次；可空
+   */
+  std::unique_ptr<RaftLogBatch> build_engine_batch_locked(uint64_t& out_first, uint64_t& out_last);
+  /**
+   * 引擎 consume 成功后推进稳定落盘窗口。
+   * @param first 本批首 index
+   * @param last 本批末 index
+   */
+  void commit_stable_locked(uint64_t first, uint64_t last);
+  /**
+   * Store persist_fn：组 batch 后在 persist_io_mu_ 下 consume（可不持协议锁）。
+   * @param rd Ready 批次
+   */
+  void persist_ready(const Ready& rd);
 
-  uint32_t persist_pending_{0};  // 等待持久化
-  bool persist_dirty_{false};    // 脏状态
+  uint32_t persist_pending_{0};  // 嵌入路径已脏未刷次数
+  bool persist_dirty_{false};    // 是否有未刷脏数据
   // 已稳定落盘的日志窗（增量 flush 基准；0=还没落过）。
-  uint64_t stable_first_index_{0};  // 稳定落盘的日志窗
-  uint64_t stable_last_index_{0};   // 稳定落盘的日志窗
-  // 串行化 engine_->consume；不持协议 mu_，允许 propose 与写盘重叠。
-  std::mutex persist_io_mu_;  // 持久化io互斥锁
+  uint64_t stable_first_index_{0};  // 稳定窗首 index
+  uint64_t stable_last_index_{0};   // 稳定窗末 index
+  std::mutex persist_io_mu_;        // 串行化 engine_->consume；不持协议 mu_
 
  private:
-  RaftNode& n_;  // 节点引用
+  RaftNode& n_;  // 宿主节点
 };
 
 }  // namespace openkv::raft

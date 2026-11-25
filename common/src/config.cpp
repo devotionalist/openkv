@@ -29,8 +29,12 @@ namespace openkv {
 namespace {
 
 std::string trim(std::string s) {
-  while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
-  while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) s.pop_back();
+  while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
+    s.erase(s.begin());
+  }
+  while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) {
+    s.pop_back();
+  }
   return s;
 }
 
@@ -40,14 +44,20 @@ bool ends_with(std::string_view s, std::string_view suf) {
 
 std::unordered_map<std::string, std::string> parse_kv_file(const std::string& path) {
   std::ifstream in(path);
-  if (!in) throw std::runtime_error("cannot open config: " + path);
+  if (!in) {
+    throw std::runtime_error("cannot open config: " + path);
+  }
   std::unordered_map<std::string, std::string> m;
   std::string line;
   while (std::getline(in, line)) {
     line = trim(line);
-    if (line.empty() || line[0] == '#') continue;
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
     auto pos = line.find('=');
-    if (pos == std::string::npos) continue;
+    if (pos == std::string::npos) {
+      continue;
+    }
     m[trim(line.substr(0, pos))] = trim(line.substr(pos + 1));
   }
   return m;
@@ -62,7 +72,9 @@ std::unordered_map<std::string, std::string> parse_toml_file(const std::string& 
   }
   std::unordered_map<std::string, std::string> m;
   auto put = [&](const char* key) {
-    if (!data.contains(key)) return;
+    if (!data.contains(key)) {
+      return;
+    }
     try {
       m[key] = toml::find<std::string>(data, key);
       return;
@@ -82,7 +94,9 @@ std::unordered_map<std::string, std::string> parse_toml_file(const std::string& 
       auto arr = toml::find<std::vector<std::string>>(data, key);
       std::ostringstream oss;
       for (size_t i = 0; i < arr.size(); ++i) {
-        if (i) oss << ',';
+        if (i) {
+          oss << ',';
+        }
         oss << arr[i];
       }
       m[key] = oss.str();
@@ -100,7 +114,9 @@ std::unordered_map<std::string, std::string> parse_toml_file(const std::string& 
       "storage_peers",     "compute_peers",
       "meta_peers",
   };
-  for (const char* k : kKeys) put(k);
+  for (const char* k : kKeys) {
+    put(k);
+  }
   return m;
 }
 
@@ -118,7 +134,9 @@ std::vector<PeerConfig> parse_peers_csv(const std::string& s) {
   while (std::getline(ss, item, ',')) {
     item = trim(item);
     auto at = item.find('@');
-    if (at == std::string::npos) continue;
+    if (at == std::string::npos) {
+      continue;
+    }
     peers.push_back({item.substr(0, at), item.substr(at + 1)});
   }
   return peers;
@@ -129,30 +147,48 @@ std::vector<PeerConfig> parse_peers_csv(const std::string& s) {
 NodeConfig load_node_config(const std::string& path) {
   auto m = load_map(path);
   NodeConfig c;
-  if (m.count("node_id")) c.node_id = m["node_id"];
-  if (m.count("listen_addr")) c.listen_addr = m["listen_addr"];
-  if (m.count("advertise_addr")) c.advertise_addr = m["advertise_addr"];
-  if (m.count("meta_addr")) c.meta_addr = m["meta_addr"];
-  if (m.count("data_dir")) c.data_dir = m["data_dir"];
-  if (m.count("shard_count")) c.shard_count = static_cast<uint32_t>(std::stoul(m["shard_count"]));
+  if (m.count("node_id")) {
+    c.node_id = m["node_id"];
+  }
+  if (m.count("listen_addr")) {
+    c.listen_addr = m["listen_addr"];
+  }
+  if (m.count("advertise_addr")) {
+    c.advertise_addr = m["advertise_addr"];
+  }
+  if (m.count("meta_addr")) {
+    c.meta_addr = m["meta_addr"];
+  }
+  if (m.count("data_dir")) {
+    c.data_dir = m["data_dir"];
+  }
+  if (m.count("shard_count")) {
+    c.shard_count = static_cast<uint32_t>(std::stoul(m["shard_count"]));
+  }
   if (m.count("raft_election_timeout_ms")) {
     c.raft_election_timeout_ms = static_cast<uint32_t>(std::stoul(m["raft_election_timeout_ms"]));
   }
   if (m.count("raft_heartbeat_ms")) {
     c.raft_heartbeat_ms = static_cast<uint32_t>(std::stoul(m["raft_heartbeat_ms"]));
   }
-  if (m.count("persist_sync")) c.persist_sync = m["persist_sync"];
+  if (m.count("persist_sync")) {
+    c.persist_sync = m["persist_sync"];
+  }
   if (m.count("rocksdb_write_buffer_mb")) {
     c.rocksdb_write_buffer_mb = static_cast<uint32_t>(std::stoul(m["rocksdb_write_buffer_mb"]));
   }
-  if (m.count("raft_peers")) c.raft_peers = parse_peers_csv(m["raft_peers"]);
+  if (m.count("raft_peers")) {
+    c.raft_peers = parse_peers_csv(m["raft_peers"]);
+  }
   if (m.count("bootstrap_regions")) {
     c.bootstrap_regions.clear();
     std::stringstream ss(m["bootstrap_regions"]);
     std::string item;
     while (std::getline(ss, item, ',')) {
       item = trim(item);
-      if (item.empty()) continue;
+      if (item.empty()) {
+        continue;
+      }
       c.bootstrap_regions.push_back(static_cast<uint32_t>(std::stoul(item)));
     }
   }
@@ -162,10 +198,18 @@ NodeConfig load_node_config(const std::string& path) {
 ClusterBootstrap load_bootstrap(const std::string& path) {
   auto m = load_map(path);
   ClusterBootstrap b;
-  if (m.count("meta_addr")) b.meta_addr = m["meta_addr"];
-  if (m.count("node_id")) b.node_id = m["node_id"];
-  if (m.count("listen_addr")) b.listen_addr = m["listen_addr"];
-  if (m.count("shard_count")) b.shard_count = static_cast<uint32_t>(std::stoul(m["shard_count"]));
+  if (m.count("meta_addr")) {
+    b.meta_addr = m["meta_addr"];
+  }
+  if (m.count("node_id")) {
+    b.node_id = m["node_id"];
+  }
+  if (m.count("listen_addr")) {
+    b.listen_addr = m["listen_addr"];
+  }
+  if (m.count("shard_count")) {
+    b.shard_count = static_cast<uint32_t>(std::stoul(m["shard_count"]));
+  }
   if (m.count("replica_factor")) {
     b.replica_factor = static_cast<uint32_t>(std::stoul(m["replica_factor"]));
   }
@@ -175,13 +219,21 @@ ClusterBootstrap load_bootstrap(const std::string& path) {
   if (m.count("raft_heartbeat_ms")) {
     b.raft_heartbeat_ms = static_cast<uint32_t>(std::stoul(m["raft_heartbeat_ms"]));
   }
-  if (m.count("data_dir")) b.data_dir = m["data_dir"];
+  if (m.count("data_dir")) {
+    b.data_dir = m["data_dir"];
+  }
   if (m.count("raft_compact_threshold")) {
     b.raft_compact_threshold = static_cast<size_t>(std::stoull(m["raft_compact_threshold"]));
   }
-  if (m.count("storage_peers")) b.storage_peers = parse_peers_csv(m["storage_peers"]);
-  if (m.count("compute_peers")) b.compute_peers = parse_peers_csv(m["compute_peers"]);
-  if (m.count("meta_peers")) b.meta_peers = parse_peers_csv(m["meta_peers"]);
+  if (m.count("storage_peers")) {
+    b.storage_peers = parse_peers_csv(m["storage_peers"]);
+  }
+  if (m.count("compute_peers")) {
+    b.compute_peers = parse_peers_csv(m["compute_peers"]);
+  }
+  if (m.count("meta_peers")) {
+    b.meta_peers = parse_peers_csv(m["meta_peers"]);
+  }
   return b;
 }
 

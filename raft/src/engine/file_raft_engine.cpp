@@ -33,17 +33,23 @@
 namespace openkv::raft {
 namespace fs = std::filesystem;
 
-/// 与 FileRaftEngine::friend 同命名空间，才能访问 GroupMut。
+/* 与 FileRaftEngine::friend 同命名空间，才能访问 GroupMut。 */
 class FileLogBatch final : public RaftLogBatch {
  public:
   void append(uint64_t raft_group_id, std::vector<LogEntry> entries) override {
-    if (entries.empty()) return;
+    if (entries.empty()) {
+      return;
+    }
     auto& g = muts_[raft_group_id];
-    for (auto& e : entries) g.appends.push_back(std::move(e));
+    for (auto& e : entries) {
+      g.appends.push_back(std::move(e));
+    }
   }
 
   void cut_logs(uint64_t raft_group_id, uint64_t from, uint64_t to) override {
-    if (to <= from) return;
+    if (to <= from) {
+      return;
+    }
     muts_[raft_group_id].cuts.emplace_back(from, to);
   }
 
@@ -60,14 +66,18 @@ namespace {
 
 bool write_bytes_trunc(const fs::path& path, std::string_view blob) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  if (!out) return false;
+  if (!out) {
+    return false;
+  }
   out.write(blob.data(), static_cast<std::streamsize>(blob.size()));
   out.flush();
   return static_cast<bool>(out);
 }
 
 bool read_entire_file(const fs::path& path, std::string* out) {
-  if (!out) return false;
+  if (!out) {
+    return false;
+  }
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     out->clear();
@@ -104,7 +114,9 @@ bool FileRaftEngine::GroupPaths::ensure_dir() const {
 
 FileRaftEngine::FileRaftEngine(std::string root_dir, SyncMode sync)
     : root_(std::move(root_dir)), sync_(sync) {
-  if (root_.empty()) return;
+  if (root_.empty()) {
+    return;
+  }
   std::error_code ec;
   fs::create_directories(root_, ec);
   if (ec) {
@@ -121,7 +133,9 @@ FileRaftEngine::GroupPaths FileRaftEngine::paths_for(uint64_t group_id) const {
 }
 
 void FileRaftEngine::sync_file(const fs::path& path) const {
-  if (sync_ == SyncMode::kNone) return;
+  if (sync_ == SyncMode::kNone) {
+    return;
+  }
   const int fd = ::open(path.c_str(), O_RDONLY);
   if (fd < 0) {
     SKV_WARN << "FileRaftEngine: sync open failed path=" << path.string();
@@ -148,7 +162,9 @@ void FileRaftEngine::sync_file(const fs::path& path) const {
 }
 
 void FileRaftEngine::sync_root_dir() const {
-  if (sync_ != SyncMode::kAll || root_.empty()) return;
+  if (sync_ != SyncMode::kAll || root_.empty()) {
+    return;
+  }
   const int dfd = ::open(root_.c_str(), O_RDONLY);
   if (dfd < 0) {
     SKV_WARN << "FileRaftEngine: sync root open failed path=" << root_;
@@ -168,7 +184,9 @@ void FileRaftEngine::sync_root_dir() const {
 
 bool FileRaftEngine::read_state_unlocked(const GroupPaths& p, RaftLocalState* out) const {
   std::string raw;
-  if (!read_entire_file(p.state, &raw) || raw.empty()) return false;
+  if (!read_entire_file(p.state, &raw) || raw.empty()) {
+    return false;
+  }
   return decode_raft_local_state(raw, out);
 }
 
@@ -183,7 +201,9 @@ bool FileRaftEngine::write_state_unlocked(const GroupPaths& p, const RaftLocalSt
     SKV_ERROR << "FileRaftEngine: write state tmp failed path=" << p.state_tmp.string();
     return false;
   }
-  if (sync) sync_file(p.state_tmp);
+  if (sync) {
+    sync_file(p.state_tmp);
+  }
   if (!atomic_replace(p.state_tmp, p.state)) {
     SKV_ERROR << "FileRaftEngine: rename state failed path=" << p.state.string();
     return false;
@@ -192,7 +212,9 @@ bool FileRaftEngine::write_state_unlocked(const GroupPaths& p, const RaftLocalSt
 }
 
 bool FileRaftEngine::read_log_unlocked(const GroupPaths& p, std::vector<LogEntry>* out) const {
-  if (!out) return false;
+  if (!out) {
+    return false;
+  }
   std::string raw;
   if (!read_entire_file(p.log, &raw)) {
     // 文件不存在 = 空日志
@@ -222,7 +244,9 @@ bool FileRaftEngine::rewrite_log_unlocked(const GroupPaths& p, const std::vector
     SKV_ERROR << "FileRaftEngine: write log tmp failed path=" << p.log_tmp.string();
     return false;
   }
-  if (sync) sync_file(p.log_tmp);
+  if (sync) {
+    sync_file(p.log_tmp);
+  }
   if (!atomic_replace(p.log_tmp, p.log)) {
     SKV_ERROR << "FileRaftEngine: rename log failed path=" << p.log.string();
     return false;
@@ -234,7 +258,9 @@ bool FileRaftEngine::append_log_unlocked(const GroupPaths& p, const std::vector<
                                          bool sync) const {
   // 纯追加：ios::app 不截断。魔数仅在空文件写一次；之后只 append RLE 记录。
   // 切勿把 encode_container() 的结果再 append——会在文件中段插入第二个 RLG 头。
-  if (ents.empty()) return true;
+  if (ents.empty()) {
+    return true;
+  }
   if (!p.ensure_dir()) {
     SKV_ERROR << "FileRaftEngine: ensure group dir failed dir=" << p.dir.string();
     return false;
@@ -272,7 +298,9 @@ bool FileRaftEngine::append_log_unlocked(const GroupPaths& p, const std::vector<
     SKV_ERROR << "FileRaftEngine: append write failed path=" << p.log.string();
     return false;
   }
-  if (sync) sync_file(p.log);
+  if (sync) {
+    sync_file(p.log);
+  }
   return true;
 }
 
@@ -291,7 +319,9 @@ RaftLocalState FileRaftEngine::merge_state(const GroupMut& mut, const std::vecto
 
   if (!ents.empty()) {
     st.last_index = ents.back().index;
-    if (st.first_index == 0) st.first_index = ents.front().index;
+    if (st.first_index == 0) {
+      st.first_index = ents.front().index;
+    }
   } else if (mut.state) {
     st.last_index = mut.state->last_index;
   }
@@ -302,7 +332,9 @@ size_t FileRaftEngine::apply_group_mut_unlocked(uint64_t group_id, GroupMut& mut
   const auto p = paths_for(group_id);
 
   std::vector<LogEntry> ents;
-  if (!read_log_unlocked(p, &ents)) return 0;
+  if (!read_log_unlocked(p, &ents)) {
+    return 0;
+  }
 
   RaftLocalState existing_st;
   const bool had_state = read_state_unlocked(p, &existing_st);
@@ -315,40 +347,64 @@ size_t FileRaftEngine::apply_group_mut_unlocked(uint64_t group_id, GroupMut& mut
   if (pure) {
     if (!append_log_unlocked(p, mut.appends, sync)) {
       // 非 RLG 或 append IO 失败：退化为整文件 rewrite，保证可恢复。
-      for (auto& e : mut.appends) ents.push_back(std::move(e));
-      if (!rewrite_log_unlocked(p, ents, sync)) return 0;
-      for (const auto& e : ents) bytes += approx_entry_bytes(e);
+      for (auto& e : mut.appends) {
+        ents.push_back(std::move(e));
+      }
+      if (!rewrite_log_unlocked(p, ents, sync)) {
+        return 0;
+      }
+      for (const auto& e : ents) {
+        bytes += approx_entry_bytes(e);
+      }
     } else {
-      for (const auto& e : mut.appends) bytes += approx_entry_bytes(e);
+      for (const auto& e : mut.appends) {
+        bytes += approx_entry_bytes(e);
+      }
       ents.insert(ents.end(), mut.appends.begin(), mut.appends.end());
     }
   } else if (log_touched) {
     log_file::apply_mutations(&ents, mut.cuts, std::move(mut.appends));
     mut.appends.clear();
-    if (!rewrite_log_unlocked(p, ents, sync)) return 0;
-    for (const auto& e : ents) bytes += approx_entry_bytes(e);
+    if (!rewrite_log_unlocked(p, ents, sync)) {
+      return 0;
+    }
+    for (const auto& e : ents) {
+      bytes += approx_entry_bytes(e);
+    }
   }
 
-  if (!mut.state && !log_touched) return bytes;
+  if (!mut.state && !log_touched) {
+    return bytes;
+  }
 
   const RaftLocalState st = merge_state(mut, ents, had_state ? &existing_st : nullptr);
-  if (!write_state_unlocked(p, st, sync)) return 0;
+  if (!write_state_unlocked(p, st, sync)) {
+    return 0;
+  }
   bytes += 64;
 
-  if (sync) sync_root_dir();
+  if (sync) {
+    sync_root_dir();
+  }
   return bytes;
 }
 
 size_t FileRaftEngine::consume(RaftLogBatch& batch, bool sync) {
-  if (root_.empty()) return 0;
+  if (root_.empty()) {
+    return 0;
+  }
   auto* fb = dynamic_cast<FileLogBatch*>(&batch);
-  if (!fb || fb->empty()) return 0;
+  if (!fb || fb->empty()) {
+    return 0;
+  }
 
   std::lock_guard<std::mutex> lock(mu_);
   const bool do_sync = sync && sync_ != SyncMode::kNone;
   size_t total = 0;
   for (auto& [id, mut] : fb->muts_) {
-    if (!mut.state && mut.appends.empty() && mut.cuts.empty()) continue;
+    if (!mut.state && mut.appends.empty() && mut.cuts.empty()) {
+      continue;
+    }
     const size_t n = apply_group_mut_unlocked(id, mut, do_sync);
     if (n == 0) {
       SKV_ERROR << "FileRaftEngine: consume failed group=" << id;
@@ -362,39 +418,57 @@ size_t FileRaftEngine::consume(RaftLogBatch& batch, bool sync) {
 }
 
 std::optional<RaftLocalState> FileRaftEngine::get_raft_state(uint64_t raft_group_id) const {
-  if (root_.empty()) return std::nullopt;
+  if (root_.empty()) {
+    return std::nullopt;
+  }
   std::lock_guard<std::mutex> lock(mu_);
   RaftLocalState st;
-  if (!read_state_unlocked(paths_for(raft_group_id), &st)) return std::nullopt;
+  if (!read_state_unlocked(paths_for(raft_group_id), &st)) {
+    return std::nullopt;
+  }
   return st;
 }
 
 std::optional<LogEntry> FileRaftEngine::get_entry(uint64_t raft_group_id, uint64_t index) const {
-  if (root_.empty()) return std::nullopt;
+  if (root_.empty()) {
+    return std::nullopt;
+  }
   std::vector<LogEntry> ents;
   {
     std::lock_guard<std::mutex> lock(mu_);
-    if (!read_log_unlocked(paths_for(raft_group_id), &ents)) return std::nullopt;
+    if (!read_log_unlocked(paths_for(raft_group_id), &ents)) {
+      return std::nullopt;
+    }
   }
   for (const auto& e : ents) {
-    if (e.index == index) return e;
+    if (e.index == index) {
+      return e;
+    }
   }
   return std::nullopt;
 }
 
 size_t FileRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end,
                                         size_t max_size, std::vector<LogEntry>* to) const {
-  if (!to || end <= begin || root_.empty()) return 0;
+  if (!to || end <= begin || root_.empty()) {
+    return 0;
+  }
   std::vector<LogEntry> ents;
   {
     std::lock_guard<std::mutex> lock(mu_);
-    if (!read_log_unlocked(paths_for(raft_group_id), &ents)) return 0;
+    if (!read_log_unlocked(paths_for(raft_group_id), &ents)) {
+      return 0;
+    }
   }
   size_t n = 0;
   size_t bytes = 0;
   for (const auto& e : ents) {
-    if (e.index < begin || e.index >= end) continue;
-    if (bytes + e.data.size() > max_size && n > 0) break;
+    if (e.index < begin || e.index >= end) {
+      continue;
+    }
+    if (bytes + e.data.size() > max_size && n > 0) {
+      break;
+    }
     to->push_back(e);
     bytes += e.data.size();
     ++n;
@@ -409,7 +483,9 @@ size_t FileRaftEngine::gc(uint64_t raft_group_id, uint64_t from, uint64_t to) {
 }
 
 void FileRaftEngine::clean(uint64_t raft_group_id) {
-  if (root_.empty()) return;
+  if (root_.empty()) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(mu_);
   std::error_code ec;
   fs::remove_all(paths_for(raft_group_id).dir, ec);

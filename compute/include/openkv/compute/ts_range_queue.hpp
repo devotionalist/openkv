@@ -23,23 +23,34 @@
 
 namespace openkv::compute {
 
-/// 固定容量无锁区间队列（MPMC）。
-/// 槽位协议：end==0 空闲；发布时先写 next 再 release 写 end；退役时 end→0。
+/*
+ * 固定容量无锁区间队列（MPMC）。
+ * 槽位协议：end==0 空闲；发布时先写 next 再 release 写 end；退役时 end→0。
+ */
 template <std::size_t Cap = 64>
 class TsRangeQueue {
   static_assert(Cap >= 2 && (Cap & (Cap - 1)) == 0, "Cap must be power of two >= 2");
 
  public:
-  static constexpr std::size_t capacity = Cap;
+  static constexpr std::size_t capacity = Cap;  // 环容量（须 2 的幂）
 
-  /// 队尾追加 [start, start+count)；满则 false（调用方应加大 Cap / 降预取频率）。
+  /**
+   * 队尾追加 [start, start+count)；满则 false（调用方应加大 Cap / 降预取频率）。
+   * @param start 区间起点（含）
+   * @param count 连续个数
+   * @return 是否入队成功
+   */
   bool push(uint64_t start, uint32_t count) {
-    if (count == 0) return true;
+    if (count == 0) {
+      return true;
+    }
     const uint64_t new_end = start + static_cast<uint64_t>(count);
     for (;;) {
       uint64_t t = tail_.load(std::memory_order_relaxed);
       const uint64_t h = head_.load(std::memory_order_acquire);
-      if (t - h >= Cap) return false;
+      if (t - h >= Cap) {
+        return false;
+      }
       if (!tail_.compare_exchange_weak(t, t + 1, std::memory_order_acq_rel,
                                        std::memory_order_relaxed)) {
         continue;
@@ -56,16 +67,25 @@ class TsRangeQueue {
     }
   }
 
-  /// 从队头取连续 n 个；成功写出 *out_start。碎片不足 n 则丢弃并前进。
+  /**
+   * 从队头取连续 n 个；成功写出 *out_start。碎片不足 n 则丢弃并前进。
+   * @param n 数量
+   * @param out_start 写出取到的区间起点
+   * @return 是否取到
+   */
   bool try_take(uint32_t n, uint64_t* out_start) {
     if (n == 0) {
-      if (out_start) *out_start = 0;
+      if (out_start) {
+        *out_start = 0;
+      }
       return true;
     }
     for (int spins = 0; spins < 1024; ++spins) {
       const uint64_t h = head_.load(std::memory_order_acquire);
       const uint64_t t = tail_.load(std::memory_order_acquire);
-      if (h == t) return false;
+      if (h == t) {
+        return false;
+      }
 
       Slot& s = slots_[h & (Cap - 1)];
       const uint64_t end = s.end.load(std::memory_order_acquire);
@@ -95,22 +115,36 @@ class TsRangeQueue {
       if (s.next.compare_exchange_weak(cur, cur + n, std::memory_order_acq_rel,
                                        std::memory_order_relaxed)) {
         cached_.fetch_sub(n, std::memory_order_relaxed);
-        if (out_start) *out_start = cur;
-        if (cur + n >= end) retire_head(h, s);
+        if (out_start) {
+          *out_start = cur;
+        }
+        if (cur + n >= end) {
+          retire_head(h, s);
+        }
         return true;
       }
     }
     return false;
   }
 
+  /**
+   * 近似剩余可分配个数（cached_ 提示值）。
+   * @return 剩余个数
+   */
   uint64_t remaining() const { return cached_.load(std::memory_order_relaxed); }
 
  private:
+  /* 单个区间槽：next 游标 + end 上界；end==0 表示空闲。 */
   struct alignas(64) Slot {
-    std::atomic<uint64_t> next{0};
-    std::atomic<uint64_t> end{0};
+    std::atomic<uint64_t> next{0};  // 下一可取 ts
+    std::atomic<uint64_t> end{0};   // 区间上界（不含）；0=空
   };
 
+  /**
+   * 尝试把 head 从 h 推进并清空槽。
+   * @param h 期望的当前 head
+   * @param s 对应槽
+   */
   void retire_head(uint64_t h, Slot& s) {
     uint64_t expect = h;
     if (head_.compare_exchange_strong(expect, h + 1, std::memory_order_acq_rel,
@@ -120,10 +154,10 @@ class TsRangeQueue {
     }
   }
 
-  Slot slots_[Cap]{};
-  alignas(64) std::atomic<uint64_t> head_{0};
-  alignas(64) std::atomic<uint64_t> tail_{0};
-  alignas(64) std::atomic<uint64_t> cached_{0};
+  Slot slots_[Cap]{};                            // 环缓冲
+  alignas(64) std::atomic<uint64_t> head_{0};    // 消费下标
+  alignas(64) std::atomic<uint64_t> tail_{0};    // 生产下标
+  alignas(64) std::atomic<uint64_t> cached_{0};  // 剩余个数提示
 };
 
 }  // namespace openkv::compute

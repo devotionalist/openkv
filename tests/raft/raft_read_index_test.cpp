@@ -49,7 +49,9 @@ TEST(RaftReadIndexTest, LeaseReadOnSingleNode) {
   auto node = std::make_unique<RaftNode>(std::move(opts), [](auto&&...) {}, [](auto&&...) {});
   for (int i = 0; i < 40; ++i) {
     node->tick();
-    if (node->is_leader()) break;
+    if (node->is_leader()) {
+      break;
+    }
   }
   ASSERT_TRUE(node->is_leader());
   uint64_t ci = 0;
@@ -65,7 +67,9 @@ TEST(RaftReadIndexTest, SoftStateMetrics) {
   opts.self_id = "n0";
   opts.peers = {{"n0", "1", false}};
   auto node = std::make_unique<RaftNode>(std::move(opts), [](auto&&...) {}, [](auto&&...) {});
-  for (int i = 0; i < 40; ++i) node->tick();
+  for (int i = 0; i < 40; ++i) {
+    node->tick();
+  }
   auto st = node->soft_state();
   EXPECT_TRUE(node->is_leader());
   EXPECT_GE(st.election_count, 1u);

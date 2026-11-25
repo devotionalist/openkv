@@ -61,7 +61,9 @@ TEST(MetaHaTest, SingleReplicaLeaderRegister) {
   MetaNode srv(boot);
   ASSERT_NO_THROW(srv.start());
   for (int i = 0; i < 40; ++i) {
-    if (srv.is_leader()) break;
+    if (srv.is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_TRUE(srv.is_leader());
@@ -119,7 +121,9 @@ TEST(MetaHaTest, FsmSnapSurvivesRestart) {
     MetaNode srv(boot);
     ASSERT_NO_THROW(srv.start());
     for (int i = 0; i < 40; ++i) {
-      if (srv.is_leader()) break;
+      if (srv.is_leader()) {
+        break;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     ASSERT_TRUE(srv.is_leader());
@@ -148,7 +152,9 @@ TEST(MetaHaTest, FsmSnapSurvivesRestart) {
     MetaNode srv2(boot);
     ASSERT_NO_THROW(srv2.start());
     for (int i = 0; i < 40; ++i) {
-      if (srv2.is_leader()) break;
+      if (srv2.is_leader()) {
+        break;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     ASSERT_TRUE(srv2.is_leader());
@@ -173,7 +179,9 @@ TEST(MetaHaTest, RegisterNodeAsyncFinishOnApply) {
   MetaNode srv(boot);
   ASSERT_NO_THROW(srv.start());
   for (int i = 0; i < 40; ++i) {
-    if (srv.is_leader()) break;
+    if (srv.is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_TRUE(srv.is_leader());
@@ -219,7 +227,9 @@ TEST(MetaHaTest, WatchRouteAsyncAndActivatePrecheck) {
   MetaNode srv(boot);
   ASSERT_NO_THROW(srv.start());
   for (int i = 0; i < 40; ++i) {
-    if (srv.is_leader()) break;
+    if (srv.is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_TRUE(srv.is_leader());

@@ -28,35 +28,71 @@ namespace openkv::raft {
 
 class RaftNode;
 
-/// 管「提交水位之后怎么落到状态机、何时砍日志、本地 FSM 快照」。
+/* 管「提交水位之后怎么落到状态机、何时砍日志、本地 FSM 快照」。 */
 class Apply {
  public:
+  /**
+   * 绑定所属 RaftNode。
+   * @param node 宿主节点
+   */
   explicit Apply(RaftNode& node) : n_(node) {}
 
-  /// 把 apply_scheduled_ 推进到 commit_index_（外提 Ready 或同步调 on_apply）。须已持 mu_。
+  /**
+   * 把 apply_scheduled_ 推进到 commit_index_（外提 Ready 或同步调 on_apply）。须已持 mu_。
+   */
   void apply_committed();
-  /// 已 apply 过多时：先存 FSM 快照再砍掉前面的日志。须已持 mu_。
+  /**
+   * 已 apply 过多时：先存 FSM 快照再砍掉前面的日志。须已持 mu_。
+   */
   void maybe_compact();
-  /// 启动：优先读盘上的 FSM 快照；没有则按 last_applied_ 回放日志。
+  /**
+   * 启动：优先读盘上的 FSM 快照；没有则按 last_applied_ 回放日志。
+   */
   void restore_local_fsm_snapshot();
-  /// Apply worker 写完 KV 后回告；抬 last_applied_ 并可能 compact。自己抢 mu_。
+  /**
+   * Apply worker 写完 KV 后回告；抬 last_applied_ 并可能 compact。自己抢 mu_。
+   * @param index 已应用到的日志下标
+   */
   void report_applied(uint64_t index);
-  /// 等到 last_applied_ >= index，或超时；可选 tick 回调推进协议。自己抢 mu_。
+  /**
+   * 等到 last_applied_ >= index，或超时；可选 tick 回调推进协议。自己抢 mu_。
+   * @param index 目标 apply 水位
+   * @param timeout_ms 超时毫秒
+   * @param tick 等待切片间可调用的推进回调；默认空
+   * @return 是否在超时前达到
+   */
   bool wait_applied(uint64_t index, uint32_t timeout_ms, const std::function<void()>& tick = {});
 
-  std::condition_variable applied_cv_;  ///< wait_applied 等 last_applied_ 抬升
+  std::condition_variable applied_cv_;  // wait_applied 等 last_applied_ 抬升
 
  private:
+  /**
+   * 本地 FSM 快照文件路径。
+   * @return 路径串
+   */
   std::string local_fsm_snap_path() const;
+  /**
+   * 持锁把当前 FSM 水位写成快照文件。
+   */
   void save_local_fsm_snapshot_locked();
-  /// 读盘恢复成功返回 true；失败/没有文件返回 false（调用方再走回放）。
+  /**
+   * 读盘恢复成功返回 true；失败/没有文件返回 false（调用方再走回放）。
+   * @return 是否从文件恢复成功
+   */
   bool try_restore_fsm_snap_file();
-  /// 调 on_apply，并用 in_on_apply_ 挡住重入 recover_apply。
+  /**
+   * 调 on_apply，并用 in_on_apply_ 挡住重入 recover_apply。
+   * @param idx 日志下标
+   * @param data 状态机载荷
+   */
   void invoke_on_apply(uint64_t idx, const std::string& data);
-  /// last_applied_ 那条的 term；没有条目时用 snapshot_term。
+  /**
+   * last_applied_ 那条的 term；没有条目时用 snapshot_term。
+   * @return term
+   */
   uint64_t term_at_applied() const;
 
-  RaftNode& n_;
+  RaftNode& n_;  // 宿主节点
 };
 
 }  // namespace openkv::raft

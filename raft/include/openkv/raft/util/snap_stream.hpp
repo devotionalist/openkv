@@ -31,27 +31,40 @@
 
 namespace openkv::raft {
 
-inline constexpr size_t kDefaultSnapChunkBytes = 16 * 1024;
+inline constexpr size_t kDefaultSnapChunkBytes = 16 * 1024;  // 默认出站分片大小（字节）
 
-/// InstallSnapshot blob 前缀：ConfState CSV + KV 快照（Store 出站 / Replication 入站共用）。
+// InstallSnapshot blob 前缀：ConfState CSV + KV 快照（Store 出站 / Replication 入站共用）。
 inline constexpr std::string_view kMagicSnapConf = "SKVC1\n";
 
+/**
+ * 快照字节转 hex（行协议承载）。
+ * @param s 原始字节
+ * @return hex 串
+ */
 inline std::string snap_to_hex(std::string_view s) { return openkv::to_hex(s); }
+/**
+ * hex 解码回快照字节。
+ * @param hex hex 串
+ * @param out 输出缓冲
+ * @return 是否解码成功
+ */
 inline bool snap_from_hex(std::string_view hex, std::string* out) {
   return openkv::from_hex(hex, out);
 }
 
-/// 入站快照分片状态（线程安全）。要求按 offset 顺序追加。
+/* 入站快照分片状态（线程安全）。要求按 offset 顺序追加。 */
 class SnapStreamBuffer {
  public:
+  /* 一次快照流的身份：来源 + 分片 + 快照末 index。 */
   struct Key {
-    std::string from;
-    uint32_t shard{0};
-    uint64_t last_idx{0};
+    std::string from;      // 发送方 peer id
+    uint32_t shard{0};     // 分片 / Region id
+    uint64_t last_idx{0};  // 快照 last_included_index
     bool operator==(const Key& o) const {
       return shard == o.shard && last_idx == o.last_idx && from == o.from;
     }
   };
+  /* Key 的哈希（供 unordered_map）。 */
   struct KeyHash {
     size_t operator()(const Key& k) const {
       return std::hash<std::string>{}(k.from) ^ (static_cast<size_t>(k.shard) << 1) ^
@@ -59,7 +72,21 @@ class SnapStreamBuffer {
     }
   };
 
-  /// done 且收齐则 *complete=true 并交出 *out_data（二进制）。
+  /**
+   * 按序追加一片；done 且收齐则 *complete=true 并交出 *out_data。
+   * @param key 流身份
+   * @param term Leader 任期
+   * @param last_term 快照末 term
+   * @param offset 本片起始偏移
+   * @param total 整包总字节
+   * @param done 是否最后一片
+   * @param chunk 本片数据
+   * @param complete 输出：是否已收齐
+   * @param out_data 收齐时交出完整 blob
+   * @param out_term 收齐时写出 term
+   * @param out_last_term 收齐时写出 last_term
+   * @return false 表示乱序/元数据冲突等，应丢弃该流
+   */
   bool append(const Key& key, uint64_t term, uint64_t last_term, uint64_t offset, uint64_t total,
               bool done, std::string_view chunk, bool* complete, std::string* out_data,
               uint64_t* out_term, uint64_t* out_last_term) {
@@ -75,15 +102,21 @@ class SnapStreamBuffer {
       sessions_.erase(key);
       return false;
     }
-    if (offset != s.filled) return false;
-    if (offset + chunk.size() > s.total) return false;
+    if (offset != s.filled) {
+      return false;
+    }
+    if (offset + chunk.size() > s.total) {
+      return false;
+    }
     s.buf.append(chunk.data(), chunk.size());
     s.filled = offset + chunk.size();
     if (!done) {
       *complete = false;
       return true;
     }
-    if (s.filled != s.total) return false;
+    if (s.filled != s.total) {
+      return false;
+    }
     *complete = true;
     *out_data = std::move(s.buf);
     *out_term = s.term;
@@ -92,22 +125,27 @@ class SnapStreamBuffer {
     return true;
   }
 
+  /**
+   * 丢弃某条未完成流（超时/失败）。
+   * @param key 流身份
+   */
   void drop(const Key& key) {
     std::lock_guard<std::mutex> lock(mu_);
     sessions_.erase(key);
   }
 
  private:
+  /* 单条流的聚合缓冲。 */
   struct Session {
-    uint64_t term{0};
-    uint64_t last_term{0};
-    uint64_t total{0};
-    uint64_t filled{0};
-    bool started{false};
-    std::string buf;
+    uint64_t term{0};       // Leader 任期
+    uint64_t last_term{0};  // 快照末 term
+    uint64_t total{0};      // 期望总字节
+    uint64_t filled{0};     // 已收字节（下一片 offset）
+    bool started{false};    // 是否已见首片
+    std::string buf;        // 已拼接内容
   };
-  std::mutex mu_;
-  std::unordered_map<Key, Session, KeyHash> sessions_;
+  std::mutex mu_;                                       // 保护 sessions_
+  std::unordered_map<Key, Session, KeyHash> sessions_;  // 进行中的流
 };
 
 }  // namespace openkv::raft

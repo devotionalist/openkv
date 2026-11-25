@@ -79,7 +79,9 @@ class DbLogBatch final : public RaftLogBatch {
     }
   }
   void cut_logs(uint64_t raft_group_id, uint64_t from, uint64_t to) override {
-    if (to <= from) return;
+    if (to <= from) {
+      return;
+    }
     ops_.push_back(Op{Op::kCut, raft_group_id, from, {}, to});
   }
   void put_raft_state(uint64_t raft_group_id, const RaftLocalState& state) override {
@@ -120,7 +122,9 @@ DbRaftEngine::~DbRaftEngine() = default;
 void DbRaftEngine::set_sync_mode(SyncMode m) {
   std::lock_guard<std::mutex> lock(mu_);
   sync_ = m;
-  if (!db_) return;
+  if (!db_) {
+    return;
+  }
   db_->wo = rocksdb::WriteOptions();
   db_->wo.sync = (m != SyncMode::kNone);
   db_->wo.disableWAL = false;
@@ -134,7 +138,9 @@ size_t DbRaftEngine::consume(RaftLogBatch& batch, bool sync) {
   // Raft 日志生产落盘点：Store → RaftNode::persist_ready → 此处 WriteBatch。
   // sync=true（persist_sync=data）时 RocksDB WAL fsync；与业务 KV 库分离。
   auto* rb = dynamic_cast<DbLogBatch*>(&batch);
-  if (!rb || rb->empty() || !db_) return 0;
+  if (!rb || rb->empty() || !db_) {
+    return 0;
+  }
 
   rocksdb::WriteBatch wb;
   size_t bytes = 0;
@@ -184,28 +190,42 @@ size_t DbRaftEngine::consume(RaftLogBatch& batch, bool sync) {
 }
 
 std::optional<RaftLocalState> DbRaftEngine::get_raft_state(uint64_t raft_group_id) const {
-  if (!db_) return std::nullopt;
+  if (!db_) {
+    return std::nullopt;
+  }
   std::string val;
   auto st = db_->db->Get(rocksdb::ReadOptions(), state_key(raft_group_id), &val);
-  if (!st.ok()) return std::nullopt;
+  if (!st.ok()) {
+    return std::nullopt;
+  }
   RaftLocalState out;
-  if (!decode_raft_local_state(val, &out)) return std::nullopt;
+  if (!decode_raft_local_state(val, &out)) {
+    return std::nullopt;
+  }
   return out;
 }
 
 std::optional<LogEntry> DbRaftEngine::get_entry(uint64_t raft_group_id, uint64_t index) const {
-  if (!db_) return std::nullopt;
+  if (!db_) {
+    return std::nullopt;
+  }
   std::string val;
   auto st = db_->db->Get(rocksdb::ReadOptions(), log_key(raft_group_id, index), &val);
-  if (!st.ok()) return std::nullopt;
+  if (!st.ok()) {
+    return std::nullopt;
+  }
   LogEntry e;
-  if (!decode_log_entry(val, &e)) return std::nullopt;
+  if (!decode_log_entry(val, &e)) {
+    return std::nullopt;
+  }
   return e;
 }
 
 size_t DbRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin, uint64_t end,
                                       size_t max_size, std::vector<LogEntry>* to) const {
-  if (!to || !db_ || end <= begin) return 0;
+  if (!to || !db_ || end <= begin) {
+    return 0;
+  }
   std::string prefix = log_prefix(raft_group_id);
   std::string start = log_key(raft_group_id, begin);
   std::unique_ptr<rocksdb::Iterator> it(db_->db->NewIterator(rocksdb::ReadOptions()));
@@ -217,14 +237,26 @@ size_t DbRaftEngine::fetch_entries_to(uint64_t raft_group_id, uint64_t begin, ui
       break;
     }
     // parse index from key
-    if (k.size() != 1 + 8 + 8) continue;
+    if (k.size() != 1 + 8 + 8) {
+      continue;
+    }
     uint64_t idx = 0;
-    for (int i = 0; i < 8; ++i) idx = (idx << 8) | static_cast<uint8_t>(k[1 + 8 + i]);
-    if (idx >= end) break;
-    if (idx < begin) continue;
+    for (int i = 0; i < 8; ++i) {
+      idx = (idx << 8) | static_cast<uint8_t>(k[1 + 8 + i]);
+    }
+    if (idx >= end) {
+      break;
+    }
+    if (idx < begin) {
+      continue;
+    }
     LogEntry e;
-    if (!decode_log_entry(it->value().ToString(), &e)) continue;
-    if (bytes + e.data.size() > max_size && n > 0) break;
+    if (!decode_log_entry(it->value().ToString(), &e)) {
+      continue;
+    }
+    if (bytes + e.data.size() > max_size && n > 0) {
+      break;
+    }
     to->push_back(std::move(e));
     bytes += to->back().data.size();
     ++n;
@@ -239,7 +271,9 @@ size_t DbRaftEngine::gc(uint64_t raft_group_id, uint64_t from, uint64_t to) {
 }
 
 void DbRaftEngine::clean(uint64_t raft_group_id) {
-  if (!db_) return;
+  if (!db_) {
+    return;
+  }
   rocksdb::WriteBatch wb;
   wb.Delete(state_key(raft_group_id));
   std::string prefix = log_prefix(raft_group_id);

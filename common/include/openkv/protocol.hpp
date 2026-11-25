@@ -27,7 +27,17 @@ namespace openkv::proto {
 inline constexpr std::string_view kOk = "OK";
 inline constexpr std::string_view kErr = "ERR";
 
+/**
+ * 响应是否以 OK 前缀开头。
+ * @param s 一行响应
+ * @return 是否成功前缀
+ */
 inline bool starts_with_ok(std::string_view s) { return s.rfind(kOk, 0) == 0; }
+/**
+ * 响应是否以 ERR 前缀开头。
+ * @param s 一行响应
+ * @return 是否错误前缀
+ */
 inline bool starts_with_err(std::string_view s) { return s.rfind(kErr, 0) == 0; }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +128,7 @@ inline constexpr std::string_view kOpCancelMigrate = "CANCEL_MIGRATE";
 inline constexpr std::string_view kOpAdvanceSafePoint = "ADVANCE_SAFE_POINT";
 inline constexpr std::string_view kOpBumpRoute = "BUMP_ROUTE";
 
-/// Meta 需鉴权的写操作列表（供 meta_needs_admin）。
+// Meta 需鉴权的写操作列表（供 meta_needs_admin）。
 inline constexpr std::string_view kMetaAdminOps[] = {
     kOpDrainNode,   kOpActivateNode,    kOpOfflineNode,   kOpScaleOut,         kOpStoreDelete,
     kOpJoinNode,    kOpRemoveTombstone, kOpKickNode,      kOpSplitRegion,      kOpMergeRegions,
@@ -140,21 +150,21 @@ inline constexpr const char* kStoreHbSec = "SKV_STORE_HB_SEC";
 inline constexpr const char* kMetaStoreTtlMs = "SKV_META_STORE_TTL_MS";
 inline constexpr const char* kRaftWorkers = "SKV_RAFT_WORKERS";
 inline constexpr const char* kApplyWorkers = "SKV_APPLY_WORKERS";
-/// Ready group commit：攒满 N 条 propose 再 drive_ready（1=关闭计数触发）。
+// Ready group commit：攒满 N 条 propose 再 drive_ready（1=关闭计数触发）。
 inline constexpr const char* kReadyCoalesceN = "SKV_READY_COALESCE_N";
-/// Ready group commit：最长等待毫秒（0=仅按条数）。
+// Ready group commit：最长等待毫秒（0=仅按条数）。
 inline constexpr const char* kReadyCoalesceMs = "SKV_READY_COALESCE_MS";
-/// Raft Ready 异步 persist IO 线程数（默认 2；0=raft worker 同步落盘）。
+// Raft Ready 异步 persist IO 线程数（默认 2；0=raft worker 同步落盘）。
 inline constexpr const char* kPersistWorkers = "SKV_PERSIST_WORKERS";
-/// gRPC 优雅关机宽限（毫秒）：Shutdown(deadline) 后拒新请求，排空在途；超时则取消剩余。
+// gRPC 优雅关机宽限（毫秒）：Shutdown(deadline) 后拒新请求，排空在途；超时则取消剩余。
 inline constexpr const char* kGrpcShutdownMs = "SKV_GRPC_SHUTDOWN_MS";
-/// 出站 AE 丢包百分比 0–100（演练；GrpcRaftTransport 启动时读）。
+// 出站 AE 丢包百分比 0–100（演练；GrpcRaftTransport 启动时读）。
 inline constexpr const char* kFaultDropAePct = "SKV_FAULT_DROP_AE_PCT";
-/// 出站 AE 额外延迟毫秒（演练）。
+// 出站 AE 额外延迟毫秒（演练）。
 inline constexpr const char* kFaultDelayAeMs = "SKV_FAULT_DELAY_AE_MS";
-/// 出站全部 Raft RPC 丢包百分比 0–100（演练；含 Vote/AE/Snap）。
+// 出站全部 Raft RPC 丢包百分比 0–100（演练；含 Vote/AE/Snap）。
 inline constexpr const char* kFaultDropRaftPct = "SKV_FAULT_DROP_RAFT_PCT";
-/// 出站全部 Raft RPC 额外延迟毫秒（演练）。
+// 出站全部 Raft RPC 额外延迟毫秒（演练）。
 inline constexpr const char* kFaultDelayRaftMs = "SKV_FAULT_DELAY_RAFT_MS";
 }  // namespace env
 

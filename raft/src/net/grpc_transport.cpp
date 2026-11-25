@@ -65,13 +65,17 @@ std::vector<std::string> split_pipe(const std::string& s) {
 }
 
 int priority_of(const std::string& type, const std::string& payload) {
-  if (type == "RequestPreVote" || type == "RequestVote") return 30;
+  if (type == "RequestPreVote" || type == "RequestVote") {
+    return 30;
+  }
   if (type == "AppendEntries") {
     // 空心跳提高优先级，避免被复制/快照堵住导致 check_quorum 误判。
     int bars = 0;
     size_t i = 0;
     for (; i < payload.size() && bars < 4; ++i) {
-      if (payload[i] == '|') ++bars;
+      if (payload[i] == '|') {
+        ++bars;
+      }
     }
     if (bars == 4 && i < payload.size() && payload[i] == '0' &&
         (i + 1 >= payload.size() || payload[i + 1] == '|')) {
@@ -79,7 +83,9 @@ int priority_of(const std::string& type, const std::string& payload) {
     }
     return 20;
   }
-  if (type == "InstallSnapshot") return 10;
+  if (type == "InstallSnapshot") {
+    return 10;
+  }
   return 0;
 }
 
@@ -102,7 +108,9 @@ struct GrpcRaftTransport::Impl {
 
   struct JobLess {
     bool operator()(const Job& a, const Job& b) const {
-      if (a.priority != b.priority) return a.priority < b.priority;
+      if (a.priority != b.priority) {
+        return a.priority < b.priority;
+      }
       return a.seq > b.seq;
     }
   };
@@ -159,8 +167,12 @@ struct GrpcRaftTransport::Impl {
         std::unique_lock<std::mutex> lk(qmu_);
         qcv_.wait_for(lk, std::chrono::milliseconds(50),
                       [&] { return stop.load() || !q_.empty(); });
-        if (stop.load() && q_.empty()) break;
-        if (q_.empty()) continue;
+        if (stop.load() && q_.empty()) {
+          break;
+        }
+        if (q_.empty()) {
+          continue;
+        }
         job = q_.top();
         q_.pop();
       }
@@ -198,11 +210,15 @@ struct GrpcRaftTransport::Impl {
       if (!ok) {
         SKV_WARN << "InstallSnapshot write fail to=" << job_.peer_id << " addr=" << addr_
                  << " offset=" << offset_;
-        if (!last_was_done_) StartWritesDone();
+        if (!last_was_done_) {
+          StartWritesDone();
+        }
         return;
       }
       offset_ += last_n_;
-      if (last_was_done_) return;  // StartWriteLast 已隐含 WritesDone
+      if (last_was_done_) {
+        return;
+      }
       write_next();
     }
 
@@ -224,7 +240,9 @@ struct GrpcRaftTransport::Impl {
       chunk_.set_last_included_index(last_idx_);
       chunk_.set_last_included_term(last_term_);
       chunk_.set_offset(offset_);
-      if (n > 0) chunk_.set_data(bin_.data() + offset_, n);
+      if (n > 0) {
+        chunk_.set_data(bin_.data() + offset_, n);
+      }
       chunk_.set_done(done);
       last_n_ = n;
       last_was_done_ = done;
@@ -259,11 +277,15 @@ struct GrpcRaftTransport::Impl {
     {
       std::lock_guard<std::mutex> lock(mu_);
       auto it = nodes_.find(job.shard);
-      if (it == nodes_.end() || !it->second) return;
+      if (it == nodes_.end() || !it->second) {
+        return;
+      }
       node = it->second;
       auto pit = peers_.find(job.peer_id);
       if (pit == peers_.end() || pit->second.empty()) {
-        if (needs_fail_callback(job.type)) node->on_rpc_transport_fail(job.peer_id);
+        if (needs_fail_callback(job.type)) {
+          node->on_rpc_transport_fail(job.peer_id);
+        }
         return;
       }
       addr = pit->second;
@@ -278,14 +300,18 @@ struct GrpcRaftTransport::Impl {
       std::uniform_int_distribution<int> roll(0, 99);
       if (fault_.should_drop(job.type, roll(rng))) {
         dropped_.fetch_add(1, std::memory_order_relaxed);
-        if (needs_fail_callback(job.type)) node->on_rpc_transport_fail(job.peer_id);
+        if (needs_fail_callback(job.type)) {
+          node->on_rpc_transport_fail(job.peer_id);
+        }
         return;
       }
     }
 
     auto stub = stub_for(addr);
     if (!stub) {
-      if (needs_fail_callback(job.type)) node->on_rpc_transport_fail(job.peer_id);
+      if (needs_fail_callback(job.type)) {
+        node->on_rpc_transport_fail(job.peer_id);
+      }
       return;
     }
 
@@ -293,7 +319,9 @@ struct GrpcRaftTransport::Impl {
       // 【真正网络发送】worker 里对 peer stub 发起 gRPC（Vote / AE / Snapshot 同理）。
       if (job.type == "RequestVote" || job.type == "RequestPreVote") {
         auto parts = split_pipe(job.payload);
-        if (parts.size() < 3) return;
+        if (parts.size() < 3) {
+          return;
+        }
         auto ctx = std::make_shared<grpc::ClientContext>();
         ctx->set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
         auto req = std::make_shared<::storage::v1::RequestVoteRequest>();
@@ -318,7 +346,9 @@ struct GrpcRaftTransport::Impl {
           stub->async()->RequestVote(ctx.get(), req.get(), resp.get(), std::move(cb));
         }
         auto st = fut.get();
-        if (!st.ok()) return;
+        if (!st.ok()) {
+          return;
+        }
         if (pre) {
           node->on_request_pre_vote_reply(job.peer_id, resp->term(), resp->vote_granted());
         } else {
@@ -387,7 +417,9 @@ struct GrpcRaftTransport::Impl {
         const uint64_t last_idx = std::stoull(parts[1]);
         const uint64_t last_term = std::stoull(parts[2]);
         std::string bin;
-        if (!openkv::from_hex(parts[3], &bin)) bin = parts[3];
+        if (!openkv::from_hex(parts[3], &bin)) {
+          bin = parts[3];
+        }
         // reactor 须活到 OnDone；用 unique_ptr 在 wait 后销毁。
         auto reactor = std::make_unique<InstallSnapshotReactor>(
             stub, job, addr, send_term, last_idx, last_term, std::move(bin), snap_chunk_bytes_);
@@ -420,7 +452,9 @@ struct GrpcRaftTransport::Impl {
       }
     } catch (const std::exception& e) {
       SKV_WARN << "grpc raft dispatch err: " << e.what();
-      if (needs_fail_callback(job.type)) node->on_rpc_transport_fail(job.peer_id);
+      if (needs_fail_callback(job.type)) {
+        node->on_rpc_transport_fail(job.peer_id);
+      }
     }
   }
 };
@@ -481,7 +515,9 @@ TransportSend GrpcRaftTransport::bind(uint32_t shard_id) {
     {
       std::lock_guard<std::mutex> lock(impl_->mu_);
       auto it = impl_->self_ids_.find(shard_id);
-      if (it != impl_->self_ids_.end()) self = it->second;
+      if (it != impl_->self_ids_.end()) {
+        self = it->second;
+      }
     }
     Impl::Job job;
     job.shard = shard_id;
@@ -495,7 +531,9 @@ TransportSend GrpcRaftTransport::bind(uint32_t shard_id) {
 }
 
 void GrpcRaftTransport::start() {
-  if (!impl_->stop.exchange(false)) return;
+  if (!impl_->stop.exchange(false)) {
+    return;
+  }
   impl_->fault_ = RaftOutboundFault::from_env();
   constexpr int kWorkers = 4;
   for (int i = 0; i < kWorkers; ++i) {
@@ -511,10 +549,14 @@ void GrpcRaftTransport::start() {
 }
 
 void GrpcRaftTransport::stop() {
-  if (impl_->stop.exchange(true)) return;
+  if (impl_->stop.exchange(true)) {
+    return;
+  }
   impl_->qcv_.notify_all();
   for (auto& t : impl_->workers_) {
-    if (t.joinable()) t.join();
+    if (t.joinable()) {
+      t.join();
+    }
   }
   impl_->workers_.clear();
 }
@@ -529,13 +571,17 @@ void GrpcRaftTransport::set_snap_chunk_bytes(size_t n) { impl_->snap_chunk_bytes
 
 uint64_t GrpcRaftTransport::out_raft_total() const {
   uint64_t s = 0;
-  for (const auto& kv : out_raft_.snapshot()) s += kv.second;
+  for (const auto& kv : out_raft_.snapshot()) {
+    s += kv.second;
+  }
   return s;
 }
 
 uint64_t GrpcRaftTransport::out_sync_total() const {
   uint64_t s = 0;
-  for (const auto& kv : out_sync_.snapshot()) s += kv.second;
+  for (const auto& kv : out_sync_.snapshot()) {
+    s += kv.second;
+  }
   return s;
 }
 

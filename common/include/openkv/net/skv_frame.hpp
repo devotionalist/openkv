@@ -25,21 +25,34 @@
 
 namespace openkv::net {
 
-inline constexpr char kFrameMagic[4] = {'S', 'K', 'V', '1'};
+inline constexpr char kFrameMagic[4] = {'S', 'K', 'V', '1'};  // 帧魔数
 
+/* 帧类型：Raft 消息与通用响应。 */
 enum class FrameType : uint8_t {
-  kVote = 1,
-  kPreVote = 2,
-  kAppendEntries = 3,
-  kInstallSnapshot = 4,
-  kSnapChunk = 5,
-  kResp = 10,
+  kVote = 1,             // RequestVote
+  kPreVote = 2,          // PreVote
+  kAppendEntries = 3,    // AppendEntries
+  kInstallSnapshot = 4,  // 整包快照
+  kSnapChunk = 5,        // 分片快照
+  kResp = 10,            // 通用应答
 };
 
+/**
+ * 缓冲是否以 SKV1 magic 开头（尚不足以判定完整帧）。
+ * @param buf 待检字节
+ * @return 是否像二进制帧
+ */
 inline bool is_binary_frame(std::string_view buf) {
   return buf.size() >= 4 && buf[0] == 'S' && buf[1] == 'K' && buf[2] == 'V' && buf[3] == '1';
 }
 
+/**
+ * 编码一帧（小端 shard / len）。
+ * @param type 帧类型
+ * @param shard Region / 分片 id（Meta 单组可为 0）
+ * @param payload 载荷
+ * @return 完整帧字节
+ */
 inline std::string encode_frame(FrameType type, uint32_t shard, std::string_view payload) {
   std::string out;
   out.resize(4 + 1 + 4 + 4 + payload.size());
@@ -54,21 +67,32 @@ inline std::string encode_frame(FrameType type, uint32_t shard, std::string_view
   return out;
 }
 
+/* 解析后的帧头 + payload 视图（指向原缓冲，勿悬空）。 */
 struct DecodedFrame {
-  FrameType type{FrameType::kResp};
-  uint32_t shard{0};
-  std::string_view payload;
+  FrameType type{FrameType::kResp};  // 帧类型
+  uint32_t shard{0};                 // Region / 分片 id
+  std::string_view payload;          // 载荷视图
 };
 
-/// 需要至少 13 字节头；返回 false 表示不完整或非法。
+/**
+ * 解析帧头与完整 payload；需要至少 13 字节头；不完整或非法返回 false。
+ * @param buf 待解析字节缓冲
+ * @param out 写出解析结果；不可空
+ * @param total_size 写出完整帧字节数（头+payload）
+ * @return 是否已拿到完整合法帧
+ */
 inline bool decode_frame_header(std::string_view buf, DecodedFrame* out, size_t* total_size) {
-  if (buf.size() < 13 || !is_binary_frame(buf)) return false;
+  if (buf.size() < 13 || !is_binary_frame(buf)) {
+    return false;
+  }
   out->type = static_cast<FrameType>(static_cast<uint8_t>(buf[4]));
   std::memcpy(&out->shard, buf.data() + 5, 4);
   uint32_t len = 0;
   std::memcpy(&len, buf.data() + 9, 4);
   *total_size = 13 + len;
-  if (buf.size() < *total_size) return false;
+  if (buf.size() < *total_size) {
+    return false;
+  }
   out->payload = buf.substr(13, len);
   return true;
 }

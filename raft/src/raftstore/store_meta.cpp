@@ -32,7 +32,9 @@ void StoreMeta::erase(uint32_t region_id) {
 std::optional<RegionLocalState> StoreMeta::get(uint32_t region_id) const {
   std::lock_guard<std::mutex> lk(mu_);
   auto it = regions_.find(region_id);
-  if (it == regions_.end()) return std::nullopt;
+  if (it == regions_.end()) {
+    return std::nullopt;
+  }
   return it->second;
 }
 
@@ -59,7 +61,9 @@ std::vector<uint32_t> StoreMeta::all_regions() const {
   std::vector<uint32_t> out;
   out.reserve(regions_.size());
   for (const auto& [id, st] : regions_) {
-    if (!st.destroyed) out.push_back(id);
+    if (!st.destroyed) {
+      out.push_back(id);
+    }
   }
   return out;
 }
@@ -68,7 +72,9 @@ std::vector<uint32_t> StoreMeta::leader_regions(const std::string& self_id) cons
   std::lock_guard<std::mutex> lk(mu_);
   std::vector<uint32_t> out;
   for (const auto& [id, st] : regions_) {
-    if (!st.destroyed && st.leader_id == self_id) out.push_back(id);
+    if (!st.destroyed && st.leader_id == self_id) {
+      out.push_back(id);
+    }
   }
   return out;
 }

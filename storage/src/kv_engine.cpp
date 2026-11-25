@@ -72,11 +72,15 @@ std::string encode_kv_payload(uint64_t revision, int64_t expire_at_ms, std::stri
 }
 
 bool decode_kv_payload(std::string_view payload, KvRecord* out) {
-  if (!out || payload.size() < sizeof(uint64_t)) return false;
+  if (!out || payload.size() < sizeof(uint64_t)) {
+    return false;
+  }
   uint64_t wire_rev = 0;
   std::memcpy(&wire_rev, payload.data(), sizeof(wire_rev));
   if (wire_rev & kKvRevExpireFlag) {
-    if (payload.size() < sizeof(uint64_t) + sizeof(int64_t)) return false;
+    if (payload.size() < sizeof(uint64_t) + sizeof(int64_t)) {
+      return false;
+    }
     out->revision = wire_rev & ~kKvRevExpireFlag;
     std::memcpy(&out->expire_at_ms, payload.data() + sizeof(uint64_t), sizeof(out->expire_at_ms));
     out->value.assign(payload.data() + sizeof(uint64_t) + sizeof(int64_t),
@@ -90,8 +94,12 @@ bool decode_kv_payload(std::string_view payload, KvRecord* out) {
 }
 
 bool kv_record_expired(const KvRecord& rec, int64_t now_ms) {
-  if (rec.expire_at_ms <= 0) return false;
-  if (now_ms <= 0) now_ms = wall_ms_now_local();
+  if (rec.expire_at_ms <= 0) {
+    return false;
+  }
+  if (now_ms <= 0) {
+    now_ms = wall_ms_now_local();
+  }
   return now_ms >= rec.expire_at_ms;
 }
 
@@ -199,12 +207,16 @@ void KvEngine::migrate_legacy_default_cf() {
   for (it->SeekToFirst(); it->Valid(); it->Next()) {
     const auto key = it->key().ToString();
     const CfId id = classify_key(key);
-    if (id == CfId::kDefault) continue;
+    if (id == CfId::kDefault) {
+      continue;
+    }
     put_batch.Put(rocks_->cf(id), key, it->value());
     del_batch.Delete(rocks_->default_cf, key);
     ++n;
   }
-  if (n == 0) return;
+  if (n == 0) {
+    return;
+  }
   auto st = rocks_->db->Write(rocks_->wo, &put_batch);
   if (!st.ok()) {
     SKV_WARN << "cf migrate put failed: " << st.ToString();
@@ -219,7 +231,9 @@ void KvEngine::migrate_legacy_default_cf() {
 }
 
 std::string KvEngine::db_path() const {
-  if (store_level_) return data_dir_;
+  if (store_level_) {
+    return data_dir_;
+  }
   return (std::filesystem::path(data_dir_) / ("shard_" + std::to_string(shard_id_))).string();
 }
 
@@ -279,9 +293,13 @@ KvEngine::KvEngine(std::string data_dir, uint32_t shard_id, raft::SyncMode sync,
 }
 
 KvEngine::~KvEngine() {
-  if (!rocks_ || !rocks_->db) return;
+  if (!rocks_ || !rocks_->db) {
+    return;
+  }
   for (auto* h : rocks_->all) {
-    if (h) rocks_->db->DestroyColumnFamilyHandle(h);
+    if (h) {
+      rocks_->db->DestroyColumnFamilyHandle(h);
+    }
   }
   rocks_->all.clear();
   rocks_->default_cf = rocks_->lock_cf = rocks_->data_cf = rocks_->write_cf = nullptr;
@@ -299,7 +317,9 @@ bool KvEngine::write_batch(const std::vector<std::tuple<std::string, std::string
                            const std::vector<std::string>& dels) {
   std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>> ext;
   ext.reserve(puts.size());
-  for (const auto& [k, v, rev] : puts) ext.emplace_back(k, v, rev, 0);
+  for (const auto& [k, v, rev] : puts) {
+    ext.emplace_back(k, v, rev, 0);
+  }
   return write_batch(ext, dels);
 }
 
@@ -313,7 +333,9 @@ bool KvEngine::write_batch(
   for (const auto& k : dels) {
     const CfId id = classify_key(k);
     batch.Delete(rocks_->cf(id), k);
-    if (id != CfId::kDefault) batch.Delete(rocks_->default_cf, k);
+    if (id != CfId::kDefault) {
+      batch.Delete(rocks_->default_cf, k);
+    }
   }
   return rocks_->db->Write(rocks_->wo, &batch).ok();
 }
@@ -336,20 +358,30 @@ std::optional<KvRecord> KvEngine::get(std::string_view key, bool hide_expired) c
   if (!st.ok() && id != CfId::kDefault) {
     st = rocks_->db->Get(rocksdb::ReadOptions(), rocks_->default_cf, k, &payload);
   }
-  if (!st.ok()) return std::nullopt;
+  if (!st.ok()) {
+    return std::nullopt;
+  }
   KvRecord r;
-  if (!decode_kv_payload(payload, &r)) return std::nullopt;
-  if (hide_expired && kv_record_expired(r)) return std::nullopt;
+  if (!decode_kv_payload(payload, &r)) {
+    return std::nullopt;
+  }
+  if (hide_expired && kv_record_expired(r)) {
+    return std::nullopt;
+  }
   return r;
 }
 
 void KvEngine::compact_for_ttl() {
-  if (!rocks_ || !rocks_->db) return;
+  if (!rocks_ || !rocks_->db) {
+    return;
+  }
   // RocksDB 本仓库以 -fno-rtti 构建，无法挂 CompactionFilter 子类；
   // TTL 回收：扫描删除过期项，再 CompactRange 回收空间。
   std::vector<std::string> doomed;
   for_each([&](std::string_view key, const KvRecord& rec) {
-    if (kv_record_expired(rec)) doomed.emplace_back(key);
+    if (kv_record_expired(rec)) {
+      doomed.emplace_back(key);
+    }
     return true;
   });
   for (const auto& k : doomed) {
@@ -372,10 +404,16 @@ void KvEngine::scan_prefix(
   const std::string pref(prefix);
   for (it->Seek(pref); it->Valid(); it->Next()) {
     const auto key = it->key().ToString();
-    if (key.compare(0, pref.size(), pref) != 0) break;
+    if (key.compare(0, pref.size(), pref) != 0) {
+      break;
+    }
     KvRecord r;
-    if (!decode_kv_payload(it->value().ToString(), &r)) continue;
-    if (!fn(key, r)) return;
+    if (!decode_kv_payload(it->value().ToString(), &r)) {
+      continue;
+    }
+    if (!fn(key, r)) {
+      return;
+    }
   }
   // 兼容：prefix 指向 lock/data/write 时也扫一遍 default 旧数据
   if (id != CfId::kDefault) {
@@ -383,11 +421,19 @@ void KvEngine::scan_prefix(
         rocks_->db->NewIterator(rocksdb::ReadOptions(), rocks_->default_cf));
     for (it2->Seek(pref); it2->Valid(); it2->Next()) {
       const auto key = it2->key().ToString();
-      if (key.compare(0, pref.size(), pref) != 0) break;
-      if (classify_key(key) != id) continue;
+      if (key.compare(0, pref.size(), pref) != 0) {
+        break;
+      }
+      if (classify_key(key) != id) {
+        continue;
+      }
       KvRecord r;
-      if (!decode_kv_payload(it2->value().ToString(), &r)) continue;
-      if (!fn(key, r)) return;
+      if (!decode_kv_payload(it2->value().ToString(), &r)) {
+        continue;
+      }
+      if (!fn(key, r)) {
+        return;
+      }
     }
   }
 }
@@ -398,8 +444,12 @@ void KvEngine::for_each(
     std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
       KvRecord r;
-      if (!decode_kv_payload(it->value().ToString(), &r)) continue;
-      if (!fn(it->key().ToString(), r)) return;
+      if (!decode_kv_payload(it->value().ToString(), &r)) {
+        continue;
+      }
+      if (!fn(it->key().ToString(), r)) {
+        return;
+      }
     }
   }
 }
@@ -426,9 +476,13 @@ std::string KvEngine::create_snapshot(const openkv::KeyRange& range) const {
     }
     for (; it->Valid(); it->Next()) {
       const auto key = it->key().ToString();
-      if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
+      if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+        continue;
+      }
       if (filter && !range.contains(key)) {
-        if (!range.end_key.empty() && key >= range.end_key) break;
+        if (!range.end_key.empty() && key >= range.end_key) {
+          break;
+        }
         continue;
       }
       const auto val = it->value().ToString();
@@ -454,14 +508,22 @@ size_t KvEngine::delete_range(const openkv::KeyRange& range) {
     }
     for (; it->Valid(); it->Next()) {
       const auto key = it->key().ToString();
-      if (!range.end_key.empty() && key >= range.end_key) break;
-      if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
-      if (!range.contains(key)) continue;
+      if (!range.end_key.empty() && key >= range.end_key) {
+        break;
+      }
+      if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+        continue;
+      }
+      if (!range.contains(key)) {
+        continue;
+      }
       batch.Delete(cf, key);
       ++n;
     }
   }
-  if (n == 0) return 0;
+  if (n == 0) {
+    return 0;
+  }
   auto st = rocks_->db->Write(rocks_->wo, &batch);
   if (!st.ok()) {
     SKV_WARN << "delete_range failed: " << st.ToString();
@@ -488,9 +550,15 @@ void KvEngine::apply_snapshot(std::string_view data, const openkv::KeyRange& ran
       }
       for (; it->Valid(); it->Next()) {
         const auto key = it->key().ToString();
-        if (!range.end_key.empty() && key >= range.end_key) break;
-        if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
-        if (!range.contains(key)) continue;
+        if (!range.end_key.empty() && key >= range.end_key) {
+          break;
+        }
+        if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+          continue;
+        }
+        if (!range.contains(key)) {
+          continue;
+        }
         batch.Delete(cf, it->key());
       }
     }
@@ -588,11 +656,15 @@ bool KvEngine::restore_from_checkpoint(std::string_view src_dir) {
   rocksdb::WriteBatch clear;
   for (auto* cf : rocks_->all) {
     std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
-    for (it->SeekToFirst(); it->Valid(); it->Next()) clear.Delete(cf, it->key());
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+      clear.Delete(cf, it->key());
+    }
   }
   st = rocks_->db->Write(rocks_->wo, &clear);
   if (!st.ok()) {
-    for (auto* h : handles) src->DestroyColumnFamilyHandle(h);
+    for (auto* h : handles) {
+      src->DestroyColumnFamilyHandle(h);
+    }
     SKV_WARN << "restore clear: " << st.ToString();
     return false;
   }
@@ -608,12 +680,16 @@ bool KvEngine::restore_from_checkpoint(std::string_view src_dir) {
     }
   };
   if (handles.size() == 4) {
-    for (auto* h : handles) copy_cf(h);
+    for (auto* h : handles) {
+      copy_cf(h);
+    }
   } else {
     copy_cf(src->DefaultColumnFamily());
   }
   st = rocks_->db->Write(rocks_->wo, &put);
-  for (auto* h : handles) src->DestroyColumnFamilyHandle(h);
+  for (auto* h : handles) {
+    src->DestroyColumnFamilyHandle(h);
+  }
   if (!st.ok()) {
     SKV_WARN << "restore put: " << st.ToString();
     return false;
@@ -626,7 +702,9 @@ namespace {
 constexpr std::string_view kMetaPrefix = "\xff\xffskv/";
 
 std::string user_of_phys(std::string_view phys) {
-  if (phys.compare(0, kMetaPrefix.size(), kMetaPrefix) == 0) return {};
+  if (phys.compare(0, kMetaPrefix.size(), kMetaPrefix) == 0) {
+    return {};
+  }
   const auto pos = phys.find('\0');
   return std::string(pos == std::string_view::npos ? phys : phys.substr(0, pos));
 }
@@ -634,7 +712,7 @@ std::string user_of_phys(std::string_view phys) {
 
 namespace {
 
-/// 用户 KeyRange → RocksDB Range（物理前缀；end 空用极大 sentinel）。
+// 用户 KeyRange → RocksDB Range（物理前缀；end 空用极大 sentinel）。
 rocksdb::Range rocks_range_for(const openkv::KeyRange& range, std::string* start_hold,
                                std::string* limit_hold) {
   *start_hold = range.start_key;
@@ -653,7 +731,9 @@ uint64_t approx_sizes_sum(rocksdb::DB* db, const std::vector<rocksdb::ColumnFami
   const auto kIncl = rocksdb::DB::SizeApproximationFlags::INCLUDE_FILES |
                      rocksdb::DB::SizeApproximationFlags::INCLUDE_MEMTABLES;
   for (auto* cf : cfs) {
-    if (!cf) continue;
+    if (!cf) {
+      continue;
+    }
     uint64_t sz = 0;
     db->GetApproximateSizes(cf, &r, 1, &sz, kIncl);
     total += sz;
@@ -675,7 +755,9 @@ size_t KvEngine::approx_key_count(const openkv::KeyRange& range) const {
     users.reserve(std::min(cap, size_t{4096}));
     for_each([&](std::string_view phys, const KvRecord&) {
       auto u = user_of_phys(phys);
-      if (u.empty() || !range.contains(u)) return true;
+      if (u.empty() || !range.contains(u)) {
+        return true;
+      }
       users.push_back(std::move(u));
       return users.size() < cap;
     });
@@ -689,11 +771,17 @@ size_t KvEngine::approx_key_count(const openkv::KeyRange& range) const {
   uint64_t est_keys = 0;
   rocks_->db->GetIntProperty(rocks_->data_cf ? rocks_->data_cf : rocks_->default_cf,
                              "rocksdb.estimate-num-keys", &est_keys);
-  if (est_keys == 0) rocks_->db->GetIntProperty("rocksdb.estimate-num-keys", &est_keys);
-  if (est_keys < kExactCap) return exact_unique(kExactCap);
+  if (est_keys == 0) {
+    rocks_->db->GetIntProperty("rocksdb.estimate-num-keys", &est_keys);
+  }
+  if (est_keys < kExactCap) {
+    return exact_unique(kExactCap);
+  }
 
   const bool full = range.start_key.empty() && range.end_key.empty();
-  if (full) return static_cast<size_t>(est_keys);
+  if (full) {
+    return static_cast<size_t>(est_keys);
+  }
 
   std::string start_hold, limit_hold, full_start, full_limit;
   const auto rr = rocks_range_for(range, &start_hold, &limit_hold);
@@ -701,7 +789,9 @@ size_t KvEngine::approx_key_count(const openkv::KeyRange& range) const {
   const auto wr = rocks_range_for(whole, &full_start, &full_limit);
   const uint64_t range_sz = approx_sizes_sum(rocks_->db.get(), rocks_->all, rr);
   const uint64_t whole_sz = approx_sizes_sum(rocks_->db.get(), rocks_->all, wr);
-  if (whole_sz == 0) return exact_unique(4096);
+  if (whole_sz == 0) {
+    return exact_unique(4096);
+  }
   return static_cast<size_t>((est_keys * range_sz) / whole_sz);
 }
 
@@ -713,23 +803,33 @@ std::string KvEngine::pick_split_key(const openkv::KeyRange& range) const {
   size_t seen = 0;
   for_each([&](std::string_view phys, const KvRecord&) {
     auto u = user_of_phys(phys);
-    if (u.empty() || !range.contains(u)) return true;
+    if (u.empty() || !range.contains(u)) {
+      return true;
+    }
     ++seen;
     // 蓄水池：均匀保留最多 kMaxSample 个
     if (users.size() < kMaxSample) {
       users.push_back(std::move(u));
     } else {
       const size_t j = seen == 0 ? 0 : (seen - 1) % kMaxSample;
-      if (j < users.size()) users[j] = std::move(u);
+      if (j < users.size()) {
+        users[j] = std::move(u);
+      }
     }
     return true;
   });
-  if (users.size() < 2) return {};
+  if (users.size() < 2) {
+    return {};
+  }
   std::sort(users.begin(), users.end());
   users.erase(std::unique(users.begin(), users.end()), users.end());
-  if (users.size() < 2) return {};
+  if (users.size() < 2) {
+    return {};
+  }
   const std::string& mid = users[users.size() / 2];
-  if (!range.can_split_at(mid)) return {};
+  if (!range.can_split_at(mid)) {
+    return {};
+  }
   return mid;
 }
 
@@ -743,7 +843,9 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
       std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
       for (it->Seek(sk); it->Valid(); it->Next()) {
         const auto key = it->key().ToString();
-        if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
+        if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+          continue;
+        }
         ++n;
       }
     }
@@ -756,17 +858,23 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
     std::unique_ptr<rocksdb::Iterator> it(rocks_->db->NewIterator(rocksdb::ReadOptions(), cf));
     for (it->Seek(sk); it->Valid(); it->Next()) {
       const auto key = it->key().ToString();
-      if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
+      if (key.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+        continue;
+      }
       const auto val = it->value().ToString();
       KvRecord r;
-      if (!decode_kv_payload(val, &r)) continue;
+      if (!decode_kv_payload(val, &r)) {
+        continue;
+      }
       const CfId id = classify_key(key);
       put_batch.Put(dst.rocks_->cf(id), key, val);
       del_batch.Delete(cf, key);
       ++moved;
     }
   }
-  if (moved == 0) return 0;
+  if (moved == 0) {
+    return 0;
+  }
   auto st = dst.rocks_->db->Write(dst.rocks_->wo, &put_batch);
   if (!st.ok()) {
     SKV_WARN << "migrate_ge dst WriteBatch failed: " << st.ToString();
@@ -789,7 +897,9 @@ size_t KvEngine::migrate_all(KvEngine& dst) { return migrate_ge(dst, std::string
 // =============================================================================
 
 std::string KvEngine::db_path() const {
-  if (store_level_) return data_dir_;
+  if (store_level_) {
+    return data_dir_;
+  }
   return (std::filesystem::path(data_dir_) / ("shard_" + std::to_string(shard_id_))).string();
 }
 
@@ -824,7 +934,9 @@ bool KvEngine::write_batch(const std::vector<std::tuple<std::string, std::string
                            const std::vector<std::string>& dels) {
   std::vector<std::tuple<std::string, std::string, uint64_t, int64_t>> ext;
   ext.reserve(puts.size());
-  for (const auto& [k, v, rev] : puts) ext.emplace_back(k, v, rev, 0);
+  for (const auto& [k, v, rev] : puts) {
+    ext.emplace_back(k, v, rev, 0);
+  }
   return write_batch(ext, dels);
 }
 
@@ -835,7 +947,9 @@ bool KvEngine::write_batch(
   for (const auto& [k, v, rev, exp] : puts) {
     mem_[k] = KvRecord{v, rev, exp};
   }
-  for (const auto& k : dels) mem_.erase(k);
+  for (const auto& k : dels) {
+    mem_.erase(k);
+  }
   return true;
 }
 
@@ -856,7 +970,9 @@ std::optional<KvRecord> KvEngine::get(std::string_view key, bool hide_expired) c
   if (it == mem_.end()) {
     return std::nullopt;
   }
-  if (hide_expired && kv_record_expired(it->second)) return std::nullopt;
+  if (hide_expired && kv_record_expired(it->second)) {
+    return std::nullopt;
+  }
   return it->second;
 }
 
@@ -886,7 +1002,9 @@ void KvEngine::scan_prefix(
   std::sort(items.begin(), items.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
   for (const auto& [k, v] : items) {
-    if (!fn(k, v)) break;
+    if (!fn(k, v)) {
+      break;
+    }
   }
 }
 
@@ -897,7 +1015,9 @@ void KvEngine::for_each(
   std::sort(items.begin(), items.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
   for (const auto& [k, v] : items) {
-    if (!fn(k, v)) break;
+    if (!fn(k, v)) {
+      break;
+    }
   }
 }
 
@@ -916,7 +1036,9 @@ bool KvEngine::create_checkpoint(std::string_view dest_dir) const {
 bool KvEngine::restore_from_checkpoint(std::string_view src_dir) {
   try {
     std::ifstream in(std::filesystem::path(src_dir) / "mem.snapshot", std::ios::binary);
-    if (!in) return false;
+    if (!in) {
+      return false;
+    }
     std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     apply_snapshot(data);
     return true;
@@ -938,8 +1060,12 @@ std::string KvEngine::create_snapshot(const openkv::KeyRange& range) const {
   const std::string meta_prefix = "\xff\xffskv/";
   std::ostringstream oss;
   for (const auto& [k, v] : mem_) {
-    if (k.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
-    if (filter && !range.contains(k)) continue;
+    if (k.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+      continue;
+    }
+    if (filter && !range.contains(k)) {
+      continue;
+    }
     oss << k << '\0' << v.revision << '\0' << v.value << '\0';
   }
   return oss.str();
@@ -1017,8 +1143,12 @@ size_t KvEngine::approx_key_count(const openkv::KeyRange& range) const {
   for (const auto& [k, _] : mem_) {
     const auto pos = k.find('\0');
     std::string u = pos == std::string::npos ? k : k.substr(0, pos);
-    if (u.compare(0, 8, "\xff\xffskv/") == 0) continue;
-    if (!range.contains(u)) continue;
+    if (u.compare(0, 8, "\xff\xffskv/") == 0) {
+      continue;
+    }
+    if (!range.contains(u)) {
+      continue;
+    }
     users.push_back(std::move(u));
   }
   std::sort(users.begin(), users.end());
@@ -1033,8 +1163,12 @@ size_t KvEngine::approx_bytes(const openkv::KeyRange& range) const {
     const auto pos = k.find('\0');
     std::string_view u =
         pos == std::string::npos ? std::string_view(k) : std::string_view(k).substr(0, pos);
-    if (u.compare(0, 8, "\xff\xffskv/") == 0) continue;
-    if (!range.contains(u)) continue;
+    if (u.compare(0, 8, "\xff\xffskv/") == 0) {
+      continue;
+    }
+    if (!range.contains(u)) {
+      continue;
+    }
     n += k.size() + r.value.size() + sizeof(r.revision);
   }
   return n;
@@ -1042,21 +1176,31 @@ size_t KvEngine::approx_bytes(const openkv::KeyRange& range) const {
 
 std::string KvEngine::pick_split_key(const openkv::KeyRange& range) const {
   std::lock_guard<std::mutex> lock(mu_);
-  if (mem_.size() < 2) return {};
+  if (mem_.size() < 2) {
+    return {};
+  }
   std::vector<std::string> users;
   users.reserve(mem_.size());
   for (const auto& [k, _] : mem_) {
     const auto pos = k.find('\0');
     std::string u = pos == std::string::npos ? k : k.substr(0, pos);
-    if (u.compare(0, 8, "\xff\xffskv/") == 0) continue;
-    if (!range.contains(u)) continue;
+    if (u.compare(0, 8, "\xff\xffskv/") == 0) {
+      continue;
+    }
+    if (!range.contains(u)) {
+      continue;
+    }
     users.push_back(std::move(u));
   }
   std::sort(users.begin(), users.end());
   users.erase(std::unique(users.begin(), users.end()), users.end());
-  if (users.size() < 2) return {};
+  if (users.size() < 2) {
+    return {};
+  }
   const std::string& mid = users[users.size() / 2];
-  if (!range.can_split_at(mid)) return {};
+  if (!range.can_split_at(mid)) {
+    return {};
+  }
   return mid;
 }
 
@@ -1066,8 +1210,12 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
     size_t n = 0;
     std::lock_guard<std::mutex> lock(mu_);
     for (const auto& [k, _] : mem_) {
-      if (k.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
-      if (k >= split_key) ++n;
+      if (k.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+        continue;
+      }
+      if (k >= split_key) {
+        ++n;
+      }
     }
     return n;
   }
@@ -1076,8 +1224,12 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
   {
     std::lock_guard<std::mutex> lock(mu_);
     for (const auto& [k, r] : mem_) {
-      if (k.compare(0, meta_prefix.size(), meta_prefix) == 0) continue;
-      if (k >= split_key) moved.emplace_back(k, r);
+      if (k.compare(0, meta_prefix.size(), meta_prefix) == 0) {
+        continue;
+      }
+      if (k >= split_key) {
+        moved.emplace_back(k, r);
+      }
     }
   }
   for (const auto& [k, r] : moved) {
@@ -1085,7 +1237,9 @@ size_t KvEngine::migrate_ge(KvEngine& dst, std::string_view split_key) {
   }
   {
     std::lock_guard<std::mutex> lock(mu_);
-    for (const auto& [k, _] : moved) mem_.erase(k);
+    for (const auto& [k, _] : moved) {
+      mem_.erase(k);
+    }
   }
   return moved.size();
 }
@@ -1102,7 +1256,9 @@ ShardEngineManager::ShardEngineManager(std::string data_dir, raft::SyncMode sync
     : data_dir_(std::move(data_dir)), sync_(sync) {}
 
 void ShardEngineManager::ensure_shared_locked() {
-  if (shared_) return;
+  if (shared_) {
+    return;
+  }
   const auto kv_root = (std::filesystem::path(data_dir_) / "kv").string();
   shared_ = std::make_shared<KvEngine>(kv_root, /*shard_id=*/0, sync_, /*store_level=*/true);
   SKV_INFO << "store-level KvEngine ready path=" << kv_root;
@@ -1112,13 +1268,19 @@ void ShardEngineManager::migrate_legacy_shards_if_needed() {
   std::lock_guard<std::mutex> lock(mu_);
   ensure_shared_locked();
   namespace fs = std::filesystem;
-  if (!fs::exists(data_dir_) || !fs::is_directory(data_dir_)) return;
+  if (!fs::exists(data_dir_) || !fs::is_directory(data_dir_)) {
+    return;
+  }
   size_t migrated_dirs = 0;
   size_t migrated_keys = 0;
   for (const auto& ent : fs::directory_iterator(data_dir_)) {
-    if (!ent.is_directory()) continue;
+    if (!ent.is_directory()) {
+      continue;
+    }
     const auto name = ent.path().filename().string();
-    if (name.rfind("shard_", 0) != 0) continue;
+    if (name.rfind("shard_", 0) != 0) {
+      continue;
+    }
     uint32_t sid = 0;
     try {
       sid = static_cast<uint32_t>(std::stoul(name.substr(6)));
@@ -1163,8 +1325,12 @@ KvEngine& ShardEngineManager::get_or_create(uint32_t shard_id) {
 KvEngine* ShardEngineManager::get(uint32_t shard_id) {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = engines_.find(shard_id);
-  if (it != engines_.end() && it->second) return it->second.get();
-  if (shared_) return shared_.get();
+  if (it != engines_.end() && it->second) {
+    return it->second.get();
+  }
+  if (shared_) {
+    return shared_.get();
+  }
   return nullptr;
 }
 

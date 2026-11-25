@@ -58,16 +58,22 @@ RegionScheduler::RegionScheduler(ClusterState& state, PlaceRegionFn place, Commi
 
 RegionScheduler::~RegionScheduler() {
   running_ = false;
-  if (worker_.joinable()) worker_.join();
+  if (worker_.joinable()) {
+    worker_.join();
+  }
 }
 
 void RegionScheduler::persist_locked(const MigrateTask& task) {
-  if (!persist_) return;
+  if (!persist_) {
+    return;
+  }
   persist_(to_persist(task));
 }
 
 void RegionScheduler::erase_persisted(const std::string& task_id) {
-  if (erase_) erase_(task_id);
+  if (erase_) {
+    erase_(task_id);
+  }
 }
 
 size_t RegionScheduler::inflight_count_locked() const {
@@ -89,9 +95,15 @@ std::vector<uint32_t> RegionScheduler::scan_candidates() const {
   std::set<std::string> draining;
   std::set<std::string> offline;
   for (const auto& n : nodes) {
-    if (n.role != NodeRole::kStorage) continue;
-    if (n.state == NodeState::kDraining) draining.insert(n.node_id);
-    if (n.state == NodeState::kOffline) offline.insert(n.node_id);
+    if (n.role != NodeRole::kStorage) {
+      continue;
+    }
+    if (n.state == NodeState::kDraining) {
+      draining.insert(n.node_id);
+    }
+    if (n.state == NodeState::kOffline) {
+      offline.insert(n.node_id);
+    }
   }
   const size_t rf = state_.replica_factor();
   for (const auto& region : route.regions) {
@@ -99,9 +111,15 @@ std::vector<uint32_t> RegionScheduler::scan_candidates() const {
     bool on_drain = false;
     bool on_offline = false;
     for (const auto& r : region.replicas) {
-      if (!r.is_learner) ++voters;
-      if (draining.count(r.node_id)) on_drain = true;
-      if (offline.count(r.node_id)) on_offline = true;
+      if (!r.is_learner) {
+        ++voters;
+      }
+      if (draining.count(r.node_id)) {
+        on_drain = true;
+      }
+      if (offline.count(r.node_id)) {
+        on_offline = true;
+      }
     }
     const bool under_replicated = voters < rf;
     if (on_drain || on_offline || under_replicated) {
@@ -115,13 +133,17 @@ std::vector<uint32_t> RegionScheduler::scan_candidates() const {
 void RegionScheduler::restore_persisted(const std::vector<PersistMigrate>& persisted) {
   std::lock_guard<std::mutex> lock(mu_);
   for (const auto& pm : persisted) {
-    if (pm.task_id.empty()) continue;
+    if (pm.task_id.empty()) {
+      continue;
+    }
     const auto st = static_cast<MigrateState>(pm.state);
     if (st == MigrateState::kCompleted || st == MigrateState::kFailed ||
         st == MigrateState::kCancelled) {
       continue;
     }
-    if (region_to_task_.count(pm.region_id)) continue;
+    if (region_to_task_.count(pm.region_id)) {
+      continue;
+    }
     MigrateTask task;
     task.task_id = pm.task_id;
     task.region_id = pm.region_id;
@@ -183,7 +205,9 @@ MigrateTask RegionScheduler::submit(uint32_t region_id, std::vector<std::string>
 bool RegionScheduler::cancel(const std::string& task_id) {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = tasks_.find(task_id);
-  if (it == tasks_.end()) return false;
+  if (it == tasks_.end()) {
+    return false;
+  }
   if (it->second.state == MigrateState::kCompleted || it->second.state == MigrateState::kFailed) {
     return false;
   }
@@ -196,7 +220,9 @@ bool RegionScheduler::cancel(const std::string& task_id) {
 std::optional<MigrateTask> RegionScheduler::get_task(const std::string& task_id) const {
   std::lock_guard<std::mutex> lock(mu_);
   auto it = tasks_.find(task_id);
-  if (it == tasks_.end()) return std::nullopt;
+  if (it == tasks_.end()) {
+    return std::nullopt;
+  }
   return it->second;
 }
 
@@ -204,7 +230,9 @@ std::vector<MigrateTask> RegionScheduler::list_tasks() const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<MigrateTask> out;
   out.reserve(tasks_.size());
-  for (const auto& [_, t] : tasks_) out.push_back(t);
+  for (const auto& [_, t] : tasks_) {
+    out.push_back(t);
+  }
   return out;
 }
 
@@ -261,8 +289,12 @@ void RegionScheduler::maybe_enqueue_from_scan() {
 
       auto cands = scan_candidates();
       for (uint32_t rid : cands) {
-        if (inflight_count_locked() >= max_inflight_) break;
-        if (region_to_task_.count(rid)) continue;
+        if (inflight_count_locked() >= max_inflight_) {
+          break;
+        }
+        if (region_to_task_.count(rid)) {
+          continue;
+        }
         MigrateTask task;
         task.task_id = "mig-" + std::to_string(++task_seq_);
         task.region_id = rid;
@@ -272,7 +304,9 @@ void RegionScheduler::maybe_enqueue_from_scan() {
         if (task.desired_peers.size() < state_.replica_factor()) {
           task.desired_peers = state_.suggest_placement({});
         }
-        if (task.desired_peers.size() < state_.replica_factor()) continue;
+        if (task.desired_peers.size() < state_.replica_factor()) {
+          continue;
+        }
         region_to_task_[rid] = task.task_id;
         tasks_[task.task_id] = task;
         pending_persist.push_back(task);
@@ -317,8 +351,12 @@ size_t RegionScheduler::enqueue_balance(size_t max_new) {
     // 不可 continue（否则自旋占住 mu_，堵死 worker / BALANCE / apply）。
     while (n < max_new && inflight_count_locked() < max_inflight_) {
       auto mv = state_.suggest_balance_move();
-      if (!mv) break;
-      if (region_to_task_.count(mv->first)) break;
+      if (!mv) {
+        break;
+      }
+      if (region_to_task_.count(mv->first)) {
+        break;
+      }
       MigrateTask task;
       task.task_id = "mig-" + std::to_string(++task_seq_);
       task.region_id = mv->first;
@@ -332,7 +370,9 @@ size_t RegionScheduler::enqueue_balance(size_t max_new) {
     }
   }
   for (const auto& t : pending_persist) {
-    if (persist_) persist_(to_persist(t));
+    if (persist_) {
+      persist_(to_persist(t));
+    }
   }
   return n;
 }
@@ -347,7 +387,9 @@ void RegionScheduler::advance(const std::string& task_id) {
   {
     std::lock_guard<std::mutex> lock(mu_);
     auto it = tasks_.find(task_id);
-    if (it == tasks_.end()) return;
+    if (it == tasks_.end()) {
+      return;
+    }
     auto& task = it->second;
     if (task.state == MigrateState::kCancelled) {
       region_to_task_.erase(task.region_id);
@@ -369,11 +411,15 @@ void RegionScheduler::advance(const std::string& task_id) {
     }
   }
   if (erase_id) {
-    if (erase_) erase_(*erase_id);
+    if (erase_) {
+      erase_(*erase_id);
+    }
     return;
   }
   if (upsert) {
-    if (persist_) persist_(*upsert);
+    if (persist_) {
+      persist_(*upsert);
+    }
     return;
   }
 
@@ -384,7 +430,9 @@ void RegionScheduler::advance(const std::string& task_id) {
     {
       std::lock_guard<std::mutex> lock(mu_);
       auto it = tasks_.find(task_id);
-      if (it == tasks_.end()) return;
+      if (it == tasks_.end()) {
+        return;
+      }
       auto& task = it->second;
       // 取消/终态：place_ 可能已改数据面；不再 commit，避免用陈旧 desired 覆盖路由
       if (task.state != MigrateState::kPlacing) {
@@ -410,9 +458,9 @@ void RegionScheduler::advance(const std::string& task_id) {
         upsert = to_persist(task);
       }
     }
-    if (erase_id && erase_)
+    if (erase_id && erase_) {
       erase_(*erase_id);
-    else if (upsert && persist_)
+    } else if (upsert && persist_)
       persist_(*upsert);
     return;
   }
@@ -424,9 +472,13 @@ void RegionScheduler::advance(const std::string& task_id) {
     {
       std::lock_guard<std::mutex> lock(mu_);
       auto it = tasks_.find(task_id);
-      if (it == tasks_.end()) return;
+      if (it == tasks_.end()) {
+        return;
+      }
       auto& task = it->second;
-      if (task.state != MigrateState::kUpdatingRoute) return;
+      if (task.state != MigrateState::kUpdatingRoute) {
+        return;
+      }
       if (!ok) {
         task.state = MigrateState::kFailed;
         task.error = "commit_place_failed";
@@ -440,7 +492,9 @@ void RegionScheduler::advance(const std::string& task_id) {
         completed = true;
       }
     }
-    if (erase_id && erase_) erase_(*erase_id);
+    if (erase_id && erase_) {
+      erase_(*erase_id);
+    }
     if (completed) {
       SKV_INFO << "migrate completed id=" << task_id << " region=" << region_id;
     }

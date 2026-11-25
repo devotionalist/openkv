@@ -55,7 +55,9 @@ TEST(RaftPersistTest, SaveAndRecoverApplied) {
     uint64_t idx = 0;
     ASSERT_TRUE(node.propose("hello", &idx));
     for (int i = 0; i < 20; ++i) {
-      if (node.soft_state().last_applied >= idx) break;
+      if (node.soft_state().last_applied >= idx) {
+        break;
+      }
       node.tick();
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }

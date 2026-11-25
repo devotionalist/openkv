@@ -52,7 +52,9 @@ std::vector<std::string> split_ws(const std::string& line) {
   std::vector<std::string> parts;
   std::istringstream iss(line);
   std::string p;
-  while (iss >> p) parts.push_back(p);
+  while (iss >> p) {
+    parts.push_back(p);
+  }
   return parts;
 }
 
@@ -62,7 +64,9 @@ std::string ok_ts_line(uint64_t start, uint32_t n) {
 
 void fire_line_cbs(std::vector<std::function<void(std::string)>>& cbs, const std::string& line) {
   for (auto& cb : cbs) {
-    if (cb) cb(line);
+    if (cb) {
+      cb(line);
+    }
   }
 }
 
@@ -97,7 +101,9 @@ MetaNode::MetaNode(ClusterBootstrap bootstrap) : bootstrap_(std::move(bootstrap)
   if (const char* e = std::getenv(proto::env::kMetaStoreTtlMs)) {
     try {
       unsigned long v = std::stoul(e);
-      if (v >= 1000 && v < 3600000) store_ttl_ms_ = static_cast<uint32_t>(v);
+      if (v >= 1000 && v < 3600000) {
+        store_ttl_ms_ = static_cast<uint32_t>(v);
+      }
     } catch (...) {
     }
   }
@@ -150,23 +156,33 @@ void MetaNode::on_apply(uint64_t index, const std::string& data) {
   apply_cv_.notify_all();
   fire_line_cbs(ts_cbs, ts_line);
   for (auto& w : waiters) {
-    if (!w.cb) continue;
+    if (!w.cb) {
+      continue;
+    }
     w.cb(w.make_ok ? w.make_ok() : "OK");
   }
 
   const uint64_t ver = state_->routing_table().version;
   {
     std::lock_guard<std::mutex> lock(route_mu_);
-    if (ver > route_version_notify_) route_version_notify_ = ver;
+    if (ver > route_version_notify_) {
+      route_version_notify_ = ver;
+    }
   }
   route_cv_.notify_all();
   fire_route_watches(false);
 }
 
 void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> cb) {
-  if (!cb) return;
-  if (count == 0) count = 1;
-  if (count > 10000) count = 10000;
+  if (!cb) {
+    return;
+  }
+  if (count == 0) {
+    count = 1;
+  }
+  if (count > 10000) {
+    count = 10000;
+  }
   if (!raft_ || !raft_->is_leader()) {
     const auto a = leader_address();
     cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
@@ -201,7 +217,9 @@ void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> c
     {
       std::lock_guard<std::mutex> lock(apply_mu_);
       auto it = ts_async_waiters_.find(idx);
-      if (it == ts_async_waiters_.end()) return;
+      if (it == ts_async_waiters_.end()) {
+        return;
+      }
       cbs = std::move(it->second);
       ts_async_waiters_.erase(it);
     }
@@ -212,17 +230,25 @@ void MetaNode::alloc_ts_async(uint32_t count, std::function<void(std::string)> c
 // 写入口：非 Leader 立即 redirect；Leader propose 后自旋等到 apply index。
 bool MetaNode::replicate(const MetaCommand& cmd, std::string* error, std::string* redirect_to) {
   if (!raft_) {
-    if (error) *error = "raft_not_ready";
+    if (error) {
+      *error = "raft_not_ready";
+    }
     return false;
   }
   if (!raft_->is_leader()) {
-    if (redirect_to) *redirect_to = raft_->leader_address();
-    if (error) *error = "not_leader";
+    if (redirect_to) {
+      *redirect_to = raft_->leader_address();
+    }
+    if (error) {
+      *error = "not_leader";
+    }
     return false;
   }
   uint64_t idx = 0;
   if (!raft_->propose(encode_meta_command(cmd), &idx)) {
-    if (error) *error = "propose_failed";
+    if (error) {
+      *error = "propose_failed";
+    }
     return false;
   }
   // CV 等 apply（tick_loop 推进 Ready）；最长 ~5s。
@@ -231,7 +257,9 @@ bool MetaNode::replicate(const MetaCommand& cmd, std::string* error, std::string
   while (last_applied_wait_ < idx) {
     if (apply_cv_.wait_until(lock, deadline) == std::cv_status::timeout &&
         last_applied_wait_ < idx) {
-      if (error) *error = "apply_timeout";
+      if (error) {
+        *error = "apply_timeout";
+      }
       return false;
     }
   }
@@ -241,17 +269,25 @@ bool MetaNode::replicate(const MetaCommand& cmd, std::string* error, std::string
 bool MetaNode::replicate_async(const MetaCommand& cmd, std::string* error,
                                std::string* redirect_to) {
   if (!raft_) {
-    if (error) *error = "raft_not_ready";
+    if (error) {
+      *error = "raft_not_ready";
+    }
     return false;
   }
   if (!raft_->is_leader()) {
-    if (redirect_to) *redirect_to = raft_->leader_address();
-    if (error) *error = "not_leader";
+    if (redirect_to) {
+      *redirect_to = raft_->leader_address();
+    }
+    if (error) {
+      *error = "not_leader";
+    }
     return false;
   }
   uint64_t idx = 0;
   if (!raft_->propose(encode_meta_command(cmd), &idx)) {
-    if (error) *error = "propose_failed";
+    if (error) {
+      *error = "propose_failed";
+    }
     return false;
   }
   return true;
@@ -259,7 +295,9 @@ bool MetaNode::replicate_async(const MetaCommand& cmd, std::string* error,
 
 void MetaNode::replicate_cb(const MetaCommand& cmd, std::function<std::string()> make_ok,
                             std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   if (!raft_) {
     cb("ERR raft_not_ready");
     return;
@@ -289,18 +327,24 @@ void MetaNode::replicate_cb(const MetaCommand& cmd, std::function<std::string()>
     {
       std::lock_guard<std::mutex> lock(apply_mu_);
       auto it = apply_waiters_.find(idx);
-      if (it == apply_waiters_.end()) return;
+      if (it == apply_waiters_.end()) {
+        return;
+      }
       waiters = std::move(it->second);
       apply_waiters_.erase(it);
     }
     for (auto& w : waiters) {
-      if (w.cb) w.cb("ERR apply_timeout");
+      if (w.cb) {
+        w.cb("ERR apply_timeout");
+      }
     }
   }).detach();
 }
 
 void MetaNode::register_node_async(NodeInfo n, std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   if (!is_leader()) {
     const auto a = leader_address();
     cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
@@ -327,7 +371,9 @@ void MetaNode::register_node_async(NodeInfo n, std::function<void(std::string)> 
 
 void MetaNode::report_min_start_ts_async(uint64_t min_start_ts, std::string reporter,
                                          std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   MetaCommand cmd;
   cmd.op = MetaOp::kReportMinStartTs;
   cmd.ts_value = min_start_ts;
@@ -338,7 +384,9 @@ void MetaNode::report_min_start_ts_async(uint64_t min_start_ts, std::string repo
 }
 
 void MetaNode::advance_safe_point_async(uint32_t retain, std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   MetaCommand cmd;
   cmd.op = MetaOp::kAdvanceSafePoint;
   cmd.ts_count = retain;
@@ -353,7 +401,9 @@ void MetaNode::advance_safe_point_async(uint32_t retain, std::function<void(std:
 }
 
 void MetaNode::bump_route_async(std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   MetaCommand cmd;
   cmd.op = MetaOp::kBumpRoute;
   replicate_cb(
@@ -363,7 +413,9 @@ void MetaNode::bump_route_async(std::function<void(std::string)> cb) {
 
 void MetaNode::split_region_async(uint32_t left_region_id, std::string split_key,
                                   std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   MetaCommand cmd;
   cmd.op = MetaOp::kSplitRegion;
   cmd.shard_id = left_region_id;
@@ -385,7 +437,9 @@ void MetaNode::split_region_async(uint32_t left_region_id, std::string split_key
 
 void MetaNode::merge_regions_async(uint32_t left_region_id, uint32_t right_region_id,
                                    std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   MetaCommand cmd;
   cmd.op = MetaOp::kMergeRegions;
   cmd.shard_id = left_region_id;
@@ -395,8 +449,12 @@ void MetaNode::merge_regions_async(uint32_t left_region_id, uint32_t right_regio
   replicate_cb(
       cmd,
       [this, l, r] {
-        if (!state_->find_region(l)) return std::string("ERR merge_lost_left");
-        if (state_->find_region(r)) return std::string("ERR merge_right_still_present");
+        if (!state_->find_region(l)) {
+          return std::string("ERR merge_lost_left");
+        }
+        if (state_->find_region(r)) {
+          return std::string("ERR merge_right_still_present");
+        }
         return "OK MERGE " + std::to_string(l) + " " + std::to_string(r);
       },
       std::move(cb));
@@ -404,7 +462,9 @@ void MetaNode::merge_regions_async(uint32_t left_region_id, uint32_t right_regio
 
 void MetaNode::place_region_async(uint32_t region_id, std::vector<std::string> peer_node_ids,
                                   std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   MetaCommand cmd;
   cmd.op = MetaOp::kPlaceRegion;
   cmd.shard_id = region_id;
@@ -432,7 +492,9 @@ void MetaNode::place_region_async(uint32_t region_id, std::vector<std::string> p
 
 void MetaNode::set_node_state_async(std::string node_id, NodeState state, std::string ok_op,
                                     std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   if (!is_leader()) {
     const auto a = leader_address();
     cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
@@ -457,7 +519,9 @@ void MetaNode::fire_route_watches(bool force_all) {
   std::vector<std::function<void(RoutingTable)>> cbs;
   {
     std::lock_guard<std::mutex> lock(route_mu_);
-    if (rt.version > route_version_notify_) route_version_notify_ = rt.version;
+    if (rt.version > route_version_notify_) {
+      route_version_notify_ = rt.version;
+    }
     for (auto it = route_watches_.begin(); it != route_watches_.end();) {
       if (force_all || rt.version > it->since || now >= it->deadline) {
         cbs.push_back(std::move(it->cb));
@@ -468,7 +532,9 @@ void MetaNode::fire_route_watches(bool force_all) {
     }
   }
   for (auto& cb : cbs) {
-    if (!cb) continue;
+    if (!cb) {
+      continue;
+    }
     try {
       cb(rt);
     } catch (...) {
@@ -478,16 +544,24 @@ void MetaNode::fire_route_watches(bool force_all) {
 
 void MetaNode::watch_route_async(uint64_t since, int timeout_ms,
                                  std::function<void(RoutingTable)> cb) {
-  if (!cb) return;
-  if (timeout_ms < 0) timeout_ms = 0;
-  if (timeout_ms > 60000) timeout_ms = 60000;
+  if (!cb) {
+    return;
+  }
+  if (timeout_ms < 0) {
+    timeout_ms = 0;
+  }
+  if (timeout_ms > 60000) {
+    timeout_ms = 60000;
+  }
   route_watch_waits_.fetch_add(1, std::memory_order_relaxed);
   {
     auto rt = state_->routing_table();
     if (rt.version > since) {
       {
         std::lock_guard<std::mutex> lock(route_mu_);
-        if (rt.version > route_version_notify_) route_version_notify_ = rt.version;
+        if (rt.version > route_version_notify_) {
+          route_version_notify_ = rt.version;
+        }
       }
       cb(std::move(rt));
       return;
@@ -505,7 +579,9 @@ void MetaNode::watch_route_async(uint64_t since, int timeout_ms,
 }
 
 void MetaNode::get_scale_task_async(std::string task_id, std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   if (!scaler_) {
     cb("ERR no_scaler");
     return;
@@ -524,18 +600,24 @@ void MetaNode::get_scale_task_async(std::string task_id, std::function<void(std:
   oss << "OK SCALE " << t->task_id << ' ' << static_cast<int>(t->state) << ' ' << t->progress
       << " node=" << t->new_node_id << " shards=";
   for (size_t i = 0; i < t->shard_ids.size(); ++i) {
-    if (i) oss << ',';
+    if (i) {
+      oss << ',';
+    }
     oss << t->shard_ids[i];
   }
   if (t->state != ScaleTaskState::kCatchingUp || t->shard_ids.empty()) {
-    if (!t->error.empty()) oss << " error=" << t->error;
+    if (!t->error.empty()) {
+      oss << " error=" << t->error;
+    }
     cb(oss.str());
     return;
   }
   const uint32_t sid = t->shard_ids.front();
   auto addr = region_leader_addr(sid);
   if (!addr) {
-    if (!t->error.empty()) oss << " error=" << t->error;
+    if (!t->error.empty()) {
+      oss << " error=" << t->error;
+    }
     cb(oss.str());
     return;
   }
@@ -561,7 +643,9 @@ void MetaNode::get_scale_task_async(std::string task_id, std::function<void(std:
 
 void MetaNode::activate_or_join_async(bool join, std::string node_id,
                                       std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   if (!is_leader()) {
     const auto a = leader_address();
     cb(std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a)));
@@ -627,7 +711,9 @@ void MetaNode::activate_or_join_async(bool join, std::string node_id,
 }
 
 void MetaNode::kick_node_async(std::string node_id, std::function<void(std::string)> cb) {
-  if (!cb) return;
+  if (!cb) {
+    return;
+  }
   auto n = state_->get_node(node_id);
   if (!n) {
     cb("ERR unknown_node");
@@ -661,19 +747,27 @@ std::string MetaNode::register_node(NodeInfo node, std::string* error, std::stri
 bool MetaNode::heartbeat(const std::string& node_id, const std::vector<uint32_t>& leaders,
                          std::string* error, std::string* redirect) {
   if (!raft_ || !raft_->is_leader()) {
-    if (redirect) *redirect = raft_ ? raft_->leader_address() : "";
-    if (error) *error = "not_leader";
+    if (redirect) {
+      *redirect = raft_ ? raft_->leader_address() : "";
+    }
+    if (error) {
+      *error = "not_leader";
+    }
     return false;
   }
   if (!state_->get_node(node_id)) {
-    if (error) *error = "unknown_node";
+    if (error) {
+      *error = "unknown_node";
+    }
     return false;
   }
   // 无 *L 变更：仅 Leader 本地续租（H2 list_stale 只看 Leader 租约）。
   // 有路由 Leader 变更才进 Raft，避免 6 Store × 2s 心跳把 TSO/AE 打死。
   if (!state_->heartbeat_changes_leaders(node_id, leaders)) {
     if (!state_->touch_lease(node_id)) {
-      if (error) *error = "unknown_node";
+      if (error) {
+        *error = "unknown_node";
+      }
       return false;
     }
     return true;
@@ -770,11 +864,17 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
   AdminSession local;
   AdminSession& session = sess ? *sess : local;
   auto parts = split_ws(line);
-  if (parts.empty()) return "ERR empty";
+  if (parts.empty()) {
+    return "ERR empty";
+  }
   const auto& op = parts[0];
   if (op == proto::kOpAuth) {
-    if (parts.size() < 2) return "ERR usage: AUTH <token>";
-    if (!admin_try_auth(&session, admin_token_, parts[1])) return "ERR unauthorized";
+    if (parts.size() < 2) {
+      return "ERR usage: AUTH <token>";
+    }
+    if (!admin_try_auth(&session, admin_token_, parts[1])) {
+      return "ERR unauthorized";
+    }
     return "OK AUTH";
   }
   if (meta_needs_admin(op) && !admin_allowed(session, admin_token_)) {
@@ -837,7 +937,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     req_total_.fetch_add(1, std::memory_order_relaxed);
     if (op == proto::kOpRaftVote || op == proto::kOpRaftPreVote) {
       req_raft_.fetch_add(1, std::memory_order_relaxed);
-      if (parts.size() >= 3) peer_raft_.add(parts[2]);
+      if (parts.size() >= 3) {
+        peer_raft_.add(parts[2]);
+      }
     } else if (op == proto::kOpRaftAe) {
       uint64_t n = 0;
       if (parts.size() >= 8) {
@@ -857,12 +959,16 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       }
     } else if (op.rfind(proto::kRaftSnapPrefix, 0) == 0 || op == proto::kOpRaftSnapshot) {
       req_sync_.fetch_add(1, std::memory_order_relaxed);
-      if (parts.size() >= 3) peer_sync_.add(parts[2]);
+      if (parts.size() >= 3) {
+        peer_sync_.add(parts[2]);
+      }
     } else if (op == "HEARTBEAT" || op == "REGISTER" || op == "REPORT_MIN_START_TS" ||
                op == "REPORT_MIN_START") {
       if (op == "HEARTBEAT" || op == "REGISTER") {
         req_store_.fetch_add(1, std::memory_order_relaxed);
-        if (parts.size() >= 2) peer_store_.add(parts[1]);
+        if (parts.size() >= 2) {
+          peer_store_.add(parts[1]);
+        }
       } else {
         req_gw_.fetch_add(1, std::memory_order_relaxed);
       }
@@ -877,7 +983,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       req_admin_.fetch_add(1, std::memory_order_relaxed);
     }
   }
-  if (op == proto::kOpPing) return "OK PONG";
+  if (op == proto::kOpPing) {
+    return "OK PONG";
+  }
   if (op == "WHO_LEADER") {
     auto a = leader_address();
     return a.empty() ? "OK LEADER none" : ("OK LEADER " + a);
@@ -902,11 +1010,15 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       std::vector<raft::LogEntry> ents;
       size_t off = 8;
       for (size_t i = 0; i < n; ++i) {
-        if (off + 2 >= parts.size()) return "ERR ae_truncated";
+        if (off + 2 >= parts.size()) {
+          return "ERR ae_truncated";
+        }
         raft::LogEntry e;
         e.term = std::stoull(parts[off]);
         e.index = std::stoull(parts[off + 1]);
-        if (!from_hex(parts[off + 2], &e.data)) return "ERR ae_bad_hex";
+        if (!from_hex(parts[off + 2], &e.data)) {
+          return "ERR ae_bad_hex";
+        }
         ents.push_back(std::move(e));
         off += 3;
       }
@@ -915,14 +1027,18 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     // RAFT_SNAP shard from term last_idx last_term hexdata  (shard ignored, meta=0)
     if (op == proto::kOpRaftSnap && parts.size() == 7) {
       std::string data;
-      if (!from_hex(parts[6], &data)) return "ERR snap_bad_hex";
+      if (!from_hex(parts[6], &data)) {
+        return "ERR snap_bad_hex";
+      }
       return handle_raft_snapshot(parts[2], std::stoull(parts[3]), std::stoull(parts[4]),
                                   std::stoull(parts[5]), data);
     }
     // RAFT_SNAPC shard from term last_idx last_term offset total done hexchunk
     if (op == proto::kOpRaftSnapc && parts.size() == 10) {
       std::string chunk;
-      if (!from_hex(parts[9], &chunk)) return "ERR snap_bad_hex";
+      if (!from_hex(parts[9], &chunk)) {
+        return "ERR snap_bad_hex";
+      }
       return handle_raft_snap_chunk(parts[2], std::stoull(parts[3]), std::stoull(parts[4]),
                                     std::stoull(parts[5]), std::stoull(parts[6]),
                                     std::stoull(parts[7]), parts[8] != "0", chunk);
@@ -963,7 +1079,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == "HEARTBEAT" && parts.size() >= 3) {
       std::string nid = parts[1];
       size_t n = static_cast<size_t>(std::stoul(parts[2]));
-      if (parts.size() < 3 + n) return "ERR bad_heartbeat";
+      if (parts.size() < 3 + n) {
+        return "ERR bad_heartbeat";
+      }
       std::vector<uint32_t> leaders;
       for (size_t i = 0; i < n; ++i) {
         leaders.push_back(static_cast<uint32_t>(std::stoul(parts[3 + i])));
@@ -984,8 +1102,12 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       int timeout_ms = 5000;
       if (parts.size() >= 3) {
         timeout_ms = std::stoi(parts[2]);
-        if (timeout_ms < 0) timeout_ms = 0;
-        if (timeout_ms > 60000) timeout_ms = 60000;
+        if (timeout_ms < 0) {
+          timeout_ms = 0;
+        }
+        if (timeout_ms > 60000) {
+          timeout_ms = 60000;
+        }
       }
       const auto deadline =
           std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -997,7 +1119,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
           route_version_notify_ = rt.version;
           return format_route(rt);
         }
-        if (std::chrono::steady_clock::now() >= deadline) break;
+        if (std::chrono::steady_clock::now() >= deadline) {
+          break;
+        }
         route_cv_.wait_until(lock, deadline);
       }
       return format_route(state_->routing_table());
@@ -1005,9 +1129,15 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     // GET_TS [count] — Percolator TSO；返回 OK TS <start> <count>
     if (op == "GET_TS") {
       uint32_t count = 1;
-      if (parts.size() >= 2) count = static_cast<uint32_t>(std::stoul(parts[1]));
-      if (count == 0) count = 1;
-      if (count > 10000) count = 10000;
+      if (parts.size() >= 2) {
+        count = static_cast<uint32_t>(std::stoul(parts[1]));
+      }
+      if (count == 0) {
+        count = 1;
+      }
+      if (count > 10000) {
+        count = 10000;
+      }
       MetaCommand cmd;
       cmd.op = MetaOp::kAllocTs;
       cmd.ts_count = count;
@@ -1032,7 +1162,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
           }
           if (apply_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
             auto it2 = ts_alloc_by_index_.find(idx);
-            if (it2 == ts_alloc_by_index_.end()) return "ERR apply_timeout";
+            if (it2 == ts_alloc_by_index_.end()) {
+              return "ERR apply_timeout";
+            }
             start = it2->second;
             ts_alloc_by_index_.erase(it2);
             break;
@@ -1050,7 +1182,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     // ADVANCE_SAFE_POINT [retain] — 按 TSO/min_start 推进水位
     if (op == proto::kOpAdvanceSafePoint) {
       uint32_t retain = 0;
-      if (parts.size() >= 2) retain = static_cast<uint32_t>(std::stoul(parts[1]));
+      if (parts.size() >= 2) {
+        retain = static_cast<uint32_t>(std::stoul(parts[1]));
+      }
       MetaCommand cmd;
       cmd.op = MetaOp::kAdvanceSafePoint;
       cmd.ts_count = retain;
@@ -1066,7 +1200,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       MetaCommand cmd;
       cmd.op = MetaOp::kReportMinStartTs;
       cmd.ts_value = std::stoull(parts[1]);
-      if (parts.size() == 3) cmd.node.node_id = parts[2];
+      if (parts.size() == 3) {
+        cmd.node.node_id = parts[2];
+      }
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
         return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
@@ -1076,7 +1212,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     // SPLIT_REGION <region_id> <hex_split_key>
     if (op == proto::kOpSplitRegion && parts.size() == 3) {
       std::string split_key;
-      if (!from_hex(parts[2], &split_key)) return "ERR bad_hex";
+      if (!from_hex(parts[2], &split_key)) {
+        return "ERR bad_hex";
+      }
       const uint32_t left_id = static_cast<uint32_t>(std::stoul(parts[1]));
       MetaCommand cmd;
       cmd.op = MetaOp::kSplitRegion;
@@ -1096,7 +1234,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
           break;
         }
       }
-      if (!found) return "ERR split_apply_missing";
+      if (!found) {
+        return "ERR split_apply_missing";
+      }
       return "OK SPLIT " + std::to_string(left_id) + " " + std::to_string(right);
     }
     // MERGE_REGIONS <left_id> <right_id>
@@ -1109,16 +1249,24 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       if (!replicate(cmd, &err, &redir)) {
         return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
       }
-      if (!state_->find_region(cmd.shard_id)) return "ERR merge_lost_left";
-      if (state_->find_region(cmd.merge_right_id)) return "ERR merge_right_still_present";
+      if (!state_->find_region(cmd.shard_id)) {
+        return "ERR merge_lost_left";
+      }
+      if (state_->find_region(cmd.merge_right_id)) {
+        return "ERR merge_right_still_present";
+      }
       return "OK MERGE " + parts[1] + " " + parts[2];
     }
     // LOCATE <hex_key>
     if (op == "LOCATE" && parts.size() == 2) {
       std::string key;
-      if (!from_hex(parts[1], &key)) return "ERR bad_hex";
+      if (!from_hex(parts[1], &key)) {
+        return "ERR bad_hex";
+      }
       auto rid = state_->locate(key);
-      if (!rid) return "ERR not_found";
+      if (!rid) {
+        return "ERR not_found";
+      }
       return "OK LOCATE " + std::to_string(*rid);
     }
     // DRAIN_NODE / STORE_DELETE / ACTIVATE_NODE|JOIN_NODE / OFFLINE_NODE id
@@ -1133,13 +1281,17 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
       }
       auto cur = state_->get_node(parts[1]);
-      if (!cur) return "ERR unknown_node";
+      if (!cur) {
+        return "ERR unknown_node";
+      }
       NodeState st = NodeState::kDraining;
       if (op == proto::kOpActivateNode || op == proto::kOpJoinNode) {
         if (cur->state != NodeState::kJoining && cur->state != NodeState::kOffline) {
           return "ERR not_pending";  // 仅待加入 / Offline 可加入
         }
-        if (cur->address.empty()) return "ERR no_address";
+        if (cur->address.empty()) {
+          return "ERR no_address";
+        }
         // 可用性：gRPC AdminService.Ping
         try {
           auto pong = storage_rpc(cur->address, "PING");
@@ -1178,9 +1330,15 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     // REMOVE_TOMBSTONE / KICK_NODE id — 踢出：须先下线（非 Active）且路由无副本
     if ((op == proto::kOpRemoveTombstone || op == proto::kOpKickNode) && parts.size() == 2) {
       auto n = state_->get_node(parts[1]);
-      if (!n) return "ERR unknown_node";
-      if (n->state == NodeState::kActive) return "ERR still_active";  // 须先下线
-      if (state_->region_count_on(parts[1]) > 0) return "ERR still_has_regions";
+      if (!n) {
+        return "ERR unknown_node";
+      }
+      if (n->state == NodeState::kActive) {
+        return "ERR still_active";
+      }
+      if (state_->region_count_on(parts[1]) > 0) {
+        return "ERR still_has_regions";
+      }
       MetaCommand cmd;
       cmd.op = MetaOp::kEraseTombstone;
       cmd.node.node_id = parts[1];
@@ -1193,7 +1351,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     // STORE_STATUS id — state / region_count / leader_count
     if (op == "STORE_STATUS" && parts.size() == 2) {
       auto n = state_->get_node(parts[1]);
-      if (!n) return "ERR unknown_node";
+      if (!n) {
+        return "ERR unknown_node";
+      }
       return "OK STORE " + parts[1] + " state=" + std::to_string(static_cast<int>(n->state)) +
              " regions=" + std::to_string(state_->region_count_on(parts[1])) +
              " leaders=" + std::to_string(state_->leader_count_on(parts[1]));
@@ -1204,10 +1364,16 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         auto a = leader_address();
         return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
       }
-      if (!scheduler_) return "ERR no_scheduler";
+      if (!scheduler_) {
+        return "ERR no_scheduler";
+      }
       size_t max_n = 1;
-      if (parts.size() >= 2) max_n = static_cast<size_t>(std::stoul(parts[1]));
-      if (max_n == 0) max_n = 1;
+      if (parts.size() >= 2) {
+        max_n = static_cast<size_t>(std::stoul(parts[1]));
+      }
+      if (max_n == 0) {
+        max_n = 1;
+      }
       size_t n = scheduler_->enqueue_balance(max_n);
       return "OK BALANCE " + std::to_string(n);
     }
@@ -1215,9 +1381,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     if (op == "LIST_NODES") {
       std::optional<NodeRole> role;
       if (parts.size() >= 2) {
-        if (parts[1] == "storage")
+        if (parts[1] == "storage") {
           role = NodeRole::kStorage;
-        else if (parts[1] == "compute")
+        } else if (parts[1] == "compute")
           role = NodeRole::kCompute;
         else
           return "ERR bad_role";
@@ -1238,37 +1404,51 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         std::stringstream ss(parts[1].substr(6));
         std::string item;
         while (std::getline(ss, item, ',')) {
-          if (!item.empty()) avoid.push_back(item);
+          if (!item.empty()) {
+            avoid.push_back(item);
+          }
         }
       }
       auto ids = state_->suggest_placement(avoid);
       std::ostringstream oss;
       oss << "OK SUGGEST " << ids.size();
-      for (const auto& id : ids) oss << ' ' << id;
+      for (const auto& id : ids) {
+        oss << ' ' << id;
+      }
       return oss.str();
     }
     // FIND_MERGE_RIGHT <left_region_id>
     if (op == "FIND_MERGE_RIGHT" && parts.size() == 2) {
       auto right = state_->adjacent_right(static_cast<uint32_t>(std::stoul(parts[1])));
-      if (!right) return "ERR no_adjacent";
+      if (!right) {
+        return "ERR no_adjacent";
+      }
       return "OK MERGE_RIGHT " + parts[1] + " " + std::to_string(*right);
     }
     // SCALE_OUT / GET_SCALE / LIST_SCALE：任务仅内存；必须在 Leader 上创建与推进。
     auto scale_need_leader = [this]() -> std::string {
-      if (is_leader()) return {};
+      if (is_leader()) {
+        return {};
+      }
       auto a = leader_address();
       return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
     };
     // SCALE_OUT node_id [rid,rid,...] — S1 在线扩容
     if (op == proto::kOpScaleOut && parts.size() >= 2) {
-      if (!scaler_) return "ERR no_scaler";
-      if (auto e = scale_need_leader(); !e.empty()) return e;
+      if (!scaler_) {
+        return "ERR no_scaler";
+      }
+      if (auto e = scale_need_leader(); !e.empty()) {
+        return e;
+      }
       std::vector<uint32_t> shards;
       if (parts.size() >= 3) {
         std::stringstream ss(parts[2]);
         std::string item;
         while (std::getline(ss, item, ',')) {
-          if (!item.empty()) shards.push_back(static_cast<uint32_t>(std::stoul(item)));
+          if (!item.empty()) {
+            shards.push_back(static_cast<uint32_t>(std::stoul(item)));
+          }
         }
       }
       auto t = scaler_->start_scale_out(parts[1], std::move(shards));
@@ -1277,24 +1457,38 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
     }
     // CANCEL_SCALE <node_id> [region_id] — 取消该节点（可选指定 Region）上未完成的 SCALE_OUT
     if (op == "CANCEL_SCALE" && parts.size() >= 2) {
-      if (!scaler_) return "ERR no_scaler";
-      if (auto e = scale_need_leader(); !e.empty()) return e;
+      if (!scaler_) {
+        return "ERR no_scaler";
+      }
+      if (auto e = scale_need_leader(); !e.empty()) {
+        return e;
+      }
       std::optional<uint32_t> rid;
-      if (parts.size() >= 3) rid = static_cast<uint32_t>(std::stoul(parts[2]));
+      if (parts.size() >= 3) {
+        rid = static_cast<uint32_t>(std::stoul(parts[2]));
+      }
       int n = scaler_->cancel_inflight(parts[1], rid);
       return "OK CANCEL_SCALE " + std::to_string(n);
     }
     if (op == "GET_SCALE" && parts.size() == 2) {
-      if (!scaler_) return "ERR no_scaler";
-      if (auto e = scale_need_leader(); !e.empty()) return e;
+      if (!scaler_) {
+        return "ERR no_scaler";
+      }
+      if (auto e = scale_need_leader(); !e.empty()) {
+        return e;
+      }
       auto t = scaler_->get_task(parts[1]);
-      if (!t) return "ERR no_task";
+      if (!t) {
+        return "ERR no_task";
+      }
       // OK SCALE id state progress node=… shards=… [match= commit= caught=] [error=…]
       std::ostringstream oss;
       oss << "OK SCALE " << t->task_id << ' ' << static_cast<int>(t->state) << ' ' << t->progress
           << " node=" << t->new_node_id << " shards=";
       for (size_t i = 0; i < t->shard_ids.size(); ++i) {
-        if (i) oss << ',';
+        if (i) {
+          oss << ',';
+        }
         oss << t->shard_ids[i];
       }
       if (t->state == ScaleTaskState::kCatchingUp && !t->shard_ids.empty()) {
@@ -1315,12 +1509,18 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
           }
         }
       }
-      if (!t->error.empty()) oss << " error=" << t->error;
+      if (!t->error.empty()) {
+        oss << " error=" << t->error;
+      }
       return oss.str();
     }
     if (op == "LIST_SCALE") {
-      if (!scaler_) return "ERR no_scaler";
-      if (auto e = scale_need_leader(); !e.empty()) return e;
+      if (!scaler_) {
+        return "ERR no_scaler";
+      }
+      if (auto e = scale_need_leader(); !e.empty()) {
+        return e;
+      }
       auto tasks = scaler_->list_tasks();
       std::ostringstream oss;
       oss << "OK SCALE_LIST " << tasks.size();
@@ -1330,7 +1530,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         if (!t.shard_ids.empty()) {
           oss << ':';
           for (size_t i = 0; i < t.shard_ids.size(); ++i) {
-            if (i) oss << ',';
+            if (i) {
+              oss << ',';
+            }
             oss << t.shard_ids[i];
           }
         }
@@ -1343,13 +1545,17 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         auto a = leader_address();
         return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
       }
-      if (!scheduler_) return "ERR no_scheduler";
+      if (!scheduler_) {
+        return "ERR no_scheduler";
+      }
       std::vector<std::string> desired;
       if (parts.size() >= 3) {
         std::stringstream ss(parts[2]);
         std::string item;
         while (std::getline(ss, item, ',')) {
-          if (!item.empty()) desired.push_back(item);
+          if (!item.empty()) {
+            desired.push_back(item);
+          }
         }
       }
       auto t = scheduler_->submit(static_cast<uint32_t>(std::stoul(parts[1])), std::move(desired));
@@ -1360,7 +1566,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         auto a = leader_address();
         return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
       }
-      if (!scheduler_) return "ERR no_scheduler";
+      if (!scheduler_) {
+        return "ERR no_scheduler";
+      }
       auto tasks = scheduler_->list_tasks();
       std::ostringstream oss;
       oss << "OK MIGRATE_LIST " << tasks.size();
@@ -1374,7 +1582,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
         auto a = leader_address();
         return std::string("ERR not_leader") + (a.empty() ? "" : (" redirect=" + a));
       }
-      if (!scheduler_) return "ERR no_scheduler";
+      if (!scheduler_) {
+        return "ERR no_scheduler";
+      }
       return scheduler_->cancel(parts[1]) ? "OK CANCELLED" : "ERR cancel";
     }
     // PLACE_REGION <rid> <node_id>[,node_id...]
@@ -1387,15 +1597,21 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
       std::stringstream ss(parts[2]);
       std::string item;
       while (std::getline(ss, item, ',')) {
-        if (item.empty()) continue;
+        if (item.empty()) {
+          continue;
+        }
         auto node = state_->get_node(item);
-        if (!node) return "ERR unknown_node " + item;
+        if (!node) {
+          return "ERR unknown_node " + item;
+        }
         Replica r;
         r.node_id = node->node_id;
         r.address = node->address;
         cmd.place_replicas.push_back(std::move(r));
       }
-      if (cmd.place_replicas.empty()) return "ERR empty_peers";
+      if (cmd.place_replicas.empty()) {
+        return "ERR empty_peers";
+      }
       std::string err, redir;
       if (!replicate(cmd, &err, &redir)) {
         return "ERR " + err + (redir.empty() ? "" : (" redirect=" + redir));
@@ -1410,7 +1626,9 @@ std::string MetaNode::handle_line(const std::string& line, AdminSession* sess) {
 
 // 创建 Raft/transport、绑定 Scaler/Scheduler 钩子、restore 迁移、起线程。
 void MetaNode::start() {
-  if (running_.exchange(true)) return;
+  if (running_.exchange(true)) {
+    return;
+  }
 
   if (!bootstrap_.meta_peers.empty()) {
     for (const auto& p : bootstrap_.meta_peers) {
@@ -1423,7 +1641,9 @@ void MetaNode::start() {
     std::string host;
     uint16_t port = 8500;
     net::parse_host_port(listen_addr_, &host, &port);
-    if (host.empty()) host = "0.0.0.0";
+    if (host.empty()) {
+      host = "0.0.0.0";
+    }
     std::string adv = (host == "0.0.0.0" ? "127.0.0.1" : host) + ":" + std::to_string(port);
     peers_.back().address = adv;
     transport_.set_peer(self_id_, adv);
@@ -1484,16 +1704,22 @@ void MetaNode::start() {
 
   // S1：Scaler — Meta 路由 + Storage ConfChange + catch-up 门闩
   auto add_learner = [this](uint32_t shard_id, const Replica& learner) {
-    if (!is_leader()) return false;
+    if (!is_leader()) {
+      return false;
+    }
     SKV_INFO << "scale add_learner region=" << shard_id << " peer=" << learner.node_id;
     MetaCommand cmd;
     cmd.op = MetaOp::kSetLearner;
     cmd.shard_id = shard_id;
     cmd.learner = learner;
     std::string err, redir;
-    if (!replicate(cmd, &err, &redir)) return false;
+    if (!replicate(cmd, &err, &redir)) {
+      return false;
+    }
     auto addr = region_leader_addr(shard_id);
-    if (!addr) return true;  // 尚无 Storage 可达：仅 Meta 表
+    if (!addr) {
+      return true;
+    }
     // 必须先在新节点 ENSURE（learner），否则 RAFT 消息会 get_or_create 成单副本
     // Leader（voters=1）。
     {
@@ -1501,17 +1727,27 @@ void MetaNode::start() {
       bool first = true;
       auto rt = state_->routing_table();
       for (const auto& region : rt.regions) {
-        if (region.region_id != shard_id) continue;
+        if (region.region_id != shard_id) {
+          continue;
+        }
         for (const auto& r : region.replicas) {
-          if (r.node_id == learner.node_id) continue;
-          if (!first) peers_csv << ',';
+          if (r.node_id == learner.node_id) {
+            continue;
+          }
+          if (!first) {
+            peers_csv << ',';
+          }
           first = false;
           peers_csv << r.node_id << '@' << r.address;
-          if (r.is_learner) peers_csv << "*N";
+          if (r.is_learner) {
+            peers_csv << "*N";
+          }
         }
         break;
       }
-      if (!first) peers_csv << ',';
+      if (!first) {
+        peers_csv << ',';
+      }
       peers_csv << learner.node_id << '@' << learner.address << "*N";
       try {
         auto er =
@@ -1531,12 +1767,16 @@ void MetaNode::start() {
     // ConfChange 可能遇 not_leader / busy / 瞬时超时；与 PROMOTE 一样短重试。
     for (int attempt = 0; attempt < 16; ++attempt) {
       auto cur = region_leader_addr(shard_id);
-      if (!cur) cur = addr;
+      if (!cur) {
+        cur = addr;
+      }
       try {
         auto resp = storage_rpc(*cur, std::string(proto::kOpAdminAddLearner) + " " +
                                           std::to_string(shard_id) + " " + learner.node_id + "@" +
                                           learner.address);
-        if (proto::starts_with_ok(resp)) return true;
+        if (proto::starts_with_ok(resp)) {
+          return true;
+        }
         SKV_WARN << "ADMIN_ADD_LEARNER: " << resp;
         if (resp.find("busy") == std::string::npos && resp.find("joint") == std::string::npos &&
             resp.find("not_leader") == std::string::npos &&
@@ -1552,7 +1792,9 @@ void MetaNode::start() {
   };
   auto catch_up = [this](uint32_t shard_id, const std::string& node_id) {
     auto addr = region_leader_addr(shard_id);
-    if (!addr) return true;
+    if (!addr) {
+      return true;
+    }
     try {
       auto resp = storage_rpc(*addr, std::string(proto::kOpAdminPeerProgress) + " " +
                                          std::to_string(shard_id) + " " + node_id);
@@ -1560,15 +1802,18 @@ void MetaNode::start() {
       std::string ok, tag;
       uint64_t match = 0, commit = 0, last = 0;
       int caught = 0;
-      if (!(iss >> ok >> tag >> match >> commit >> last >> caught) || ok != proto::kOk)
+      if (!(iss >> ok >> tag >> match >> commit >> last >> caught) || ok != proto::kOk) {
         return false;
+      }
       return caught == 1;
     } catch (...) {
       return false;
     }
   };
   auto promote = [this, &add_learner](uint32_t shard_id, const std::string& node_id) {
-    if (!is_leader()) return false;
+    if (!is_leader()) {
+      return false;
+    }
     SKV_INFO << "scale promote region=" << shard_id << " peer=" << node_id;
     auto addr = region_leader_addr(shard_id);
     if (addr) {
@@ -1597,7 +1842,9 @@ void MetaNode::start() {
                          << " peer=" << node_id;
               }
             }
-            if (auto fresh = region_leader_addr(shard_id)) addr = fresh;
+            if (auto fresh = region_leader_addr(shard_id)) {
+              addr = fresh;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(400));
             continue;
           }
@@ -1614,10 +1861,14 @@ void MetaNode::start() {
           }
         }
         // Leader 可能刚变；刷新地址再试
-        if (auto fresh = region_leader_addr(shard_id)) addr = fresh;
+        if (auto fresh = region_leader_addr(shard_id)) {
+          addr = fresh;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
       }
-      if (!ok) return false;
+      if (!ok) {
+        return false;
+      }
     }
     MetaCommand cmd;
     cmd.op = MetaOp::kPromote;
@@ -1639,61 +1890,89 @@ void MetaNode::start() {
   auto place_fn = [this](uint32_t region_id, const std::vector<std::string>& desired) {
     // 通知 Storage 执行 ADMIN_PLACE_REGION（完整 ConfChange，可能数十秒）
     // 优先打 Region Leader / 当前成员，避免对全量 Store 串行 180s 超时。
-    if (!is_leader()) return false;
-    if (desired.empty()) return false;
+    if (!is_leader()) {
+      return false;
+    }
+    if (desired.empty()) {
+      return false;
+    }
     std::ostringstream csv;
     for (size_t i = 0; i < desired.size(); ++i) {
-      if (i) csv << ',';
+      if (i) {
+        csv << ',';
+      }
       csv << desired[i];
     }
     const std::string req =
         std::string(proto::kOpAdminPlaceRegion) + " " + std::to_string(region_id) + " " + csv.str();
     std::vector<std::string> seeds;
-    if (auto la = region_leader_addr(region_id)) seeds.push_back(*la);
+    if (auto la = region_leader_addr(region_id)) {
+      seeds.push_back(*la);
+    }
     auto rt = state_->routing_table();
     for (const auto& reg : rt.regions) {
-      if (reg.region_id != region_id) continue;
+      if (reg.region_id != region_id) {
+        continue;
+      }
       for (const auto& r : reg.replicas) {
-        if (r.address.empty()) continue;
+        if (r.address.empty()) {
+          continue;
+        }
         bool dup = false;
-        for (const auto& s : seeds)
+        for (const auto& s : seeds) {
           if (s == r.address) {
-            dup = true;
-            break;
           }
-        if (!dup) seeds.push_back(r.address);
+          dup = true;
+          break;
+        }
+        if (!dup) {
+          seeds.push_back(r.address);
+        }
       }
       break;
     }
     for (const auto& id : desired) {
       auto n = state_->get_node(id);
-      if (!n || n->address.empty()) continue;
-      if (n->state == NodeState::kTombstone || n->state == NodeState::kOffline) continue;
+      if (!n || n->address.empty()) {
+        continue;
+      }
+      if (n->state == NodeState::kTombstone || n->state == NodeState::kOffline) {
+        continue;
+      }
       bool dup = false;
-      for (const auto& s : seeds)
+      for (const auto& s : seeds) {
         if (s == n->address) {
-          dup = true;
-          break;
         }
-      if (!dup) seeds.push_back(n->address);
+        dup = true;
+        break;
+      }
+      if (!dup) {
+        seeds.push_back(n->address);
+      }
     }
     for (const auto& addr : seeds) {
       try {
         auto resp = storage_rpc(addr, req);
-        if (proto::starts_with_ok(resp)) return true;
+        if (proto::starts_with_ok(resp)) {
+          return true;
+        }
       } catch (...) {
       }
     }
     return false;
   };
   auto commit_place = [this](uint32_t region_id, const std::vector<std::string>& desired) {
-    if (!is_leader()) return false;
+    if (!is_leader()) {
+      return false;
+    }
     MetaCommand cmd;
     cmd.op = MetaOp::kPlaceRegion;
     cmd.shard_id = region_id;
     for (const auto& id : desired) {
       auto node = state_->get_node(id);
-      if (!node) return false;
+      if (!node) {
+        return false;
+      }
       Replica r;
       r.node_id = node->node_id;
       r.address = node->address;
@@ -1751,12 +2030,18 @@ void MetaNode::start() {
 std::optional<std::string> MetaNode::region_leader_addr(uint32_t region_id) const {
   auto rt = state_->routing_table();
   for (const auto& region : rt.regions) {
-    if (region.region_id != region_id) continue;
-    for (const auto& r : region.replicas) {
-      if (r.is_leader && !r.address.empty()) return r.address;
+    if (region.region_id != region_id) {
+      continue;
     }
     for (const auto& r : region.replicas) {
-      if (!r.is_learner && !r.address.empty()) return r.address;
+      if (r.is_leader && !r.address.empty()) {
+        return r.address;
+      }
+    }
+    for (const auto& r : region.replicas) {
+      if (!r.is_learner && !r.address.empty()) {
+        return r.address;
+      }
     }
     if (!region.replicas.empty() && !region.replicas[0].address.empty()) {
       return region.replicas[0].address;
@@ -1805,13 +2090,17 @@ MetaNode::StatsSnapshot MetaNode::stats_snapshot() const {
 }
 
 void MetaNode::stop() {
-  if (!running_.exchange(false)) return;
+  if (!running_.exchange(false)) {
+    return;
+  }
   fire_route_watches(true);  // 先放行挂起 Watch，便于 gRPC Wait 收尾
   if (grpc_server_) {
     grpc_server_->stop();
     grpc_server_.reset();
   }
-  if (tick_thread_.joinable()) tick_thread_.join();
+  if (tick_thread_.joinable()) {
+    tick_thread_.join();
+  }
   fire_route_watches(true);
   transport_.stop();
   scheduler_.reset();
@@ -1821,7 +2110,9 @@ void MetaNode::stop() {
 // ~50ms 一轮：raft tick；~5s GC；~2s sweep（仅 Leader propose，不阻塞 tick）。
 void MetaNode::tick_loop() {
   while (running_) {
-    if (raft_) raft_->tick();
+    if (raft_) {
+      raft_->tick();
+    }
     fire_route_watches(false);  // WATCH 超时扫（~50ms 粒度）
     // ~5s：Leader 推进 GC safe point（50ms * 100）
     if (is_leader() && ++gc_advance_ticks_ >= 100) {

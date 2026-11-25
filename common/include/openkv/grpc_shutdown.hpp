@@ -29,20 +29,33 @@
 
 namespace openkv {
 
-/// 读 SKV_GRPC_SHUTDOWN_MS；非法或未设时用 default_ms（默认 15000）。
+/**
+ * 读 SKV_GRPC_SHUTDOWN_MS；非法或未设时用 default_ms（默认 15000）。
+ * @param default_ms 环境变量未设或非法时的默认宽限毫秒
+ */
 inline int grpc_shutdown_grace_ms(int default_ms = 15000) {
   if (const char* e = std::getenv(proto::env::kGrpcShutdownMs)) {
     char* end = nullptr;
     const long v = std::strtol(e, &end, 10);
-    if (end != e && v >= 0 && v <= 600000) return static_cast<int>(v);
+    if (end != e && v >= 0 && v <= 600000) {
+      return static_cast<int>(v);
+    }
   }
   return default_ms < 0 ? 0 : default_ms;
 }
 
-/// 拒接新请求；等到在途结束或 deadline；再 Wait 收尾。server 可为空。
+/**
+ * 拒接新请求；等到在途结束或 deadline；再 Wait 收尾。server 可为空。
+ * @param server 待关闭的 gRPC Server；可空
+ * @param grace_ms 关机宽限毫秒；<0 则读环境变量
+ */
 inline void graceful_grpc_shutdown(grpc::Server* server, int grace_ms = -1) {
-  if (!server) return;
-  if (grace_ms < 0) grace_ms = grpc_shutdown_grace_ms();
+  if (!server) {
+    return;
+  }
+  if (grace_ms < 0) {
+    grace_ms = grpc_shutdown_grace_ms();
+  }
   SKV_INFO << "grpc graceful shutdown grace_ms=" << grace_ms;
   if (grace_ms == 0) {
     server->Shutdown();

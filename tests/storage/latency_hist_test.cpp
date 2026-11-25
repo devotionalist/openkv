@@ -35,9 +35,13 @@ using openkv::storage::StoreFacade;
 
 TEST(LatencyHistTest, QuantilesAndPrometheus) {
   LatencyHistogram h;
-  for (int i = 0; i < 90; ++i) h.observe(200);  // <=250
-  for (int i = 0; i < 9; ++i) h.observe(8000);  // <=10000
-  h.observe(200000);                            // <=250000
+  for (int i = 0; i < 90; ++i) {
+    h.observe(200);
+  }
+  for (int i = 0; i < 9; ++i) {
+    h.observe(8000);
+  }
+  h.observe(200000);  // <=250000
   EXPECT_EQ(h.count(), 100u);
   EXPECT_EQ(h.quantile_us(0.50), 250u);
   EXPECT_GE(h.quantile_us(0.99), 10000u);
@@ -74,7 +78,9 @@ TEST(LatencyHistTest, FacadeRecordsPropose) {
   StoreFacade facade(node);
   node.start();
   for (int i = 0; i < 80; ++i) {
-    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) break;
+    if (auto* g = node.multi_raft().get(0); g && g->is_leader()) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   Command cmd;

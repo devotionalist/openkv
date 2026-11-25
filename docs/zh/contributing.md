@@ -9,7 +9,8 @@
 - **语言**：C++20（`CMAKE_CXX_STANDARD` / `make show-std`）
 - **风格**：[Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)；格式化见根目录 `.clang-format`
 - **命令**：`make format`（改文件）/ `make format-check`（只检查）
-- 注释可用中文白话；标识符保持英文。勿对全仓库做无必要的大重排。
+- **控制语句**：`if`/`for`/`while` 必须加大括号，身体换行缩进；禁止 `if (x) return;`（见 `.cursor/rules/cpp-control-braces.mdc`）
+- 注释符号按对象区分：类/结构 `/* */`、方法 `/** */`（含 `@param`/`@return`）、成员行尾 `//`（见 `.cursor/rules/cpp-class-method-comments.mdc`）。中文白话；标识符英文。勿对全仓库做无必要的大重排。
 
 ## 权限一览
 
