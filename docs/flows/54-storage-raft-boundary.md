@@ -72,10 +72,11 @@ Storage **不应**再出现：
 
 | 点 | 状态 | 说明 |
 |----|------|------|
-| 出站快照改包 | **已做** | Store SnapWorker 拼 payload 后直接 `InstallSnapshot` |
+| 出站快照改包 | **已做** | Store SnapWorker 组 `InstallSnapshotReq` 后 `transport_fn_` |
 | 出站接线 | **已做** | MultiRaft 持有 Transport 并接线；Storage 只 `set_peer` / `register_node` / apply |
 | propose→apply 等待 | **已做** | 通用 `raftstore::IndexWaiter`；Storage 只挂指标并把 apply 业务 error 塞进 `invoke` |
-| 入站 | 待收 | 仍 `RaftService` → `handle_raft_*` → `apply_inbound_raft` |
+| 结构化 RPC | **已做** | 无 pipe\|hex；见 [55-raft-structured-rpc](55-raft-structured-rpc.md) |
+| 入站 | **已做** | `RaftService` → `handle_raft_*` 组结构体 → `apply_inbound_raft` → `RaftReply` |
 | Store API | 待收 | 仍为 `transport_fn_` 闭包；理想 `Transport::send` |
 
 ---

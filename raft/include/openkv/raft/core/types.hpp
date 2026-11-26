@@ -69,10 +69,7 @@ struct SoftState {
 // 状态机回调：多数派提交后由 Raft Apply
 // 日志条目已 commit 且轮到 apply 时调用；须在 RaftNode 锁内或按实现约定串行 apply。
 using ApplyCallback = std::function<void(uint64_t index, const std::string& data)>;
-// 发送 AppendEntries / RequestVote（由上层 gRPC 实现）
-// 向指定 peer 发送 RPC；msg_type 如 "AppendEntries" / "RequestVote"，payload 由上层序列化。
-using TransportSend = std::function<void(const std::string& peer_id, const std::string& msg_type,
-                                         const std::string& payload)>;
+// TransportSend 定义在 ready.hpp（依赖 Message 完整类型）。
 
 /*
  * 成员变更提案：走 Raft 日志，commit 后再 apply 才改配置。

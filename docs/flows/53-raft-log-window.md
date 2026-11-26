@@ -50,14 +50,16 @@ next_index[peer] ≥ first_index  →  从 next 取条目发 AppendEntries
 
 ### 3.2 何时砍窗（compact）— `Apply::maybe_compact`
 
-须**同时**满足才会 `compact_to(last_applied)`：
+须**同时**满足才会砍窗：
 
 | 条件 | 默认/说明 |
 |------|-----------|
 | `compact_threshold != 0` | `0` = 永不砍 |
 | 有 `snap_provider_` | 没快照能力就砍 = 丢状态机历史 |
 | `last_applied ≥ first_index` | 窗内确实有已 apply 的前缀 |
-| `last_applied - first + 1 > compact_threshold` | 默认阈值 **256**（Storage 部分路径曾用 128，以 Options 为准） |
+| `last_applied - first + 1 > 2 * compact_threshold` | 默认阈值 **256**；**2× 滞回**，避免每 apply 一条就 compact+写 FSM 快照 |
+
+砍法：`compact_to(last_applied - compact_threshold)`——**保留最近 threshold 条**已 apply 日志给 AE 追赶；不是砍到 `last_applied`（那样会把窗砍空，高写入下 follower 稍慢就只能 InstallSnapshot）。
 
 砍之前先写本地 FSM 快照（`fsm_<gid>.snap`），再推进 `first_index`，并 `persist`。
 

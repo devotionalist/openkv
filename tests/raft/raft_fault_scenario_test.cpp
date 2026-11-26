@@ -42,21 +42,6 @@ using openkv::raft::RaftNode;
 using openkv::raft::Role;
 namespace fs = std::filesystem;
 
-std::vector<std::string> split_pipe(const std::string& s) {
-  std::vector<std::string> out;
-  std::string cur;
-  for (char c : s) {
-    if (c == '|') {
-      out.push_back(cur);
-      cur.clear();
-    } else {
-      cur.push_back(c);
-    }
-  }
-  out.push_back(cur);
-  return out;
-}
-
 struct ClusterOpts {
   bool enable_pre_vote{true};
   bool check_quorum{true};
@@ -114,8 +99,9 @@ class RaftFaultCluster {
 
       Slot* raw = slot.get();
       auto on_apply = [raw](uint64_t, const std::string& data) { raw->applied.push_back(data); };
-      auto send = [this, id = p.id](const std::string& to, const std::string& type,
-                                    const std::string& payload) { deliver(id, to, type, payload); };
+      auto send = [this, id = p.id](openkv::raft::Message msg) {
+        deliver(id, std::move(msg));
+      };
       slot->node =
           std::make_unique<RaftNode>(std::move(nopts), std::move(on_apply), std::move(send),
                                      std::move(provider), std::move(applier));
@@ -151,7 +137,7 @@ class RaftFaultCluster {
     held_.clear();
     hold_to_.clear();
     for (auto it = held.rbegin(); it != held.rend(); ++it) {
-      deliver_now(it->from, it->to, it->type, it->payload);
+      deliver_now(it->from, it->msg);
     }
   }
   int dropped() const { return dropped_; }
@@ -233,36 +219,37 @@ class RaftFaultCluster {
  private:
   struct Held {
     std::string from;
-    std::string to;
-    std::string type;
-    std::string payload;
+    openkv::raft::Message msg;
   };
 
   bool blocked(const std::string& from, const std::string& to) const {
     return isolated_.count(from) != 0 || isolated_.count(to) != 0;
   }
 
-  void deliver(const std::string& from, const std::string& to, const std::string& type,
-               const std::string& payload) {
-    if (!hold_to_.empty() && to == hold_to_ && type == "AppendEntries") {
-      held_.push_back(Held{from, to, type, payload});
+  void deliver(const std::string& from, openkv::raft::Message msg) {
+    using openkv::raft::MsgType;
+    const std::string type = openkv::raft::msg_type_name(msg.type);
+    if (!hold_to_.empty() && msg.to == hold_to_ && msg.type == MsgType::kAppendEntries) {
+      held_.push_back(Held{from, std::move(msg)});
       return;
     }
     if (delay_ms_ > 0) {
       std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms_));
     }
-    deliver_now(from, to, type, payload);
-    if (duplicate_ &&
-        (type == "AppendEntries" || type == "RequestVote" || type == "RequestPreVote")) {
-      deliver_now(from, to, type, payload);
+    deliver_now(from, msg);
+    if (duplicate_ && (msg.type == MsgType::kAppendEntries || msg.type == MsgType::kRequestVote ||
+                       msg.type == MsgType::kRequestPreVote)) {
+      deliver_now(from, msg);
     }
   }
 
-  void deliver_now(const std::string& from, const std::string& to, const std::string& type,
-                   const std::string& payload) {
+  void deliver_now(const std::string& from, const openkv::raft::Message& msg) {
+    using openkv::raft::MsgType;
+    const std::string& to = msg.to;
+    const std::string type = openkv::raft::msg_type_name(msg.type);
     if (blocked(from, to) || drop_types_.count(type)) {
       ++dropped_;
-      if (type == "AppendEntries" || type == "InstallSnapshot") {
+      if (msg.type == MsgType::kAppendEntries || msg.type == MsgType::kInstallSnapshot) {
         auto sit = nodes_.find(from);
         if (sit != nodes_.end()) {
           sit->second->node->on_rpc_transport_fail(to);
@@ -278,58 +265,36 @@ class RaftFaultCluster {
 
     RaftNode& dst = *dit->second->node;
     RaftNode& src = *sit->second->node;
-    const auto parts = split_pipe(payload);
 
     try {
-      if (type == "RequestVote" || type == "RequestPreVote") {
-        if (parts.size() < 3) {
+      if (msg.type == MsgType::kRequestVote || msg.type == MsgType::kRequestPreVote) {
+        const auto* v = std::get_if<openkv::raft::VoteReq>(&msg.payload);
+        if (!v) {
           return;
         }
-        const uint64_t term = std::stoull(parts[0]);
-        const uint64_t last_idx = std::stoull(parts[1]);
-        const uint64_t last_term = std::stoull(parts[2]);
         bool granted = false;
-        if (type == "RequestPreVote") {
-          dst.on_request_pre_vote(from, term, last_idx, last_term, &granted);
+        if (msg.type == MsgType::kRequestPreVote) {
+          dst.on_request_pre_vote(from, v->term, v->last_log_index, v->last_log_term, &granted);
           if (!drop_replies_) {
             src.on_request_pre_vote_reply(to, dst.soft_state().term, granted);
           }
         } else {
-          dst.on_request_vote(from, term, last_idx, last_term, &granted);
+          dst.on_request_vote(from, v->term, v->last_log_index, v->last_log_term, &granted);
           if (!drop_replies_) {
             src.on_request_vote_reply(to, dst.soft_state().term, granted);
           }
         }
         return;
       }
-      if (type == "AppendEntries") {
-        if (parts.size() < 5) {
+      if (msg.type == MsgType::kAppendEntries) {
+        const auto* ae = std::get_if<openkv::raft::AppendEntriesReq>(&msg.payload);
+        if (!ae) {
           return;
-        }
-        const uint64_t term = std::stoull(parts[0]);
-        const uint64_t prev_idx = std::stoull(parts[1]);
-        const uint64_t prev_term = std::stoull(parts[2]);
-        const uint64_t leader_commit = std::stoull(parts[3]);
-        const uint64_t nent = std::stoull(parts[4]);
-        std::vector<LogEntry> entries;
-        size_t off = 5;
-        for (uint64_t i = 0; i < nent; ++i) {
-          if (off + 2 >= parts.size()) {
-            return;
-          }
-          LogEntry e;
-          e.term = std::stoull(parts[off]);
-          e.index = std::stoull(parts[off + 1]);
-          if (!openkv::from_hex(parts[off + 2], &e.data)) {
-            return;
-          }
-          entries.push_back(std::move(e));
-          off += 3;
         }
         bool success = false;
         uint64_t match = 0;
-        dst.on_append_entries(from, term, prev_idx, prev_term, entries, leader_commit, &success,
-                              &match);
+        dst.on_append_entries(from, ae->term, ae->prev_log_index, ae->prev_log_term, ae->entries,
+                              ae->leader_commit, &success, &match);
         if (drop_replies_) {
           src.on_rpc_transport_fail(to);
           ++dropped_;
@@ -338,25 +303,19 @@ class RaftFaultCluster {
         src.on_append_entries_reply(to, dst.soft_state().term, success, match);
         return;
       }
-      if (type == "InstallSnapshot") {
-        if (parts.size() < 4) {
-          return;
-        }
-        const uint64_t term = std::stoull(parts[0]);
-        const uint64_t last_idx = std::stoull(parts[1]);
-        const uint64_t last_term = std::stoull(parts[2]);
-        std::string data;
-        if (!openkv::from_hex(parts[3], &data)) {
+      if (msg.type == MsgType::kInstallSnapshot) {
+        const auto* sn = std::get_if<openkv::raft::InstallSnapshotReq>(&msg.payload);
+        if (!sn) {
           return;
         }
         bool success = false;
-        dst.on_install_snapshot(from, term, last_idx, last_term, data, &success);
+        dst.on_install_snapshot(from, sn->term, sn->last_index, sn->last_term, sn->data, &success);
         if (drop_replies_) {
           src.on_rpc_transport_fail(to);
           ++dropped_;
           return;
         }
-        src.on_install_snapshot_reply(to, dst.soft_state().term, success, last_idx);
+        src.on_install_snapshot_reply(to, dst.soft_state().term, success, sn->last_index);
         return;
       }
     } catch (...) {

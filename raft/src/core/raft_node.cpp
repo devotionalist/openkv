@@ -274,21 +274,22 @@ bool RaftNode::propose(std::string data, uint64_t* assigned_index) {
     }
 
     progress_.match_index_[opts_.self_id] = idx;  // 更新匹配索引
-    if (assigned_index) {
+    if (assigned_index) {// 返回日志索引
       *assigned_index = idx;
     }
 
-    persist_locked();  // 持久化
+    // external_io：只把最新 HardState 标脏进 Ready；真写盘在 Store persist_ready。
+    // 嵌入路径：才可能在这里攒批刷引擎。
+    persist_locked();
     replication_.need_replicate_ = true;
     // external_io 出站只走 Ready：本拍必须入队 AE，不能等 tick。
     // 嵌入路径才吃 coalesce_replication。
-    if (opts_.external_io || !opts_.coalesce_replication ||
-        membership_.majority() <= 1) {  // 如果使用外部io，或者不合并复制，或者多数派小于等于1
+    if (opts_.external_io || !opts_.coalesce_replication || membership_.majority() <= 1) {
       replication_.maybe_replicate();
     }
-    replication_.maybe_commit();  // 提交
-    apply_.apply_committed();     // 应用提交
-    persist_locked();             // 持久化
+    replication_.maybe_commit();
+    apply_.apply_committed();
+    persist_locked();  // commit/apply 可能改了 HardState，再记一版待外提
   }
   ready_pump_.flush_transport();
   return true;

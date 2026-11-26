@@ -20,10 +20,12 @@
 
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "openkv/raft/core/raft_rpc.hpp"
 #include "openkv/raft/core/types.hpp"
 
 namespace openkv::raft {
@@ -38,11 +40,11 @@ struct HardState {
   uint64_t commit{0};  // 已提交最大 index（commit_index）
 };
 
-/* 待发送的 Raft RPC（由外层 Transport 发出）。 */
+/* 待发送的 Raft RPC（结构体载荷；外层 Transport 直接填 proto，不拼 pipe|hex）。 */
 struct Message {
-  std::string to;       // 目标 peer id
-  std::string type;     // AppendEntries / RequestVote / RequestPreVote / InstallSnapshot
-  std::string payload;  // 已序列化请求体
+  std::string to;                              // 目标 peer id
+  MsgType type{MsgType::kAppendEntries};       // RPC 种类
+  RaftReq payload;                             // Vote / AE / Snap；壳快照 data 可空
 };
 
 /* 快照元数据；blob 由外层 SnapshotProvider 填充后发送。 */
@@ -53,6 +55,9 @@ struct SnapshotMeta {
   std::string conf_state;  // 发送时的成员表（id@addr[*N],...）。接收端安装快照时恢复，避免
                            // compact窗口吞掉 ConfChange 后 Learner 从新 Leader 成员表消失。
 };
+
+// 向指定 peer 发送已组好的 Raft RPC（结构体；GrpcRaftTransport::bind 入队）。
+using TransportSend = std::function<void(Message msg)>;
 
 /* 一轮协议输出：外层（Store）须按序 persist → 发网 → apply → advance。 */
 struct Ready {

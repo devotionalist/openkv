@@ -1115,57 +1115,77 @@ std::string StorageNode::advertise_address() const {
   return adv;
 }
 
-std::string StorageNode::handle_raft_vote(uint32_t shard, const std::string &from, uint64_t term,
-                                          uint64_t last_idx, uint64_t last_term) {
+openkv::raft::RaftReply StorageNode::handle_raft_vote(uint32_t shard, const std::string &from,
+                                                      uint64_t term, uint64_t last_idx,
+                                                      uint64_t last_term) {
   if (region_destroyed(shard)) {
-    return openkv::err::line(err::kDestroyed);
+    return openkv::raft::RaftReply::error(openkv::err::line(err::kDestroyed));
   }
   // S2：入站只进 Store/Router，禁止直调协议状态机。
-  std::ostringstream payload;
-  payload << term << '|' << last_idx << '|' << last_term;
-  return multi_raft_->store().apply_inbound_raft(
-      shard, raftstore::RaftMessage{from, "RequestVote", payload.str()});
+  raftstore::RaftMessage m;
+  m.from = from;
+  m.type = raft::MsgType::kRequestVote;
+  raft::VoteReq req;
+  req.term = term;
+  req.last_log_index = last_idx;
+  req.last_log_term = last_term;
+  m.payload = std::move(req);
+  return multi_raft_->store().apply_inbound_raft(shard, std::move(m));
 }
 
-std::string StorageNode::handle_raft_pre_vote(uint32_t shard, const std::string &from,
-                                              uint64_t term, uint64_t last_idx,
-                                              uint64_t last_term) {
+openkv::raft::RaftReply StorageNode::handle_raft_pre_vote(uint32_t shard, const std::string &from,
+                                                          uint64_t term, uint64_t last_idx,
+                                                          uint64_t last_term) {
   if (region_destroyed(shard)) {
-    return openkv::err::line(err::kDestroyed);
+    return openkv::raft::RaftReply::error(openkv::err::line(err::kDestroyed));
   }
-  std::ostringstream payload;
-  payload << term << '|' << last_idx << '|' << last_term;
-  return multi_raft_->store().apply_inbound_raft(
-      shard, raftstore::RaftMessage{from, "RequestPreVote", payload.str()});
+  raftstore::RaftMessage m;
+  m.from = from;
+  m.type = raft::MsgType::kRequestPreVote;
+  raft::VoteReq req;
+  req.term = term;
+  req.last_log_index = last_idx;
+  req.last_log_term = last_term;
+  m.payload = std::move(req);
+  return multi_raft_->store().apply_inbound_raft(shard, std::move(m));
 }
 
-std::string StorageNode::handle_raft_append(uint32_t shard, const std::string &from, uint64_t term,
-                                            uint64_t prev_idx, uint64_t prev_term,
-                                            uint64_t leader_commit,
-                                            const std::vector<openkv::raft::LogEntry> &entries) {
+openkv::raft::RaftReply StorageNode::handle_raft_append(
+    uint32_t shard, const std::string &from, uint64_t term, uint64_t prev_idx, uint64_t prev_term,
+    uint64_t leader_commit, std::vector<openkv::raft::LogEntry> entries) {
   if (region_destroyed(shard)) {
-    return openkv::err::line(err::kDestroyed);
+    return openkv::raft::RaftReply::error(openkv::err::line(err::kDestroyed));
   }
-  std::ostringstream payload;
-  payload << term << '|' << prev_idx << '|' << prev_term << '|' << leader_commit << '|'
-          << entries.size();
-  for (const auto &e : entries) {
-    payload << '|' << e.term << '|' << e.index << '|' << to_hex(e.data);
-  }
-  return multi_raft_->store().apply_inbound_raft(
-      shard, raftstore::RaftMessage{from, "AppendEntries", payload.str()});
+  raftstore::RaftMessage m;
+  m.from = from;
+  m.type = raft::MsgType::kAppendEntries;
+  raft::AppendEntriesReq req;
+  req.term = term;
+  req.prev_log_index = prev_idx;
+  req.prev_log_term = prev_term;
+  req.leader_commit = leader_commit;
+  req.entries = std::move(entries);
+  m.payload = std::move(req);
+  return multi_raft_->store().apply_inbound_raft(shard, std::move(m));
 }
 
-std::string StorageNode::handle_raft_snapshot(uint32_t shard, const std::string &from,
-                                              uint64_t term, uint64_t last_idx, uint64_t last_term,
-                                              std::string_view data) {
+openkv::raft::RaftReply StorageNode::handle_raft_snapshot(uint32_t shard, const std::string &from,
+                                                          uint64_t term, uint64_t last_idx,
+                                                          uint64_t last_term,
+                                                          std::string_view data) {
   if (region_destroyed(shard)) {
-    return openkv::err::line(err::kDestroyed);
+    return openkv::raft::RaftReply::error(openkv::err::line(err::kDestroyed));
   }
-  std::ostringstream payload;
-  payload << term << '|' << last_idx << '|' << last_term << '|' << to_hex(data);
-  return multi_raft_->store().apply_inbound_raft(
-      shard, raftstore::RaftMessage{from, "InstallSnapshot", payload.str()});
+  raftstore::RaftMessage m;
+  m.from = from;
+  m.type = raft::MsgType::kInstallSnapshot;
+  raft::InstallSnapshotReq req;
+  req.term = term;
+  req.last_index = last_idx;
+  req.last_term = last_term;
+  req.data.assign(data.data(), data.size());
+  m.payload = std::move(req);
+  return multi_raft_->store().apply_inbound_raft(shard, std::move(m));
 }
 
 std::string StorageNode::handle_raft_snap_chunk(uint32_t shard, const std::string &from,
@@ -1190,7 +1210,13 @@ std::string StorageNode::handle_raft_snap_chunk(uint32_t shard, const std::strin
     return "OK SNAPC " + std::to_string(g ? g->soft_state().term : term) + " 1 " +
            std::to_string(offset + chunk.size());
   }
-  return handle_raft_snapshot(shard, from, out_term, last_idx, out_last_term, data);
+  // 遗留文本口：收齐后走结构体入站，再压成一行。
+  auto r = handle_raft_snapshot(shard, from, out_term, last_idx, out_last_term, data);
+  if (r.kind == raft::RaftReply::Kind::kError) {
+    return r.err;
+  }
+  return "OK SNAP " + std::to_string(r.term) + " " + (r.ok ? "1" : "0") + " " +
+         std::to_string(r.match_index);
 }
 
 void StorageNode::ensure_region(uint32_t region_id) {

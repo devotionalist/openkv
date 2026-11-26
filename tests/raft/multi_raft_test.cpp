@@ -41,7 +41,7 @@ TEST(MultiRaftTest, GetOrCreateAndLeaders) {
         opts.heartbeat_ms = 50;
         return std::make_shared<RaftNode>(
             opts, [](uint64_t, const std::string&) {},
-            [](const std::string&, const std::string&, const std::string&) {});
+            [](openkv::raft::Message) {});
       },
       mopts);
 

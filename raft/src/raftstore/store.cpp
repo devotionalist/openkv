@@ -19,36 +19,16 @@
 #include "openkv/raftstore/store.hpp"
 
 #include <chrono>
-#include <sstream>
 #include <type_traits>
 #include <variant>
 #include <vector>
 
-#include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/raft/util/snap_stream.hpp"
 #include "openkv/raftstore/errors.hpp"
 #include "openkv/raftstore/write_batch_merge.hpp"
 
 namespace openkv::raftstore {
-namespace {
-
-std::vector<std::string> split_pipe(const std::string& s) {
-  std::vector<std::string> out;
-  size_t i = 0;
-  while (i <= s.size()) {
-    auto p = s.find('|', i);
-    if (p == std::string::npos) {
-      out.push_back(s.substr(i));
-      break;
-    }
-    out.push_back(s.substr(i, p - i));
-    i = p + 1;
-  }
-  return out;
-}
-
-}  // namespace
 
 Store::Store(Options opts, NodeFactory factory)
     : opts_(opts), factory_(std::move(factory)), router_(std::make_shared<Router>()) {
@@ -73,14 +53,12 @@ Store::Store(Options opts, NodeFactory factory)
     meta->term = lt;
     return data;
   };
-  // 【出网入口·快照】SnapWorker 拉完 blob 后，在 Store 内拼成 InstallSnapshot 再交给
-  // transport_fn_。 线协议改包留在 raftstore，Storage 只提供 bind/发送能力（见 flows/54）。
+  // 【出网入口·快照】SnapWorker 拉完 blob 后组 InstallSnapshotReq，交给 transport_fn_。
   SnapWorker::Sender send = [this](uint32_t rid, const raft::SnapshotMeta& meta,
                                    const std::string& data) {
     if (!transport_fn_) {
       return;
     }
-    // blob 前可带 ConfState（kMagicSnapConf）；线格式：term|last_idx|last_term|hex(blob)
     std::string blob = data;
     if (!meta.conf_state.empty()) {
       blob = std::string(raft::kMagicSnapConf) + meta.conf_state + "\n" + data;
@@ -89,9 +67,16 @@ Store::Store(Options opts, NodeFactory factory)
     if (auto* n = get(rid)) {
       raft_term = n->soft_state().term;
     }
-    std::ostringstream oss;
-    oss << raft_term << '|' << meta.index << '|' << meta.term << '|' << openkv::to_hex(blob);
-    transport_fn_(rid, meta.to, "InstallSnapshot", oss.str());
+    raft::Message msg;
+    msg.to = meta.to;
+    msg.type = raft::MsgType::kInstallSnapshot;
+    raft::InstallSnapshotReq req;
+    req.term = raft_term;
+    req.last_index = meta.index;
+    req.last_term = meta.term;
+    req.data = std::move(blob);
+    msg.payload = std::move(req);
+    transport_fn_(rid, std::move(msg));
     batch_->note_snap_done();
   };
   snap_ = std::make_unique<SnapWorker>(opts_.snap, std::move(prov), std::move(send));
@@ -348,18 +333,21 @@ bool Store::send_raft_message(uint32_t region_id, RaftMessage msg) {
 
 raft::RaftNode* Store::peer_node(Peer& peer) { return peer.raft_node(); }
 
-std::string Store::apply_inbound_raft(uint32_t region_id, RaftMessage msg) {
+raft::RaftReply Store::apply_inbound_raft(uint32_t region_id, RaftMessage msg) {
   std::shared_ptr<Peer> peer;
   {
     std::lock_guard<std::mutex> lk(mu_);
     peer = peer_locked(region_id);
   }
   if (!peer) {
-    return openkv::err::line(err::kNoRegion);
+    return raft::RaftReply::error(openkv::err::line(err::kNoRegion));
   }
   wake_peer(*peer);
-  // 同步步进（行协议需立即回包）；同时投递 Router 作唤醒/批处理对齐。
-  router_->send_raft(region_id, RaftMessage{msg.from, msg.type, {}});
+  // 同步步进（gRPC 需立即回包）；同时投递 Router 作唤醒/批处理对齐。
+  RaftMessage wake;
+  wake.from = msg.from;
+  wake.type = msg.type;
+  router_->send_raft(region_id, std::move(wake));
   return step_raft_message(*peer, msg, /*run_ready=*/true);
 }
 
@@ -521,7 +509,7 @@ void Store::handle_tick(Peer& peer, bool run_ready) {
 }
 
 void Store::handle_raft_message(Peer& peer, const RaftMessage& msg) {
-  if (msg.payload.empty()) {
+  if (msg.is_wake()) {
     // 仅唤醒（apply_inbound_raft 已同步 step）；Ready 留给批末。
     peer.touch_activity();
     return;
@@ -529,14 +517,12 @@ void Store::handle_raft_message(Peer& peer, const RaftMessage& msg) {
   (void)step_raft_message(peer, msg, /*run_ready=*/false);
 }
 
-std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready) {
+raft::RaftReply Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready) {
   auto* n = peer_node(peer);
   if (!n) {
-    return openkv::err::line(err::kNoRegion);
+    return raft::RaftReply::error(openkv::err::line(err::kNoRegion));
   }
   peer.touch_activity();
-  const auto& type = msg.type;
-  const auto parts = split_pipe(msg.payload);
   auto maybe_ready = [&] {
     // 入站须同步落盘后再回包，禁止 pipeline。
     if (run_ready) {
@@ -544,91 +530,73 @@ std::string Store::step_raft_message(Peer& peer, const RaftMessage& msg, bool ru
     }
   };
   try {
-    if (type == "RequestVote" || type == "RequestPreVote") {
-      if (parts.size() < 3) {
-        return openkv::err::line(err::kBadVote);
+    if (msg.type == raft::MsgType::kRequestVote || msg.type == raft::MsgType::kRequestPreVote) {
+      const auto* v = std::get_if<raft::VoteReq>(&msg.payload);
+      if (!v) {
+        return raft::RaftReply::error(openkv::err::line(err::kBadVote));
       }
-      const uint64_t term = std::stoull(parts[0]);
-      const uint64_t last_idx = std::stoull(parts[1]);
-      const uint64_t last_term = std::stoull(parts[2]);
       bool granted = false;
-      if (type == "RequestPreVote") {
-        n->on_request_pre_vote(msg.from, term, last_idx, last_term, &granted);
+      if (msg.type == raft::MsgType::kRequestPreVote) {
+        n->on_request_pre_vote(msg.from, v->term, v->last_log_index, v->last_log_term, &granted);
       } else {
-        n->on_request_vote(msg.from, term, last_idx, last_term, &granted);
+        n->on_request_vote(msg.from, v->term, v->last_log_index, v->last_log_term, &granted);
       }
       maybe_ready();
-      auto st = n->soft_state();
-      return std::string("OK ") + (type == "RequestPreVote" ? "PREVOTE " : "VOTE ") +
-             std::to_string(st.term) + " " + (granted ? "1" : "0");
+      raft::RaftReply r;
+      r.kind = msg.type == raft::MsgType::kRequestPreVote ? raft::RaftReply::Kind::kPreVote
+                                                          : raft::RaftReply::Kind::kVote;
+      r.term = n->soft_state().term;
+      r.ok = granted;
+      return r;
     }
-    if (type == "AppendEntries") {
-      // term|prev|prev_term|commit|n|[term|idx|hex]*
-      if (parts.size() < 5) {
-        return openkv::err::line(err::kBadAe);
-      }
-      const uint64_t term = std::stoull(parts[0]);
-      const uint64_t prev_idx = std::stoull(parts[1]);
-      const uint64_t prev_term = std::stoull(parts[2]);
-      const uint64_t leader_commit = std::stoull(parts[3]);
-      const uint64_t nent = std::stoull(parts[4]);
-      std::vector<raft::LogEntry> entries;
-      entries.reserve(static_cast<size_t>(nent));
-      size_t off = 5;
-      for (uint64_t i = 0; i < nent; ++i) {
-        if (off + 2 >= parts.size()) {
-          return openkv::err::line(err::kAeTrunc);
-        }
-        raft::LogEntry e;
-        e.term = std::stoull(parts[off]);
-        e.index = std::stoull(parts[off + 1]);
-        if (!openkv::from_hex(parts[off + 2], &e.data)) {
-          return openkv::err::line(err::kAeBadHex);
-        }
-        entries.push_back(std::move(e));
-        off += 3;
+    if (msg.type == raft::MsgType::kAppendEntries) {
+      const auto* ae = std::get_if<raft::AppendEntriesReq>(&msg.payload);
+      if (!ae) {
+        return raft::RaftReply::error(openkv::err::line(err::kBadAe));
       }
       bool success = false;
       uint64_t match = 0;
-      n->on_append_entries(msg.from, term, prev_idx, prev_term, entries, leader_commit, &success,
-                           &match);
+      n->on_append_entries(msg.from, ae->term, ae->prev_log_index, ae->prev_log_term, ae->entries,
+                           ae->leader_commit, &success, &match);
       maybe_ready();
-      auto st = n->soft_state();
-      return "OK AE " + std::to_string(st.term) + " " + (success ? "1" : "0") + " " +
-             std::to_string(match);
+      raft::RaftReply r;
+      r.kind = raft::RaftReply::Kind::kAppend;
+      r.term = n->soft_state().term;
+      r.ok = success;
+      r.match_index = match;
+      return r;
     }
-    if (type == "InstallSnapshot") {
-      // term|last_idx|last_term|hex
-      if (parts.size() < 4) {
-        return openkv::err::line(err::kBadSnap);
-      }
-      const uint64_t term = std::stoull(parts[0]);
-      const uint64_t last_idx = std::stoull(parts[1]);
-      const uint64_t last_term = std::stoull(parts[2]);
-      std::string data;
-      if (!openkv::from_hex(parts[3], &data)) {
-        return openkv::err::line(err::kSnapBadHex);
+    if (msg.type == raft::MsgType::kInstallSnapshot) {
+      const auto* sn = std::get_if<raft::InstallSnapshotReq>(&msg.payload);
+      if (!sn) {
+        return raft::RaftReply::error(openkv::err::line(err::kBadSnap));
       }
       bool success = false;
-      n->on_install_snapshot(msg.from, term, last_idx, last_term, data, &success);
+      n->on_install_snapshot(msg.from, sn->term, sn->last_index, sn->last_term, sn->data, &success);
       maybe_ready();
-      auto st = n->soft_state();
-      return "OK SNAP " + std::to_string(st.term) + " " + (success ? "1" : "0") + " " +
-             std::to_string(last_idx);
+      raft::RaftReply r;
+      r.kind = raft::RaftReply::Kind::kSnap;
+      r.term = n->soft_state().term;
+      r.ok = success;
+      r.match_index = sn->last_index;
+      return r;
     }
   } catch (...) {
-    return openkv::err::line(err::kStep);
+    return raft::RaftReply::error(openkv::err::line(err::kStep));
   }
   maybe_ready();
-  return openkv::err::line(err::kUnknownRaftType);
+  return raft::RaftReply::error(openkv::err::line(err::kUnknownRaftType));
 }
 
 void Store::dispatch_ready_after_persist(Peer& peer, raft::Ready& rd) {
   // persist 已完成；下面才进入「出站」。mailbox/ReadyPump 此前都还不是网络。
   if (transport_fn_) {
-    for (const auto& m : rd.messages) {
-      if (m.type == "InstallSnapshot" && ((rd.snapshot && rd.snapshot->to == m.to) ||
-                                          m.payload.empty() || m.payload.back() == '|')) {
+    for (auto& m : rd.messages) {
+      const auto* snap_req = std::get_if<raft::InstallSnapshotReq>(&m.payload);
+      const bool snap_shell =
+          m.type == raft::MsgType::kInstallSnapshot &&
+          ((rd.snapshot && rd.snapshot->to == m.to) || !snap_req || snap_req->data.empty());
+      if (snap_shell) {
         if (batch_ && batch_->snap_overloaded()) {
           SKV_WARN << "snap QoS reject region=" << peer.region_id();
           continue;
@@ -639,8 +607,6 @@ void Store::dispatch_ready_after_persist(Peer& peer, raft::Ready& rd) {
         if (rd.snapshot) {
           t.meta = *rd.snapshot;
         } else {
-          {
-          }
           t.meta.to = m.to;
         }
         if (batch_) {
@@ -651,8 +617,8 @@ void Store::dispatch_ready_after_persist(Peer& peer, raft::Ready& rd) {
         }
         continue;
       }
-      // 【出网入口】AE/Vote/已拼好的 InstallSnapshot → 调用方 transport_fn_（如 gRPC bind）。
-      transport_fn_(peer.region_id(), m.to, m.type, m.payload);
+      // 【出网入口】AE/Vote/已带 blob 的 InstallSnapshot → 调用方 transport_fn_（如 gRPC bind）。
+      transport_fn_(peer.region_id(), std::move(m));
     }
   }
   if (!rd.committed_entries.empty()) {
@@ -699,9 +665,13 @@ void Store::process_ready(Peer& peer, bool pipeline) {
       return;
     }
     // 每次只提交一批 Ready 到 IO；完成后由 PersistDone 再发网/apply/advance。
+    // 落盘线程只需 HS/entries/must_sync；messages 只留在 pending（勿整份 Ready 拷去 IO 线程）。
     raft::Ready rd = n->take_ready();
     const uint32_t rid = peer.region_id();
-    auto rd_io = std::make_shared<raft::Ready>(rd);
+    auto rd_io = std::make_shared<raft::Ready>();
+    rd_io->hard_state = rd.hard_state;
+    rd_io->entries = rd.entries;
+    rd_io->must_sync = rd.must_sync;
     peer.set_pending_ready(std::move(rd));
     peer.set_persist_inflight(true);
     persist_->submit([this, rid, rd_io] {

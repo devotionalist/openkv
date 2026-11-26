@@ -98,14 +98,20 @@ propose → wait_apply_async(index) → apply 完成 invoke → Finish(ACK)
 
 `Store::process_ready` 对每一批 Ready **固定顺序**：
 
-1. **`persist_fn` → `RaftNode::persist_ready` → `Engine::consume(sync)`**
-2. 再 `transport_fn`（发 AE 等）
+1. **`persist_fn` → `RaftNode::persist_ready` → `Engine::consume(sync)`**（本机 Raft WAL）
+2. 再 `transport_fn`（发 **AE** 等）
 3. 再把 `committed_entries` 投到 Apply 邮箱
 4. 最后 `advance`
 
-因此：**投递 apply（进而 ACK）之前，本批 unstable 日志已走完 persist_ready。**
+因此：
+
+- **投递 apply（进而 ACK）之前，本批 unstable 日志已走完 persist_ready。**
+- **先本机落盘，再出站 AE**；不是等 Follower 回 AE 才写 WAL。  
+  （AE = AppendEntries，Leader 推日志/心跳的 RPC。）
 
 `external_io` 下 `apply_committed` 只把条目放进 `ready_committed_`，**不会**绕过 Ready 直接写 KV / 唤醒 waiter。
+
+propose 里的 `persist_locked()` 在 Storage 上只是标 HardState 脏进 Ready，**真 fsync 在本批 `persist_ready`**。细节见 [47-log-persist.md](47-log-persist.md) §5.1–5.3。
 
 ### 2.3 sync 何时为 true
 

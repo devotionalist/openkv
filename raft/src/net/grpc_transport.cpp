@@ -34,7 +34,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "openkv/codec.hpp"
 #include "openkv/grpc_keepalive.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/raft/util/raft_fault_inject.hpp"
@@ -49,48 +48,26 @@ constexpr int kMaxQueue = 4096;
 constexpr int kGrpcMsgBytes = 64 << 20;          // 64MiB 安全上限
 constexpr size_t kDefaultSnapChunk = 256 << 10;  // 256KiB 分片，避开默认 4MiB 限制
 
-std::vector<std::string> split_pipe(const std::string& s) {
-  std::vector<std::string> out;
-  std::string cur;
-  for (char c : s) {
-    if (c == '|') {
-      out.push_back(cur);
-      cur.clear();
-    } else {
-      cur.push_back(c);
-    }
-  }
-  out.push_back(cur);
-  return out;
-}
-
-int priority_of(const std::string& type, const std::string& payload) {
-  if (type == "RequestPreVote" || type == "RequestVote") {
-    return 30;
-  }
-  if (type == "AppendEntries") {
-    // 空心跳提高优先级，避免被复制/快照堵住导致 check_quorum 误判。
-    int bars = 0;
-    size_t i = 0;
-    for (; i < payload.size() && bars < 4; ++i) {
-      if (payload[i] == '|') {
-        ++bars;
+int priority_of(const Message& m) {
+  switch (m.type) {
+    case MsgType::kRequestPreVote:
+    case MsgType::kRequestVote:
+      return 30;
+    case MsgType::kAppendEntries: {
+      // 空心跳提高优先级，避免被复制/快照堵住导致 check_quorum 误判。
+      if (const auto* ae = std::get_if<AppendEntriesReq>(&m.payload)) {
+        return ae->entries.empty() ? 25 : 20;
       }
+      return 20;
     }
-    if (bars == 4 && i < payload.size() && payload[i] == '0' &&
-        (i + 1 >= payload.size() || payload[i + 1] == '|')) {
-      return 25;
-    }
-    return 20;
-  }
-  if (type == "InstallSnapshot") {
-    return 10;
+    case MsgType::kInstallSnapshot:
+      return 10;
   }
   return 0;
 }
 
-bool needs_fail_callback(const std::string& type) {
-  return type == "AppendEntries" || type == "InstallSnapshot";
+bool needs_fail_callback(MsgType type) {
+  return type == MsgType::kAppendEntries || type == MsgType::kInstallSnapshot;
 }
 
 }  // namespace
@@ -99,9 +76,7 @@ struct GrpcRaftTransport::Impl {
   struct Job {
     uint32_t shard{0};
     std::string self_id;
-    std::string peer_id;
-    std::string type;
-    std::string payload;
+    Message msg;
     int priority{0};
     uint64_t seq{0};
   };
@@ -208,7 +183,7 @@ struct GrpcRaftTransport::Impl {
 
     void OnWriteDone(bool ok) override {
       if (!ok) {
-        SKV_WARN << "InstallSnapshot write fail to=" << job_.peer_id << " addr=" << addr_
+        SKV_WARN << "InstallSnapshot write fail to=" << job_.msg.to << " addr=" << addr_
                  << " offset=" << offset_;
         if (!last_was_done_) {
           StartWritesDone();
@@ -274,6 +249,9 @@ struct GrpcRaftTransport::Impl {
   void dispatch(const Job& job) {
     std::shared_ptr<RaftNode> node;
     std::string addr;
+    const std::string& peer_id = job.msg.to;
+    const MsgType type = job.msg.type;
+    const char* type_name = msg_type_name(type);
     {
       std::lock_guard<std::mutex> lock(mu_);
       auto it = nodes_.find(job.shard);
@@ -281,10 +259,10 @@ struct GrpcRaftTransport::Impl {
         return;
       }
       node = it->second;
-      auto pit = peers_.find(job.peer_id);
+      auto pit = peers_.find(peer_id);
       if (pit == peers_.end() || pit->second.empty()) {
-        if (needs_fail_callback(job.type)) {
-          node->on_rpc_transport_fail(job.peer_id);
+        if (needs_fail_callback(type)) {
+          node->on_rpc_transport_fail(peer_id);
         }
         return;
       }
@@ -293,15 +271,15 @@ struct GrpcRaftTransport::Impl {
 
     // 演练注入：先延迟再丢包（默认全关，enabled() 短路）。
     if (fault_.enabled()) {
-      if (const int d = fault_.delay_ms_for(job.type); d > 0) {
+      if (const int d = fault_.delay_ms_for(type_name); d > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(d));
       }
       thread_local std::mt19937 rng{std::random_device{}()};
       std::uniform_int_distribution<int> roll(0, 99);
-      if (fault_.should_drop(job.type, roll(rng))) {
+      if (fault_.should_drop(type_name, roll(rng))) {
         dropped_.fetch_add(1, std::memory_order_relaxed);
-        if (needs_fail_callback(job.type)) {
-          node->on_rpc_transport_fail(job.peer_id);
+        if (needs_fail_callback(type)) {
+          node->on_rpc_transport_fail(peer_id);
         }
         return;
       }
@@ -309,17 +287,17 @@ struct GrpcRaftTransport::Impl {
 
     auto stub = stub_for(addr);
     if (!stub) {
-      if (needs_fail_callback(job.type)) {
-        node->on_rpc_transport_fail(job.peer_id);
+      if (needs_fail_callback(type)) {
+        node->on_rpc_transport_fail(peer_id);
       }
       return;
     }
 
     try {
-      // 【真正网络发送】worker 里对 peer stub 发起 gRPC（Vote / AE / Snapshot 同理）。
-      if (job.type == "RequestVote" || job.type == "RequestPreVote") {
-        auto parts = split_pipe(job.payload);
-        if (parts.size() < 3) {
+      // 【真正网络发送】结构体 → proto，无 pipe|hex。
+      if (type == MsgType::kRequestVote || type == MsgType::kRequestPreVote) {
+        const auto* v = std::get_if<VoteReq>(&job.msg.payload);
+        if (!v) {
           return;
         }
         auto ctx = std::make_shared<grpc::ClientContext>();
@@ -327,11 +305,11 @@ struct GrpcRaftTransport::Impl {
         auto req = std::make_shared<::storage::v1::RequestVoteRequest>();
         req->set_shard_id(job.shard);
         req->set_candidate_id(job.self_id);
-        req->set_term(std::stoull(parts[0]));
-        req->set_last_log_index(std::stoull(parts[1]));
-        req->set_last_log_term(std::stoull(parts[2]));
+        req->set_term(v->term);
+        req->set_last_log_index(v->last_log_index);
+        req->set_last_log_term(v->last_log_term);
         auto resp = std::make_shared<::storage::v1::RequestVoteResponse>();
-        const bool pre = (job.type == "RequestPreVote");
+        const bool pre = (type == MsgType::kRequestPreVote);
         auto done = std::make_shared<std::promise<grpc::Status>>();
         auto fut = done->get_future();
         auto cb = [done, stub, ctx, req, resp](grpc::Status st) {
@@ -350,17 +328,17 @@ struct GrpcRaftTransport::Impl {
           return;
         }
         if (pre) {
-          node->on_request_pre_vote_reply(job.peer_id, resp->term(), resp->vote_granted());
+          node->on_request_pre_vote_reply(peer_id, resp->term(), resp->vote_granted());
         } else {
-          node->on_request_vote_reply(job.peer_id, resp->term(), resp->vote_granted());
+          node->on_request_vote_reply(peer_id, resp->term(), resp->vote_granted());
         }
         return;
       }
 
-      if (job.type == "AppendEntries") {
-        auto parts = split_pipe(job.payload);
-        if (parts.size() < 5) {
-          node->on_rpc_transport_fail(job.peer_id);
+      if (type == MsgType::kAppendEntries) {
+        const auto* ae = std::get_if<AppendEntriesReq>(&job.msg.payload);
+        if (!ae) {
+          node->on_rpc_transport_fail(peer_id);
           return;
         }
         auto ctx = std::make_shared<grpc::ClientContext>();
@@ -368,28 +346,19 @@ struct GrpcRaftTransport::Impl {
         auto req = std::make_shared<::storage::v1::AppendEntriesRequest>();
         req->set_shard_id(job.shard);
         req->set_leader_id(job.self_id);
-        req->set_term(std::stoull(parts[0]));
-        req->set_prev_log_index(std::stoull(parts[1]));
-        req->set_prev_log_term(std::stoull(parts[2]));
-        req->set_leader_commit(std::stoull(parts[3]));
-        const size_t n = static_cast<size_t>(std::stoull(parts[4]));
-        size_t idx = 5;
-        for (size_t i = 0; i < n && idx + 2 < parts.size(); ++i) {
-          auto* e = req->add_entries();
-          e->set_term(std::stoull(parts[idx]));
-          e->set_index(std::stoull(parts[idx + 1]));
-          std::string bin;
-          if (openkv::from_hex(parts[idx + 2], &bin)) {
-            e->set_data(bin);
-          } else {
-            e->set_data(parts[idx + 2]);
-          }
-          idx += 3;
+        req->set_term(ae->term);
+        req->set_prev_log_index(ae->prev_log_index);
+        req->set_prev_log_term(ae->prev_log_term);
+        req->set_leader_commit(ae->leader_commit);
+        for (const auto& e : ae->entries) {
+          auto* pe = req->add_entries();
+          pe->set_term(e.term);
+          pe->set_index(e.index);
+          pe->set_data(e.data);
         }
         auto resp = std::make_shared<::storage::v1::AppendEntriesResponse>();
         auto done = std::make_shared<std::promise<grpc::Status>>();
         auto fut = done->get_future();
-        // 【真正网络发送·AE】
         stub->async()->AppendEntries(ctx.get(), req.get(), resp.get(),
                                      [done, stub, ctx, req, resp](grpc::Status st) {
                                        try {
@@ -399,36 +368,31 @@ struct GrpcRaftTransport::Impl {
                                      });
         auto st = fut.get();
         if (!st.ok()) {
-          node->on_rpc_transport_fail(job.peer_id);
+          node->on_rpc_transport_fail(peer_id);
           return;
         }
-        node->on_append_entries_reply(job.peer_id, resp->term(), resp->success(),
-                                      resp->match_index());
+        node->on_append_entries_reply(peer_id, resp->term(), resp->success(), resp->match_index());
         return;
       }
 
-      if (job.type == "InstallSnapshot") {
-        auto parts = split_pipe(job.payload);
-        if (parts.size() < 4) {
-          node->on_rpc_transport_fail(job.peer_id);
+      if (type == MsgType::kInstallSnapshot) {
+        const auto* sn = std::get_if<InstallSnapshotReq>(&job.msg.payload);
+        if (!sn) {
+          node->on_rpc_transport_fail(peer_id);
           return;
         }
-        const uint64_t send_term = node->soft_state().term;
-        const uint64_t last_idx = std::stoull(parts[1]);
-        const uint64_t last_term = std::stoull(parts[2]);
-        std::string bin;
-        if (!openkv::from_hex(parts[3], &bin)) {
-          bin = parts[3];
-        }
-        // reactor 须活到 OnDone；用 unique_ptr 在 wait 后销毁。
+        const uint64_t send_term = sn->term != 0 ? sn->term : node->soft_state().term;
+        const uint64_t last_idx = sn->last_index;
+        const uint64_t last_term = sn->last_term;
+        std::string bin = sn->data;
         auto reactor = std::make_unique<InstallSnapshotReactor>(
             stub, job, addr, send_term, last_idx, last_term, std::move(bin), snap_chunk_bytes_);
         auto fut = reactor->get_future();
         auto st = fut.get();
         if (!st.ok()) {
-          SKV_WARN << "InstallSnapshot Finish fail to=" << job.peer_id
-                   << " code=" << st.error_code() << " " << st.error_message();
-          node->on_rpc_transport_fail(job.peer_id);
+          SKV_WARN << "InstallSnapshot Finish fail to=" << peer_id << " code=" << st.error_code()
+                   << " " << st.error_message();
+          node->on_rpc_transport_fail(peer_id);
           return;
         }
         const auto& resp = reactor->resp();
@@ -436,24 +400,23 @@ struct GrpcRaftTransport::Impl {
         const uint64_t match =
             resp.match_index() != 0 ? resp.match_index() : (resp.ok() ? last_idx : 0);
         if (!resp.ok()) {
-          SKV_WARN << "InstallSnapshot rejected to=" << job.peer_id << " term=" << reply_term;
+          SKV_WARN << "InstallSnapshot rejected to=" << peer_id << " term=" << reply_term;
         } else {
-          SKV_INFO << "InstallSnapshot rpc ok to=" << job.peer_id << " match=" << match
+          SKV_INFO << "InstallSnapshot rpc ok to=" << peer_id << " match=" << match
                    << " term=" << reply_term;
         }
-        node->on_install_snapshot_reply(job.peer_id, reply_term, resp.ok(), match);
+        node->on_install_snapshot_reply(peer_id, reply_term, resp.ok(), match);
         return;
       }
 
-      // 未知类型：若误入队带 inflight 的消息则 fail，避免永久卡住。
-      if (needs_fail_callback(job.type)) {
-        SKV_WARN << "grpc raft unknown type=" << job.type << " peer=" << job.peer_id;
-        node->on_rpc_transport_fail(job.peer_id);
+      if (needs_fail_callback(type)) {
+        SKV_WARN << "grpc raft unknown type=" << type_name << " peer=" << peer_id;
+        node->on_rpc_transport_fail(peer_id);
       }
     } catch (const std::exception& e) {
       SKV_WARN << "grpc raft dispatch err: " << e.what();
-      if (needs_fail_callback(job.type)) {
-        node->on_rpc_transport_fail(job.peer_id);
+      if (needs_fail_callback(type)) {
+        node->on_rpc_transport_fail(peer_id);
       }
     }
   }
@@ -489,26 +452,18 @@ void GrpcRaftTransport::unregister_node(uint32_t shard_id) {
 TransportSend GrpcRaftTransport::bind(uint32_t shard_id) {
   // 返回的闭包：【尚未上线】只入出站 Job 队列；真正 RPC 在 worker_loop → stub->async() /
   // StartWrite。
-  return [this, shard_id](const std::string& peer_id, const std::string& type,
-                          const std::string& payload) {
-    if (type == "RequestVote" || type == "RequestPreVote") {
+  return [this, shard_id](Message msg) {
+    const std::string& peer_id = msg.to;
+    if (msg.type == MsgType::kRequestVote || msg.type == MsgType::kRequestPreVote) {
       out_raft_.add(peer_id);
-    } else if (type == "AppendEntries") {
-      auto parts = split_pipe(payload);
-      uint64_t nent = 0;
-      if (parts.size() >= 5) {
-        try {
-          nent = std::stoull(parts[4]);
-        } catch (...) {
-          nent = 0;
-        }
-      }
-      if (nent > 0) {
+    } else if (msg.type == MsgType::kAppendEntries) {
+      const auto* ae = std::get_if<AppendEntriesReq>(&msg.payload);
+      if (ae && !ae->entries.empty()) {
         out_sync_.add(peer_id);
       } else {
         out_raft_.add(peer_id);
       }
-    } else if (type == "InstallSnapshot") {
+    } else if (msg.type == MsgType::kInstallSnapshot) {
       out_sync_.add(peer_id);
     }
     std::string self;
@@ -522,10 +477,8 @@ TransportSend GrpcRaftTransport::bind(uint32_t shard_id) {
     Impl::Job job;
     job.shard = shard_id;
     job.self_id = std::move(self);
-    job.peer_id = peer_id;
-    job.type = type;
-    job.payload = payload;
-    job.priority = priority_of(type, payload);
+    job.priority = priority_of(msg);
+    job.msg = std::move(msg);
     impl_->enqueue(std::move(job));
   };
 }

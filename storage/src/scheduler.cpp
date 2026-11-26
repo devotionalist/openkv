@@ -72,13 +72,13 @@ void Latches::unlock(uint64_t token) {
   std::vector<std::pair<uint64_t, std::function<void(uint64_t)>>> ready;
   {
     std::lock_guard<std::mutex> lk(mu_);
+    // erase 已指向下一元素；再 ++it 会在 end() 上踩空（become leader 后 SetEpoch 必现）。
     for (auto it = held_.begin(); it != held_.end();) {
       if (it->second == token) {
         it = held_.erase(it);
       } else {
         ++it;
       }
-      ++it;
     }
     drain_async_locked(&ready);
   }

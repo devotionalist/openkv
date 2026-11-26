@@ -119,6 +119,7 @@
 | SnapStreamTest | HexRoundTrip, AssembleChunks, EmptySnapshot, RejectOutOfOrder | `snap_stream_test.cpp` |
 | RaftReadIndexTest / RaftFrameTest | LeaseReadOnSingleNode, SoftStateMetrics, EncodeDecodeRoundTrip | `raft_read_index_test.cpp` |
 | RaftNodeReadyTest | SingleNodeElectAndPropose, BootstrapThenPropose, ThreeNodeVoteAndProposeReady | `raft_node_ready_test.cpp` |
+| RaftRpcStructured | LeaderAeCarriesBinaryEntriesNotHex, StaleInstallSnapshotReplyDoesNotRegressMatch, CompactKeepsTrailingWindowForAe | `raft_rpc_structured_test.cpp` |
 | MultiRaftTest | GetOrCreateAndLeaders | `multi_raft_test.cpp` |
 | RaftstoreTest | StoreTickElectsLeader, HibernateSkipsTickUntilWake, DriveReadyCoalescesPersist, RequestReadyCoalescesByCount, ApplyQosFlag | `raftstore_test.cpp` |
 | IndexWaiterTest | InvokeWakesWaiter, Timeout, WaitAsync* | `raft/index_waiter_test.cpp`（`./build/tests/openkv_unit_tests --gtest_filter='IndexWaiter*'`） |
@@ -135,7 +136,7 @@
 | MvccTest | Lock、可见性、WriteConflict、悲观锁、GC、TxnScan、TxnTtl |
 | StoreFacadeTest / StoreCodecTest / StoreAdminRaftTest | 端到端 Put、编解码、**PlainCas*** / **MvccCasViaPrewrite** / **TxnOpsAsyncPrewriteCommitResolve**、Epoch、Split seed |
 | WatchHubTest / WatchLogTest | Watch 过滤与持久化 |
-| InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、`lock_async` Latch、前缀扫描 |
+| InflightGateTest / LatencyHistTest / SchedulerTest / CoprocessorTest | 限流、延迟、`lock_async` Latch（含 UnlockSingleHeldDoesNotSegfault）、前缀扫描 |
 | DbRaftEngineTest / ShardEngineManagerTest | Raft 引擎、单 Store 共享引擎 |
 
 </details>

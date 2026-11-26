@@ -35,8 +35,7 @@ MultiRaft::MultiRaft(GroupFactory factory, Options opts) : opts_(opts) {
   store_ = std::make_unique<raftstore::Store>(so, std::move(factory));
   // Store 出站只认闭包；这里固定转到本对象的 GrpcRaftTransport。
   store_->set_transport_fn(
-      [this](uint32_t rid, const std::string& to, const std::string& type,
-             const std::string& payload) { transport_.bind(rid)(to, type, payload); });
+      [this](uint32_t rid, raft::Message msg) { transport_.bind(rid)(std::move(msg)); });
 }
 
 MultiRaft::~MultiRaft() { stop(); }

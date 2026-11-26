@@ -107,7 +107,10 @@ void Apply::apply_committed() {
     }
     n_.apply_scheduled_ = idx;
     n_.last_applied_ = idx;
-    if (n_.snap_provider_ && (idx % 32 == 0)) {
+    // 本地 FSM 快照：与 compact 阈值同量级，避免每 32 条就在 Raft 锁内写盘。
+    const uint64_t snap_every =
+        n_.opts_.compact_threshold == 0 ? 256 : std::max<uint64_t>(n_.opts_.compact_threshold, 256);
+    if (n_.snap_provider_ && (idx % snap_every == 0)) {
       save_local_fsm_snapshot_locked();
     }
   }
@@ -243,17 +246,28 @@ void Apply::maybe_compact() {
     return;
   }
   const uint64_t applied_in_log = n_.last_applied_ - first + 1;
-  if (applied_in_log <= n_.opts_.compact_threshold) {
+  // 滞回：超过 2*threshold 才砍回 threshold。否则每 apply 一条都 compact+写 FSM 快照，
+  // Meta 高写入下会把 Raft 锁堵在磁盘上，TSO/Put 直接超时。
+  if (applied_in_log <= n_.opts_.compact_threshold * 2) {
     return;
+  }
+  // 保留最近 compact_threshold 条已 apply 日志给 AE 追赶。
+  // 旧实现 compact_to(last_applied) 会把窗砍空，高写入下 follower 稍慢就只能 InstallSnapshot。
+  const uint64_t compact_idx = n_.last_applied_ - n_.opts_.compact_threshold;
+  if (compact_idx + 1 <= first) {
+    return;
+  }
+  uint64_t term = n_.log_.snapshot_term();
+  if (auto e = n_.log_.entry(compact_idx)) {
+    term = e->term;
   }
   const uint64_t old_first = first;
   save_local_fsm_snapshot_locked();
-  const uint64_t term = term_at_applied();
-  n_.log_.compact_to(n_.last_applied_, term);
+  n_.log_.compact_to(compact_idx, term);
   n_.persist_locked();
   if (n_.log_.first_index() != old_first) {
-    SKV_DEBUG << "shard=" << n_.opts_.shard_id << " compacted to index=" << n_.last_applied_
-              << " first=" << n_.log_.first_index();
+    SKV_DEBUG << "shard=" << n_.opts_.shard_id << " compacted to index=" << compact_idx
+              << " first=" << n_.log_.first_index() << " keep=" << n_.opts_.compact_threshold;
   }
 }
 

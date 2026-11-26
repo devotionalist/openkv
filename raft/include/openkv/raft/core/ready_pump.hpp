@@ -41,10 +41,10 @@ class ReadyPump {
   /**
    * 攒一条出站消息；external_io 时留给 take_ready，否则 flush 时真发。须已持 mu_。
    * @param peer_id 目标 peer
-   * @param type RPC 类型名
-   * @param payload 已序列化载荷
+   * @param type RPC 种类
+   * @param payload 结构体载荷（Vote / AE / Snap）
    */
-  void enqueue(std::string peer_id, std::string type, std::string payload);
+  void enqueue(std::string peer_id, MsgType type, RaftReq payload);
   /**
    * 嵌入路径：把 outbound_ 经 TransportSend 发出；external_io 直接空操作。自己抢 mu_。
    */
@@ -81,11 +81,11 @@ class ReadyPump {
    */
   SoftState soft_state_locked() const;
 
-  /* 一条待发出站 RPC。 */
+  /* 一条待发出站 RPC（与 Message 同形，peer_id ≡ Message::to）。 */
   struct Outbound {
-    std::string peer_id;  // 目标 peer
-    std::string type;     // 消息类型
-    std::string payload;  // 消息负载
+    std::string peer_id;                          // 目标 peer
+    MsgType type{MsgType::kAppendEntries};        // RPC 种类
+    RaftReq payload;                              // 结构体载荷
   };
 
   std::vector<Outbound> outbound_;      // 待发送消息队列

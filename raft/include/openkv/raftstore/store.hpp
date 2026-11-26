@@ -62,8 +62,7 @@ class Store {
   using ApplyBatchFn =
       std::function<void(uint32_t region_id, const std::vector<raft::LogEntry>& entries)>;
   using PersistFn = std::function<void(uint32_t region_id, const raft::Ready& rd)>;
-  using TransportFn = std::function<void(uint32_t region_id, const std::string& to,
-                                         const std::string& type, const std::string& payload)>;
+  using TransportFn = std::function<void(uint32_t region_id, raft::Message msg)>;
   using SnapProviderFn =
       std::function<std::string(uint32_t region_id, uint64_t* last_idx, uint64_t* last_term)>;
   using ReloadFn = std::function<std::shared_ptr<raft::RaftNode>(uint32_t region_id)>;
@@ -192,7 +191,7 @@ class Store {
    * @param msg 入站消息
    * @return 行协议响应串（空表示无需回包或失败路径自理）
    */
-  std::string apply_inbound_raft(uint32_t region_id, RaftMessage msg);
+  raft::RaftReply apply_inbound_raft(uint32_t region_id, RaftMessage msg);
   /**
    * 本机自认 Leader 的 Region 列表。
    * @return region_id 集合
@@ -271,7 +270,7 @@ class Store {
    * @param run_ready 是否立刻 process_ready
    * @return 行协议响应
    */
-  std::string step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready);
+  raft::RaftReply step_raft_message(Peer& peer, const RaftMessage& msg, bool run_ready);
   /**
    * 取 Ready 并落盘/发网/投递 Apply。
    * pipeline=true：persist 丢 PersistWorker，完成后 kPersistDone 再发网/apply。

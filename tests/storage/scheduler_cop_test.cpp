@@ -77,6 +77,22 @@ TEST(SchedulerTest, LatchHoldUntilUnlock) {
   EXPECT_TRUE(second_done.load());
 }
 
+TEST(SchedulerTest, UnlockSingleHeldDoesNotSegfault) {
+  // 回归：unlock 在 erase 到 end() 后不可再 ++it（否则 EXC_BAD_ACCESS）。
+  openkv::storage::Scheduler sched;
+  std::promise<uint64_t> p;
+  auto f = p.get_future();
+  sched.lock_key_async("only", [&p](uint64_t tok) { p.set_value(tok); });
+  const uint64_t tok = f.get();
+  ASSERT_NE(tok, 0u);
+  sched.unlock(tok);
+  // 再占一次确认表已清空、可重入。
+  std::promise<uint64_t> p2;
+  auto f2 = p2.get_future();
+  sched.lock_key_async("only", [&p2](uint64_t t) { p2.set_value(t); });
+  EXPECT_NE(f2.get(), 0u);
+}
+
 TEST(SchedulerTest, LatchAsyncDoesNotBlockCaller) {
   openkv::storage::Scheduler sched;
   std::atomic<int> granted{0};

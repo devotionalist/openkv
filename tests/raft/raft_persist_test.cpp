@@ -35,7 +35,7 @@ TEST(RaftPersistTest, SaveAndRecoverApplied) {
 
   std::vector<std::pair<uint64_t, std::string>> applied;
   auto on_apply = [&](uint64_t idx, const std::string& data) { applied.emplace_back(idx, data); };
-  TransportSend noop = [](const std::string&, const std::string&, const std::string&) {};
+  TransportSend noop = [](openkv::raft::Message) {};
 
   {
     RaftNode::Options opts;
@@ -93,7 +93,7 @@ TEST(RaftPersistTest, InstallSnapshotCompactsAndApplies) {
     applied_snap.assign(data);
     return true;
   };
-  TransportSend noop = [](const std::string&, const std::string&, const std::string&) {};
+  TransportSend noop = [](openkv::raft::Message) {};
 
   RaftNode::Options opts;
   opts.external_io = false;

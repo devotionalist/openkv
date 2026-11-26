@@ -25,6 +25,7 @@
 #include <variant>
 #include <vector>
 
+#include "openkv/raft/core/raft_rpc.hpp"
 #include "openkv/raft/core/ready.hpp"
 #include "openkv/raft/core/types.hpp"
 #include "openkv/region.hpp"
@@ -34,11 +35,14 @@ namespace openkv::raftstore {
 /* 定时器：Store::schedule_tick 向各 Peer 邮箱投递；触发 election/heartbeat。 */
 struct TickMsg {};
 
-/* 入站或回环的 Raft RPC 载荷（type 如 AppendEntries / RequestVote / …）。 */
+/* 入站或回环的 Raft RPC（结构体载荷；monostate = 仅唤醒）。 */
 struct RaftMessage {
-  std::string from;     // 来源 peer id
-  std::string type;     // RPC 类型名（如 AppendEntries）
-  std::string payload;  // 已序列化的请求体
+  std::string from;                                       // 来源 peer id
+  raft::MsgType type{raft::MsgType::kAppendEntries};      // RPC 种类
+  raft::RaftReq payload;                                  // Vote / AE / Snap；空 = 唤醒
+
+  /** 是否仅唤醒（无业务载荷）。 */
+  bool is_wake() const { return std::holds_alternative<std::monostate>(payload); }
 };
 
 /* 带外控制：超时转让、探测不可达、propose 后 kWake、异步落盘完成 kPersistDone。 */

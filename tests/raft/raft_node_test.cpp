@@ -42,7 +42,7 @@ RaftNode make_single(std::vector<std::string>* applied) {
   opts.election_timeout_ms = 200;
   opts.heartbeat_ms = 50;
   auto on_apply = [applied](uint64_t, const std::string& data) { applied->push_back(data); };
-  auto send = [](const std::string&, const std::string&, const std::string&) {};
+  auto send = [](openkv::raft::Message) {};
   return RaftNode(std::move(opts), std::move(on_apply), std::move(send));
 }
 

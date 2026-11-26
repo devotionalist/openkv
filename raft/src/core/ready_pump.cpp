@@ -25,8 +25,8 @@
 namespace openkv::raft {
 
 // 【非网络】只攒出站消息；external_io 下等 take_ready，嵌入路径见 flush_transport。
-void ReadyPump::enqueue(std::string peer_id, std::string type, std::string payload) {
-  outbound_.push_back(Outbound{std::move(peer_id), std::move(type), std::move(payload)});
+void ReadyPump::enqueue(std::string peer_id, MsgType type, RaftReq payload) {
+  outbound_.push_back(Outbound{std::move(peer_id), type, std::move(payload)});
 }
 
 // external_io：不发，留给 Store。嵌入路径：经 send_（常即 GrpcRaftTransport::bind）→ 真正出网。
@@ -42,7 +42,11 @@ void ReadyPump::flush_transport() {
   for (auto& m : batch) {
     // 【出网入口·嵌入】send_ 最终进 gRPC 发送队列（见 grpc_transport.cpp bind）。
     if (n_.send_) {
-      n_.send_(m.peer_id, m.type, m.payload);
+      Message msg;
+      msg.to = std::move(m.peer_id);
+      msg.type = m.type;
+      msg.payload = std::move(m.payload);
+      n_.send_(std::move(msg));
     }
   }
 }
@@ -84,7 +88,11 @@ Ready ReadyPump::take_ready() {
   rd.committed_entries.swap(n_.ready_io_.ready_committed_);
   rd.messages.reserve(outbound_.size());
   for (auto& m : outbound_) {
-    rd.messages.push_back(Message{std::move(m.peer_id), std::move(m.type), std::move(m.payload)});
+    Message msg;
+    msg.to = std::move(m.peer_id);
+    msg.type = m.type;
+    msg.payload = std::move(m.payload);
+    rd.messages.push_back(std::move(msg));
   }
   outbound_.clear();
   if (!n_.ready_io_.ready_snaps_.empty()) {

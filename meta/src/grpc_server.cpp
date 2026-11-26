@@ -58,19 +58,20 @@ namespace pb = ::meta::v1;
 bool line_ok(std::string_view s) { return proto::starts_with_ok(s); }
 
 void fill_ts_response(pb::GetTsResponse* resp, std::string_view line) {
+  // 行格式：OK TS <start> <count>。count 必须原样回给 Gateway，否则本地批货永远只有 1，
+  // 每次 Put 都再打一枪 AllocTs(5000) 把 Meta Raft 打满。
   std::istringstream iss{std::string(line)};
   std::string ok, tag;
   uint64_t ts = 0;
   uint32_t count = 1;
-  if (iss >> ok >> tag >> ts) {
-    resp->set_ts(ts);
-    if (iss >> count) {
-      resp->set_count(count);
-    } else {
-      resp->set_count(1);
-    }
-    resp->set_count(1);
+  if (!(iss >> ok >> tag >> ts) || ok != "OK") {
+    return;
   }
+  if (!(iss >> count) || count == 0) {
+    count = 1;
+  }
+  resp->set_ts(ts);
+  resp->set_count(count);
 }
 
 class MetaServiceImpl final : public pb::MetaService::CallbackService {
@@ -588,6 +589,10 @@ class MetaServiceImpl final : public pb::MetaService::CallbackService {
     }
     meta_.alloc_ts_async(count, [reactor, resp](std::string line) {
       fill_ts_response(resp, line);
+      if (resp->ts() == 0) {
+        reactor->Finish(Status(grpc::StatusCode::UNAVAILABLE, std::string(line)));
+        return;
+      }
       reactor->Finish(Status::OK);
     });
     return reactor;
@@ -757,6 +762,9 @@ class MetaInstallSnapshotReactor final : public ServerReadReactor<::storage::v1:
   }
 
   void OnReadDone(bool ok) override {
+    if (finished_) {
+      return;
+    }
     if (ok) {
       term_ = chunk_.term();
       from_ = chunk_.leader_id();
@@ -777,6 +785,12 @@ class MetaInstallSnapshotReactor final : public ServerReadReactor<::storage::v1:
 
  private:
   void apply_and_finish() {
+    // done=true 的最后一包之后，客户端半关闭还会再来一次 OnReadDone(false)；
+    // 必须防双 Finish，否则 InstallSnapshot 会挂到 deadline，拖死出站 worker。
+    if (finished_) {
+      return;
+    }
+    finished_ = true;
     auto line = meta_.handle_raft_snapshot(from_, term_, last_idx_, last_term_, buf_);
     fill_install_snapshot_resp(line, term_, last_idx_, resp_);
     Finish(Status::OK);
@@ -790,6 +804,7 @@ class MetaInstallSnapshotReactor final : public ServerReadReactor<::storage::v1:
   uint64_t term_{0};
   uint64_t last_idx_{0};
   uint64_t last_term_{0};
+  bool finished_{false};
 };
 
 /* Meta 组内 Raft 与 Storage 共用 storage.v1.RaftService（shard 固定 0）。 */

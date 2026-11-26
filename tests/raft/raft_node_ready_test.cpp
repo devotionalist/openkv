@@ -18,9 +18,11 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "openkv/raft/core/raft_node.hpp"
+#include "openkv/raft/core/raft_rpc.hpp"
 
 namespace {
 
@@ -132,21 +134,20 @@ TEST(RaftNodeReadyTest, ThreeNodeVoteAndProposeReady) {
     }
     Ready rd = a.take_ready();
     for (const auto& m : rd.messages) {
-      if (m.type != "RequestVote") {
+      if (m.type != openkv::raft::MsgType::kRequestVote) {
         continue;
       }
       RaftNode* dst = m.to == "b" ? &b : (m.to == "c" ? &c : nullptr);
       if (!dst) {
         continue;
       }
-      unsigned long long term = 0, li = 0, lt = 0;
-      if (sscanf(m.payload.c_str(), "%llu|%llu|%llu", &term, &li, &lt) != 3) {
+      const auto* v = std::get_if<openkv::raft::VoteReq>(&m.payload);
+      if (!v) {
         continue;
       }
       bool granted = false;
-      dst->on_request_vote("a", static_cast<uint64_t>(term), static_cast<uint64_t>(li),
-                           static_cast<uint64_t>(lt), &granted);
-      a.on_request_vote_reply(m.to, static_cast<uint64_t>(term), granted);
+      dst->on_request_vote("a", v->term, v->last_log_index, v->last_log_term, &granted);
+      a.on_request_vote_reply(m.to, v->term, granted);
       if (dst->has_ready()) {
         Ready r2 = dst->take_ready();
         dst->advance(r2);

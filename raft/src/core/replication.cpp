@@ -20,7 +20,6 @@
 #include <chrono>
 #include <sstream>
 
-#include "openkv/codec.hpp"
 #include "openkv/logging.hpp"
 #include "openkv/raft/core/apply.hpp"
 #include "openkv/raft/core/election.hpp"
@@ -33,8 +32,6 @@
 
 namespace openkv::raft {
 namespace {
-
-using ::openkv::to_hex;
 
 std::string encode_peers_csv(const std::vector<Peer>& peers) {
   std::ostringstream oss;
@@ -120,12 +117,38 @@ void peel_snap_conf(std::string_view data, std::vector<Peer>* conf, std::string_
 }  // namespace
 
 void Replication::dec_inflight(const std::string& peer_id) {
+  // 传输失败：AE / probe / snap 名额一并放下，允许重发。
   auto it = n_.progress_.inflight_.find(peer_id);
   if (it != n_.progress_.inflight_.end() && it->second > 0) {
     --it->second;
   }
   n_.progress_.snap_inflight_.erase(peer_id);
   n_.progress_.probe_inflight_.erase(peer_id);
+}
+
+void Replication::dec_ae_inflight(const std::string& peer_id) {
+  // AE/probe 应答：只还 AE 名额，绝不能清 snap_inflight_。
+  // 否则「先 probe 再发快照」时，迟到的 AE 应答会误放开快照在途标记，
+  // 导致重复 InstallSnapshot、worker 堵死、陈旧 match 把 next_index 打回窗口外。
+  const bool was_probe = n_.progress_.probe_inflight_.erase(peer_id) > 0;
+  if (was_probe) {
+    return;
+  }
+  if (n_.progress_.snap_inflight_.count(peer_id)) {
+    return;
+  }
+  auto it = n_.progress_.inflight_.find(peer_id);
+  if (it != n_.progress_.inflight_.end() && it->second > 0) {
+    --it->second;
+  }
+}
+
+void Replication::dec_snap_inflight(const std::string& peer_id) {
+  auto it = n_.progress_.inflight_.find(peer_id);
+  if (it != n_.progress_.inflight_.end() && it->second > 0) {
+    --it->second;
+  }
+  n_.progress_.snap_inflight_.erase(peer_id);
 }
 
 bool Replication::try_inc_inflight(const std::string& peer_id) {
@@ -217,6 +240,8 @@ void Replication::broadcast_replicate() {
       }
 
       // 2.5 记下快照在途，拼 last_idx/term + 成员表
+      // 在途 probe 与快照无关；清掉以免迟到 AE 应答误碰名额（见 dec_ae_inflight）。
+      n_.progress_.probe_inflight_.erase(p.id);
       n_.progress_.snap_inflight_.insert(p.id);
       uint64_t last_idx = n_.last_applied_ > 0 ? n_.last_applied_ : (n_.log_.first_index() - 1);
       uint64_t last_term = n_.log_.snapshot_term();
@@ -233,17 +258,22 @@ void Replication::broadcast_replicate() {
         meta.to = p.id;
         meta.conf_state = conf_csv;
         n_.ready_io_.ready_snaps_.push_back(meta);
-        std::ostringstream oss;
-        oss << n_.term_ << '|' << last_idx << '|' << last_term << '|';
-        n_.ready_pump_.enqueue(p.id, "InstallSnapshot", oss.str());
+        InstallSnapshotReq req;
+        req.term = n_.term_;
+        req.last_index = last_idx;
+        req.last_term = last_term;
+        n_.ready_pump_.enqueue(p.id, MsgType::kInstallSnapshot, std::move(req));
       } else {
         std::string data = wrap_snap_conf(conf_csv, n_.snap_provider_(&last_idx, &last_term));
-        std::ostringstream oss;
-        oss << n_.term_ << '|' << last_idx << '|' << last_term << '|' << to_hex(data);
-        n_.ready_pump_.enqueue(p.id, "InstallSnapshot", oss.str());
+        InstallSnapshotReq req;
+        req.term = n_.term_;
+        req.last_index = last_idx;
+        req.last_term = last_term;
+        req.data = std::move(data);
         SKV_INFO << "shard=" << n_.opts_.shard_id << " send snapshot to=" << p.id
-                 << " last_idx=" << last_idx << " bytes=" << data.size()
+                 << " last_idx=" << last_idx << " bytes=" << req.data.size()
                  << " conf_peers=" << n_.opts_.peers.size();
+        n_.ready_pump_.enqueue(p.id, MsgType::kInstallSnapshot, std::move(req));
       }
       // 2.7 记发送时间与计数；此人本轮不再走 AE
       last_snap_sent_[p.id] = std::chrono::steady_clock::now();
@@ -274,14 +304,14 @@ void Replication::broadcast_replicate() {
       n_.progress_.peer_send_blocked_.insert(p.id);
       continue;
     }
-    // 3.4 组 payload 并入队 AppendEntries
-    std::ostringstream oss;
-    oss << n_.term_ << '|' << prev << '|' << prev_term << '|' << n_.commit_index_ << '|'
-        << ents.size();
-    for (const auto& e : ents) {
-      oss << '|' << e.term << '|' << e.index << '|' << to_hex(e.data);
-    }
-    n_.ready_pump_.enqueue(p.id, "AppendEntries", oss.str());
+    // 3.4 组结构体并入队 AppendEntries（entries 二进制直传，不拼 hex）
+    AppendEntriesReq req;
+    req.term = n_.term_;
+    req.prev_log_index = prev;
+    req.prev_log_term = prev_term;
+    req.leader_commit = n_.commit_index_;
+    req.entries = std::move(ents);
+    n_.ready_pump_.enqueue(p.id, MsgType::kAppendEntries, std::move(req));
   }
   // —— 4. 结束：真正发网在 flush_transport / Store take_ready ——
 }
@@ -324,7 +354,7 @@ void Replication::on_append_entries_reply_locked(const std::string& from, uint64
   if (n_.role_ != Role::kLeader || term != n_.term_) {
     return;
   }
-  dec_inflight(from);
+  dec_ae_inflight(from);
   if (success) {
     n_.election_.note_peer_progress(from);
     n_.progress_.match_index_[from] = match_index;
@@ -403,7 +433,7 @@ void Replication::on_install_snapshot(const std::string& from, uint64_t term, ui
 
 void Replication::on_install_snapshot_reply_locked(const std::string& from, uint64_t term,
                                                    bool success, uint64_t match_index) {
-  dec_inflight(from);
+  dec_snap_inflight(from);
   n_.election_.step_down_if_stale(term);
   if (n_.role_ != Role::kLeader || term != n_.term_) {
     SKV_WARN << "shard=" << n_.opts_.shard_id << " InstallSnapshot reply ignored from=" << from
@@ -413,6 +443,14 @@ void Replication::on_install_snapshot_reply_locked(const std::string& from, uint
   }
   if (success) {
     n_.election_.note_peer_progress(from);
+    // 迟到的旧快照应答不得把 next/match 打回更低，否则立刻又掉出 compact 窗。
+    const uint64_t cur_match = n_.progress_.match_index_[from];
+    if (match_index < cur_match) {
+      SKV_WARN << "shard=" << n_.opts_.shard_id << " InstallSnapshot stale reply from=" << from
+               << " match=" << match_index << " cur_match=" << cur_match << "; keep progress";
+      need_replicate_ = true;
+      return;
+    }
     n_.progress_.match_index_[from] = match_index;
     n_.progress_.next_index_[from] = match_index + 1;
     SKV_INFO << "shard=" << n_.opts_.shard_id << " InstallSnapshot reply ok from=" << from

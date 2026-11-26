@@ -76,7 +76,7 @@ flowchart TB
 | 类型 | 数据 | 作用 |
 |------|------|------|
 | `TickMsg` | 空 | 选举 / 心跳时钟 |
-| `RaftMessage` | `from, type, payload` | 入站 RPC 或回环 |
+| `RaftMessage` | `from, MsgType, RaftReq`（结构体；空=唤醒） | 入站 RPC 或回环 |
 | `SignificantMsg` | `kWake` / TimeoutNow / Unreachable | propose 后唤醒 Ready（批内合并） |
 | `ApplyRes` | `region_id, applied_index, conf_change` | Apply 回告 Raft worker |
 | `ApplyMsg` | `entries[]` | 已提交日志批 → Apply worker |
@@ -114,16 +114,7 @@ sequenceDiagram
 | **RequestVote / PreVote** | 候选人 `last_log_*`（日志够新才给票）；**PreVote 不抬高**本机 term | `vote_granted` |
 | **InstallSnapshot** | 分片流：`last_included_index/term` + chunk；拼完装 FSM | `match_index ≈ last_included` |
 
-`Ready::Message.type` 为 `AppendEntries` / `RequestVote` / `RequestPreVote` / `InstallSnapshot`；出站 `GrpcRaftTransport`，入站 `Store::apply_inbound_raft` → Mailbox。
-
-历史行协议语义（单测 / 文本调试仍可能见到）：
-
-| 类型 | 请求行 | 响应行 |
-|------|--------|--------|
-| RequestVote | `RAFT_VOTE shard from term last_idx last_term` | `OK VOTE term granted` |
-| PreVote | `RAFT_PREVOTE …` | `OK PREVOTE term granted` |
-| AppendEntries | `RAFT_AE shard from term prev prev_term commit n …` | `OK AE term success match` |
-| InstallSnapshot | `RAFT_SNAP …` / snap chunk | `OK SNAP term success match` |
+`Ready::Message` 为 `MsgType` + `RaftReq`（`VoteReq` / `AppendEntriesReq` / `InstallSnapshotReq`），**不**再拼 `pipe|hex`；出站 `GrpcRaftTransport` 直接填 proto，入站 `Store::apply_inbound_raft` → `RaftReply`。细节见 [55-raft-structured-rpc](55-raft-structured-rpc.md)。
 
 ---
 

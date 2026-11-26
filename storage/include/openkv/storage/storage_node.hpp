@@ -33,6 +33,7 @@
 #include "openkv/config.hpp"
 #include "openkv/peer_counter.hpp"
 #include "openkv/raft/core/multi_raft.hpp"
+#include "openkv/raft/core/raft_rpc.hpp"
 #include "openkv/raft/core/types.hpp"
 #include "openkv/raft/engine/db_raft_engine.hpp"
 #include "openkv/raft/util/snap_stream.hpp"
@@ -229,29 +230,30 @@ class StorageNode {
   const raft::GrpcRaftTransport& transport() const { return multi_raft_->transport(); }
 
   /**
-   * TCP 入站 RequestVote。
+   * gRPC 入站 RequestVote。
    * @param shard 分片 / Region id
    * @param from 对端 peer id
    * @param term 任期
    * @param last_idx 对方最后日志下标
    * @param last_term 对应 term
-   * @return 应答文本
+   * @return 结构体回包（填 proto，不拼 OK 行）
    */
-  std::string handle_raft_vote(uint32_t shard, const std::string& from, uint64_t term,
-                               uint64_t last_idx, uint64_t last_term);
+  openkv::raft::RaftReply handle_raft_vote(uint32_t shard, const std::string& from, uint64_t term,
+                                           uint64_t last_idx, uint64_t last_term);
   /**
-   * TCP 入站 PreVote。
+   * gRPC 入站 PreVote。
    * @param shard 分片 / Region id
    * @param from 对端 peer id
    * @param term 任期
    * @param last_idx 对方最后日志下标
    * @param last_term 对应 term
-   * @return 应答文本
+   * @return 结构体回包
    */
-  std::string handle_raft_pre_vote(uint32_t shard, const std::string& from, uint64_t term,
-                                   uint64_t last_idx, uint64_t last_term);
+  openkv::raft::RaftReply handle_raft_pre_vote(uint32_t shard, const std::string& from,
+                                               uint64_t term, uint64_t last_idx,
+                                               uint64_t last_term);
   /**
-   * TCP 入站 AppendEntries。
+   * gRPC 入站 AppendEntries。
    * @param shard 分片 / Region id
    * @param from 对端 peer id
    * @param term 任期
@@ -259,23 +261,25 @@ class StorageNode {
    * @param prev_term 前一条 term
    * @param leader_commit Leader 提交水位
    * @param entries 本轮日志
-   * @return 应答文本
+   * @return 结构体回包
    */
-  std::string handle_raft_append(uint32_t shard, const std::string& from, uint64_t term,
-                                 uint64_t prev_idx, uint64_t prev_term, uint64_t leader_commit,
-                                 const std::vector<openkv::raft::LogEntry>& entries);
+  openkv::raft::RaftReply handle_raft_append(uint32_t shard, const std::string& from, uint64_t term,
+                                             uint64_t prev_idx, uint64_t prev_term,
+                                             uint64_t leader_commit,
+                                             std::vector<openkv::raft::LogEntry> entries);
   /**
-   * TCP 入站整包快照。
+   * gRPC 入站整包快照。
    * @param shard 分片 / Region id
    * @param from 对端 peer id
    * @param term 任期
    * @param last_idx 快照覆盖到的日志下标
    * @param last_term 对应 term
    * @param data 快照载荷
-   * @return 应答文本
+   * @return 结构体回包
    */
-  std::string handle_raft_snapshot(uint32_t shard, const std::string& from, uint64_t term,
-                                   uint64_t last_idx, uint64_t last_term, std::string_view data);
+  openkv::raft::RaftReply handle_raft_snapshot(uint32_t shard, const std::string& from,
+                                               uint64_t term, uint64_t last_idx, uint64_t last_term,
+                                               std::string_view data);
   /**
    * 流式快照分片：RAFT_SNAPC；未收齐返回 OK SNAPC，收齐后同 handle_raft_snapshot。
    * @param shard 分片 / Region id

@@ -136,7 +136,7 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | Election | [44-election.md](44-election.md) | 角色、PreVote/Vote、CheckQuorum |
 | Membership | [45-membership.md](45-membership.md) | Joint、ConfChange、多数派 |
 | Replication | [46-replication.md](46-replication.md) | AE、commit、InstallSnapshot |
-| LogPersist | [47-log-persist.md](47-log-persist.md) | HardState+日志写 RaftEngine |
+| LogPersist | [47-log-persist.md](47-log-persist.md) | HardState+日志写 RaftEngine；`persist_locked` vs `persist_ready`；先盘后 AE |
 | Apply | [48-apply.md](48-apply.md) | 状态机、compact、本地 FSM 快照 |
 | LinearRead | [49-linear-read.md](49-linear-read.md) | 租约读 / ReadIndex |
 | ReadyPump | [50-ready-pump.md](50-ready-pump.md) | 出站攒批、take_ready、唤醒 |
@@ -144,6 +144,7 @@ SOP：[REGION_OPS.md](../ops/REGION_OPS.md) · [SCALE_OUT_SOP.md](../ops/SCALE_O
 | Ready | [52-ready.md](52-ready.md) | 一轮协议输出结构（无 IO） |
 | Raft 日志窗 | [53-raft-log-window.md](53-raft-log-window.md) | first/last、compact、掉窗→快照、AE 批量上限 |
 | Storage↔Raft 边界 | [54-storage-raft-boundary.md](54-storage-raft-boundary.md) | Storage 只读写数据；共识内聚 raft |
+| Raft 结构化 RPC | [55-raft-structured-rpc.md](55-raft-structured-rpc.md) | Message/RaftMessage 结构体；无 pipe\|hex |
 | 写路径三刀 | [25-write-path-knives.md](25-write-path-knives.md) | Ready 攒批、二进制 ONEPC、workers 8/8 |
 | Raftstore schedule | [26-raftstore-schedule-pipeline.md](26-raftstore-schedule-pipeline.md) | schedule 唤醒 + drain-until-empty |
 | 后续优化项 | [20-next-optimizations.md](20-next-optimizations.md) | Meta FSM snap、N9 大快照迁移、ONEPC WriteBatch |

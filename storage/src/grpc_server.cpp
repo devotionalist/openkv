@@ -303,55 +303,28 @@ class StoreServiceImpl final : public pb::StoreService::CallbackService {
   std::string token_;
 };
 
-void parse_vote_line(std::string_view line, pb::RequestVoteResponse* resp) {
-  resp->set_vote_granted(false);
-  resp->set_term(0);
-  if (!proto::starts_with_ok(line)) {
+void fill_vote_resp(const raft::RaftReply& r, pb::RequestVoteResponse* resp) {
+  resp->set_vote_granted(r.kind != raft::RaftReply::Kind::kError && r.ok);
+  resp->set_term(r.term);
+}
+
+void fill_ae_resp(const raft::RaftReply& r, pb::AppendEntriesResponse* resp) {
+  resp->set_success(r.kind == raft::RaftReply::Kind::kAppend && r.ok);
+  resp->set_term(r.term);
+  resp->set_match_index(r.match_index);
+}
+
+void fill_install_snapshot_resp(const raft::RaftReply& r, uint64_t fallback_term,
+                                uint64_t fallback_match, pb::InstallSnapshotResponse* resp) {
+  if (r.kind == raft::RaftReply::Kind::kError) {
+    resp->set_ok(false);
+    resp->set_term(fallback_term);
+    resp->set_match_index(0);
     return;
   }
-  std::istringstream iss{std::string(line)};
-  std::string ok, tag;
-  uint64_t term = 0;
-  int granted = 0;
-  if (iss >> ok >> tag >> term >> granted) {
-    resp->set_term(term);
-    resp->set_vote_granted(granted != 0);
-  }
-}
-
-void parse_ae_line(std::string_view line, pb::AppendEntriesResponse* resp) {
-  resp->set_success(false);
-  resp->set_term(0);
-  resp->set_match_index(0);
-  std::istringstream iss{std::string(line)};
-  std::string a, b;
-  uint64_t term = 0, match = 0;
-  int success = 0;
-  if (iss >> a >> b >> term >> success >> match) {
-    resp->set_term(term);
-    resp->set_success(success != 0);
-    resp->set_match_index(match);
-  }
-}
-
-void fill_install_snapshot_resp(std::string_view line, uint64_t term, uint64_t last_idx,
-                                pb::InstallSnapshotResponse* resp) {
-  std::istringstream iss{std::string(line)};
-  std::string ok, tag;
-  uint64_t out_term = term;
-  int success = 0;
-  uint64_t match = last_idx;
-  if ((iss >> ok >> tag >> out_term >> success >> match) && ok == "OK") {
-    resp->set_ok(success != 0);
-    resp->set_term(out_term);
-    resp->set_match_index(match);
-  } else {
-    resp->set_ok(proto::starts_with_ok(line));
-    resp->set_term(term);
-    if (resp->ok()) {
-      resp->set_match_index(last_idx);
-    }
-  }
+  resp->set_ok(r.ok);
+  resp->set_term(r.term != 0 ? r.term : fallback_term);
+  resp->set_match_index(r.match_index != 0 ? r.match_index : (r.ok ? fallback_match : 0));
 }
 
 class InstallSnapshotReactor final : public ServerReadReactor<pb::SnapshotChunk> {
@@ -362,6 +335,9 @@ class InstallSnapshotReactor final : public ServerReadReactor<pb::SnapshotChunk>
   }
 
   void OnReadDone(bool ok) override {
+    if (finished_) {
+      return;
+    }
     if (ok) {
       shard_ = chunk_.shard_id();
       term_ = chunk_.term();
@@ -383,8 +359,13 @@ class InstallSnapshotReactor final : public ServerReadReactor<pb::SnapshotChunk>
 
  private:
   void apply_and_finish() {
-    auto line = node_.handle_raft_snapshot(shard_, from_, term_, last_idx_, last_term_, buf_);
-    fill_install_snapshot_resp(line, term_, last_idx_, resp_);
+    // done=true 后再半关闭会二次 OnReadDone(false)；双 Finish 会挂死出站 InstallSnapshot。
+    if (finished_) {
+      return;
+    }
+    finished_ = true;
+    auto reply = node_.handle_raft_snapshot(shard_, from_, term_, last_idx_, last_term_, buf_);
+    fill_install_snapshot_resp(reply, term_, last_idx_, resp_);
     Finish(Status::OK);
   }
 
@@ -397,6 +378,7 @@ class InstallSnapshotReactor final : public ServerReadReactor<pb::SnapshotChunk>
   uint64_t term_{0};
   uint64_t last_idx_{0};
   uint64_t last_term_{0};
+  bool finished_{false};
 };
 
 class RaftServiceImpl final : public pb::RaftService::CallbackService {
@@ -411,10 +393,10 @@ class RaftServiceImpl final : public pb::RaftService::CallbackService {
     for (const auto& e : req->entries()) {
       ents.push_back(raft::LogEntry{e.term(), e.index(), e.data()});
     }
-    auto line = node_.handle_raft_append(req->shard_id(), req->leader_id(), req->term(),
-                                         req->prev_log_index(), req->prev_log_term(),
-                                         req->leader_commit(), ents);
-    parse_ae_line(line, resp);
+    auto reply = node_.handle_raft_append(req->shard_id(), req->leader_id(), req->term(),
+                                          req->prev_log_index(), req->prev_log_term(),
+                                          req->leader_commit(), std::move(ents));
+    fill_ae_resp(reply, resp);
     reactor->Finish(Status::OK);
     return reactor;
   }
@@ -422,9 +404,9 @@ class RaftServiceImpl final : public pb::RaftService::CallbackService {
   ServerUnaryReactor* RequestVote(CallbackServerContext* ctx, const pb::RequestVoteRequest* req,
                                   pb::RequestVoteResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
-    auto line = node_.handle_raft_vote(req->shard_id(), req->candidate_id(), req->term(),
-                                       req->last_log_index(), req->last_log_term());
-    parse_vote_line(line, resp);
+    auto reply = node_.handle_raft_vote(req->shard_id(), req->candidate_id(), req->term(),
+                                        req->last_log_index(), req->last_log_term());
+    fill_vote_resp(reply, resp);
     reactor->Finish(Status::OK);
     return reactor;
   }
@@ -432,9 +414,9 @@ class RaftServiceImpl final : public pb::RaftService::CallbackService {
   ServerUnaryReactor* RequestPreVote(CallbackServerContext* ctx, const pb::RequestVoteRequest* req,
                                      pb::RequestVoteResponse* resp) override {
     auto* reactor = ctx->DefaultReactor();
-    auto line = node_.handle_raft_pre_vote(req->shard_id(), req->candidate_id(), req->term(),
-                                           req->last_log_index(), req->last_log_term());
-    parse_vote_line(line, resp);
+    auto reply = node_.handle_raft_pre_vote(req->shard_id(), req->candidate_id(), req->term(),
+                                            req->last_log_index(), req->last_log_term());
+    fill_vote_resp(reply, resp);
     reactor->Finish(Status::OK);
     return reactor;
   }

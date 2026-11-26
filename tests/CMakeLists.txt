@@ -43,6 +43,7 @@ set(OPENKV_TEST_SOURCES
   raft/raft_joint_test.cpp
   raft/raft_read_index_test.cpp
   raft/raft_node_ready_test.cpp
+  raft/raft_rpc_structured_test.cpp
   raft/raftstore_test.cpp
   raft/batch_system_test.cpp
   raft/index_waiter_test.cpp

@@ -156,10 +156,11 @@ void Election::start_pre_vote() {
       continue;
     }
 
-    std::string payload = std::to_string(future_term) + "|" + std::to_string(n_.log_.last_index()) +
-                          "|" + std::to_string(n_.log_.last_term());  // 创建负载
-
-    n_.ready_pump_.enqueue(p.id, "RequestPreVote", std::move(payload));  // 发送请求
+    VoteReq req;
+    req.term = future_term;
+    req.last_log_index = n_.log_.last_index();
+    req.last_log_term = n_.log_.last_term();
+    n_.ready_pump_.enqueue(p.id, MsgType::kRequestPreVote, std::move(req));
   }
   if (votes_won(pre_votes_)) {  // 如果投票获胜
     become_candidate();         // 成为候选人
@@ -174,9 +175,11 @@ void Election::start_election() {
     if (p.id == n_.opts_.self_id || p.learner) {
       continue;
     }
-    std::string payload = std::to_string(n_.term_) + "|" + std::to_string(n_.log_.last_index()) +
-                          "|" + std::to_string(n_.log_.last_term());  // 创建负载
-    n_.ready_pump_.enqueue(p.id, "RequestVote", std::move(payload));  // 发送请求
+    VoteReq req;
+    req.term = n_.term_;
+    req.last_log_index = n_.log_.last_index();
+    req.last_log_term = n_.log_.last_term();
+    n_.ready_pump_.enqueue(p.id, MsgType::kRequestVote, std::move(req));
   }
   if (votes_won(votes_)) {
     become_leader();
@@ -251,7 +254,8 @@ void Election::on_request_vote(const std::string& from, uint64_t term, uint64_t 
     n_.voted_for_ = from;   // 更新投票者
     *granted = true;        // 设置投票为true
     election_elapsed_ = 0;  // 清空选举时间
-    n_.persist_locked();    // 持久化
+    n_.persist_locked();  // 登记待落盘 HardState（外提）/ 或嵌入路径刷盘
+
   }
 }
 
@@ -283,7 +287,8 @@ void Election::on_request_vote_reply(const std::string& from, uint64_t term, boo
 
   if (votes_won(votes_)) {  // 如果投票获胜
     become_leader();        // 成为领导者
-    n_.persist_locked();    // 持久化
+    n_.persist_locked();  // 登记待落盘 HardState（外提）/ 或嵌入路径刷盘
+
   }
 }
 
@@ -293,7 +298,8 @@ void Election::on_request_pre_vote_reply(const std::string& from, uint64_t term,
   }
   if (term > n_.term_) {    // 如果任期大于当前任期
     become_follower(term);  // 降级为跟随者
-    n_.persist_locked();    // 持久化
+    n_.persist_locked();  // 登记待落盘 HardState（外提）/ 或嵌入路径刷盘
+
     return;
   }
   pre_votes_[from] = granted;   // 更新投票
@@ -302,7 +308,7 @@ void Election::on_request_pre_vote_reply(const std::string& from, uint64_t term,
              << " pre-vote won; starting real election";  // 记录日志
     become_candidate();                                   // 成为候选人
     start_election();                                     // 开始选举
-    n_.persist_locked();                                  // 持久化
+    n_.persist_locked();  // 登记待落盘 HardState（外提）/ 或嵌入路径刷盘
   }
 }
 

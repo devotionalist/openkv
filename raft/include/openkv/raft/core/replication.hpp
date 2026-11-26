@@ -53,7 +53,7 @@ class Replication {
   void maybe_commit();
 
   /**
-   * 某 peer 在途 AE 计数 -1。
+   * 传输失败：放下该 peer 的 AE/probe/snap 在途标记。
    * @param peer_id 对端
    */
   void dec_inflight(const std::string& peer_id);
@@ -114,6 +114,11 @@ class Replication {
   uint64_t snapshot_send_count_{0};  // 累计发快照次数
 
  private:
+  // AE/probe 应答：只还 AE 名额，不动 snap_inflight_。
+  void dec_ae_inflight(const std::string& peer_id);
+  // InstallSnapshot 应答：还 snap 占用的名额并清 snap_inflight_。
+  void dec_snap_inflight(const std::string& peer_id);
+
   RaftNode& n_;  // 宿主节点
 };
 
