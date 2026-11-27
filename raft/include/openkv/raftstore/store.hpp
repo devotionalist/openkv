@@ -343,7 +343,8 @@ class Store {
     std::chrono::steady_clock::time_point deadline{};  // 最晚 flush 时刻
   };
   /**
-   * ready_coalesce 后台循环：到期或满 N 则 drive_ready。
+   * Ready 时间窗攒批线程：等各 Region 的 deadline，到期后 drive_ready。
+   * 条数满 N 的路径在 request_ready 里直接 flush，不经过本循环。
    */
   void coalesce_loop();
   std::mutex coalesce_mu_;                                // 保护 coalesce_

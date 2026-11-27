@@ -196,18 +196,27 @@ void Store::request_ready(uint32_t region_id) {
 }
 
 void Store::coalesce_loop() {
+  // 专职「按时间窗」把多次 propose 合成一次 Ready：
+  // request_ready 在未满 ready_coalesce_n 时只 armed+设 deadline 并 notify 本线程；
+  // 本循环睡到最早 deadline，把到期 Region 列表拉出来，锁外逐个 drive_ready。
+  // （满 N 条那条路径在 request_ready 里直接 flush，不进这里。）
   using clock = std::chrono::steady_clock;
   while (coalesce_running_.load(std::memory_order_acquire)) {
     std::vector<uint32_t> due;
     {
       std::unique_lock<std::mutex> lk(coalesce_mu_);
+
+      // —— 1. 扫一遍：找出当前最早的 deadline（最近一票要到期的 Region）——
       clock::time_point next = clock::time_point::max();
       for (auto& [rid, st] : coalesce_) {
         if (st.armed && st.deadline < next) {
           next = st.deadline;
         }
       }
+
+      // —— 2. 睡：没人 armed 就无限等 notify；有人则睡到 earliest deadline ——
       if (next == clock::time_point::max()) {
+        // 全表空闲：等 request_ready 第一次 armed 时 coalesce_cv_.notify_one()，或 stop。
         coalesce_cv_.wait(lk, [this] {
           if (!coalesce_running_.load(std::memory_order_acquire)) {
             return true;
@@ -221,12 +230,17 @@ void Store::coalesce_loop() {
           return false;
         });
       } else {
+        // 有定时器：最多睡到 next；stop 时也会被 notify_all 提前叫醒。
         coalesce_cv_.wait_until(
             lk, next, [this] { return !coalesce_running_.load(std::memory_order_acquire); });
       }
+
+      // —— 3. 停机检查 ——
       if (!coalesce_running_.load(std::memory_order_acquire)) {
         break;
       }
+
+      // —— 4. 收集已到期的 Region：清 pending/armed，记下 rid（锁内只记账）——
       const auto now = clock::now();
       for (auto& [rid, st] : coalesce_) {
         if (st.armed && st.deadline <= now) {
@@ -235,7 +249,9 @@ void Store::coalesce_loop() {
           due.push_back(rid);
         }
       }
-    }
+    }  // 释放 coalesce_mu_：后面 drive_ready 会进 Router/邮箱，不能持这把锁
+
+    // —— 5. 锁外 flush：对每个到期 Region 投 kWake，走 mailbox → raft worker → Ready ——
     for (auto rid : due) {
       drive_ready(rid);
     }

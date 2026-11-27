@@ -66,6 +66,7 @@
 | `make fault-drill` | F1/F2/… | **PASS** 2026-11-15（25/0；写/读分开验收） | `write_success`/`read_success` 分卡 |
 | `make release-gate` | 门禁 | SKIP | |
 | 手工：KV Put/Get | — | **PASS** | 清盘后 `kv-example` |
+| 手工：Watch 冒烟 | — | **PASS**（修 sleep 后误 stop） | `./.run/kv-watch 127.0.0.1:19000` → `watch ok`；见 [11-watch.md](../flows/11-watch.md) |
 | 手工：Split/Merge 数据 | I30/I33 | **FAIL→已修** | 空 range 快照清空兄弟区间；已禁 |
 | 手工：SCALE_OUT storage-5 | — | **FAIL→已修** | 快照 ConfState / 串行扩容 |
 

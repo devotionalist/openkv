@@ -278,27 +278,21 @@ void GatewayServer::watch_async(kv::v1::WatchRequest req,
       return;
     }
     if (st->poll_idx >= st->regions.size()) {
+      // 一轮 region 扫完：歇 ~100ms 再扫。流只在客户端取消 / 写失败时停，
+      // 这里绝不能无条件 stop——否则约 100ms 就 Finish，示例 Put 还没发出就 EOF。
       st->poll_idx = 0;
+      auto nap_then_continue = [st]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (st->live()) {
+          (*st->poll_round)();
+        } else {
+          st->stop();
+        }
+      };
       if (st->self->pool_) {
-        st->self->pool_->post([st]() {
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          if (st->live()) {
-            (*st->poll_round)();
-          } else {
-            st->stop();
-          }
-          st->stop();
-        });
+        st->self->pool_->post(std::move(nap_then_continue));
       } else {
-        std::thread([st]() {
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          if (st->live()) {
-            (*st->poll_round)();
-          } else {
-            st->stop();
-          }
-          st->stop();
-        }).detach();
+        std::thread(std::move(nap_then_continue)).detach();
       }
       return;
     }
